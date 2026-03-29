@@ -104,7 +104,7 @@ tr:hover td{background:#f7f9ff}
 .ai-bubble-user{align-self:flex-end;background:#0d1f4e;color:#fff;padding:8px 12px;border-radius:12px 12px 3px 12px;font-size:12px;max-width:85%;line-height:1.5}
 .ai-bubble-bot{align-self:flex-start;background:#f4f6fa;border:1px solid #d8dde8;color:#1a2340;padding:8px 12px;border-radius:12px 12px 12px 3px;font-size:12px;max-width:90%;line-height:1.5;white-space:pre-wrap}
 .ai-input-row{display:flex;gap:8px;padding:10px 12px;border-top:1px solid #e8ecf4}
-.vendor-tag{display:inline-block;background:#e8edf8;color:#0d1f4e;border-radius:4px;padding:1px 5px;font-size:9px;font-weight:600;margin:1px}
+.vendor-tag{display:inline-block;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700;margin:1px;letter-spacing:.3px}
 .multi-select-container{background:#f4f6fa;border:1px solid #d0d5e0;border-radius:6px;padding:8px 10px;margin-bottom:8px}
 .multi-select-option{display:flex;align-items:center;gap:7px;padding:4px 2px;cursor:pointer;font-size:12px;color:#1a2340}
 .inactive-row td{opacity:0.45}
@@ -386,6 +386,24 @@ async function sbDelete(table, id){
 //  VENDORS & DEFAULT DATA
 // ═══════════════════════════════════════════════════
 const VENDORS=["Costco Wholesale","Costco Business Center","Sam's Club","Wal-mart","Vistar Merchant Mart"];
+
+const VENDOR_ABBR = {
+  "Costco Wholesale":     "CST",
+  "Costco Business Center": "CSTB",
+  "Sam's Club":           "SAM",
+  "Wal-mart":             "WMT",
+  "Vistar Merchant Mart": "VIS"
+};
+
+const VENDOR_COLORS = {
+  "Costco Wholesale":     {bg:"#002d6e",color:"#fff"},
+  "Costco Business Center": {bg:"#b8001e",color:"#fff"},
+  "Sam's Club":           {bg:"#e65c00",color:"#fff"},
+  "Wal-mart":             {bg:"#0071ce",color:"#fff"},
+  "Vistar Merchant Mart": {bg:"#2e7d32",color:"#fff"}
+};
+
+function vendorAbbr(v){ return VENDOR_ABBR[v] || v.split(' ')[0].substring(0,4).toUpperCase(); }
 const LS_PRODUCTS='vs_brewbox_products';
 const LS_RESTOCK='vs_brewbox_restock';
 
@@ -1156,7 +1174,7 @@ function renderInventoryRow(p){
     <td>${p.piecesPerBox}</td>
     <td style="font-size:11px;color:#5060a0">${p.cat1||'—'}</td>
     <td style="font-size:11px;color:#5060a0">${p.cat2||'—'}</td>
-    <td style="min-width:90px">${p.vendors&&p.vendors.length>0?p.vendors.map(v=>`<span class="vendor-tag">${v.split(' ')[0]}</span>`).join(''):'<span style="color:#b0b8cc;font-size:11px">—</span>'}</td>
+    <td style="min-width:90px">${p.vendors&&p.vendors.length>0?p.vendors.map(v=>{const vc=VENDOR_COLORS[v]||{bg:'#e8edf8',color:'#0d1f4e'};return `<span class="vendor-tag" style="background:${vc.bg};color:${vc.color}" title="${v}">${vendorAbbr(v)}</span>`;}).join(''):'<span style="color:#b0b8cc;font-size:11px">—</span>'}</td>
     <td>${badge(p.qty,p.minLevel)}</td>
     <td style="min-width:110px">${toggleSwitch(p.active,`toggleActive(${p.id})`)}</td>
     <td style="min-width:130px"><div style="display:flex;gap:4px">
