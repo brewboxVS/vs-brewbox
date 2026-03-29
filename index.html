@@ -255,7 +255,7 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
         <div id="warehouse-submenu" style="display:none">
           <button class="nav-btn nav-sub" onclick="setView('inventory')">▦ &nbsp;<span>Warehouse MM Inventory</span></button>
           <button class="nav-btn nav-sub" onclick="setView('coffee')">☕ &nbsp;<span>Warehouse Coffee Inventory</span></button>
-          <button class="nav-btn nav-sub" onclick="setView('count')">📋 &nbsp;<span>Inventory Count</span></button>
+          <button class="nav-btn nav-sub" onclick="setView('count')">📋 &nbsp;<span>Warehouse Inventory Count</span></button>
         </div>
       </div>
       <div id="stores-nav">
@@ -263,6 +263,7 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
         <div id="stores-submenu" style="display:none">
           <button class="nav-btn nav-sub" onclick="setView('store-inventory')">📊 &nbsp;<span>Store Inventory</span></button>
           <button class="nav-btn nav-sub" onclick="setView('store-orders')">🛒 &nbsp;<span>Store Orders</span></button>
+          <button class="nav-btn nav-sub" onclick="setView('store-count')">📋 &nbsp;<span>Store Inventory Count</span></button>
         </div>
       </div>
       <div id="import-nav">
@@ -942,13 +943,14 @@ function updateSidebar(){
   if(currentView==='coffee') document.querySelector('.nav-btn[onclick*="coffee"]')?.classList.add('active');
   if(currentView==='store-inventory') document.querySelector('.nav-btn[onclick*="store-inventory"]')?.classList.add('active');
   if(currentView==='store-orders') document.querySelector('.nav-btn[onclick*="store-orders"]')?.classList.add('active');
+  if(currentView==='store-count') document.querySelector('.nav-btn[onclick*="store-count"]')?.classList.add('active');
   if(currentView==='restock'||currentView==='order-activity') { openActivityMenu(); document.querySelector('.nav-btn[onclick*="'+currentView+'"]')?.classList.add('active'); }
   if(currentView==='orders') document.querySelector('.nav-btn[onclick*="orders"]')?.classList.add('active');
   if(currentView==='restock') document.querySelector('.nav-btn[onclick*="restock"]')?.classList.add('active');
   if(currentView==='count') document.querySelector('.nav-btn[onclick*="count"]')?.classList.add('active');
   // Auto-open warehouse submenu when on warehouse views
   if(currentView==='inventory'||currentView==='coffee'||currentView==='count') openWarehouseMenu();
-  if(currentView==='store-inventory'||currentView==='store-orders') openStoresMenu();
+  if(currentView==='store-inventory'||currentView==='store-orders'||currentView==='store-count') openStoresMenu();
   // Auto-open import submenu when on import views
   if(currentView==='orders') openImportMenu();
 }
@@ -1015,8 +1017,9 @@ function openStoresMenu(){
 
 function setView(v){
   currentView=v;
-  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','order-activity':'Order Activity Log',orders:'Warehouse Orders',count:'Inventory Count',restock:'Activity Log'};
+  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log',orders:'Warehouse Orders',count:'Inventory Count',restock:'Activity Log'};
   if(v==='count' && Object.keys(countState).length===0) initCountState();
+  if(v==='store-count' && Object.keys(storeCountState).length===0) initStoreCountState();
   document.getElementById('page-title').textContent=titles[v]||v;
   document.getElementById('header-action').innerHTML=(v==='inventory'||v==='coffee')?`
     <div style="display:flex;gap:8px;align-items:center">
@@ -1039,6 +1042,7 @@ function render(){
   else if(currentView==='coffee') renderCoffeeInventory();
   else if(currentView==='store-inventory') renderStoreInventory();
   else if(currentView==='store-orders') renderStoreOrders();
+  else if(currentView==='store-count') renderStoreCount();
   else if(currentView==='order-activity') renderOrderActivity();
   else if(currentView==='orders') renderOrders();
   else if(currentView==='count') renderCount();
@@ -1137,25 +1141,30 @@ let activityFilter = 'all'; // 'all' | 'orders' | 'restock' | 'count' | 'edit'
 
 function renderRestock(){
   const FILTERS = [
-    {key:'all',    label:'All Activity'},
-    {key:'orders', label:'Warehouse Orders'},
-    {key:'restock',label:'Restocks'},
-    {key:'count',  label:'Inventory Count'},
-    {key:'edit',   label:'Manual Edits'},
+    {key:'all',       label:'All Activity'},
+    {key:'storeorder',label:'Store Orders'},
+    {key:'orders',    label:'Warehouse Orders'},
+    {key:'restock',   label:'Restocks'},
+    {key:'count',     label:'Inventory Count'},
+    {key:'edit',      label:'Manual Edits'},
   ];
 
   const filtered = restockLog.filter(r=>{
     if(activityFilter==='all') return true;
+    if(activityFilter==='storeorder') return (r.by||'').includes('Store Order');
     if(activityFilter==='orders') return (r.by||'').includes('Warehouse Order');
-    if(activityFilter==='restock') return !(r.by||'').includes('Warehouse Order') && !(r.by||'').includes('Inventory Count') && !(r.by||'').includes('Manual Edit') && !(r.by||'').includes('Coffee');
-    if(activityFilter==='count') return (r.by||'').includes('Inventory Count');
+    if(activityFilter==='restock') return !(r.by||'').includes('Warehouse Order') && !(r.by||'').includes('Inventory Count') && !(r.by||'').includes('Manual Edit') && !(r.by||'').includes('Store Order') && !(r.by||'').includes('Coffee');
+    if(activityFilter==='count') return (r.by||'').includes('Inventory Count') || (r.by||'').includes('Store Count');
     if(activityFilter==='edit') return (r.by||'').includes('Manual Edit');
     return true;
   });
 
   function activityTypeBadge(by=''){
-    if(by.includes('Warehouse Order')) return '<span style="background:#e8edf8;color:#0d1f4e;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">ORDER</span>';
-    if(by.includes('Inventory Count')) return '<span style="background:#e6f4ee;color:#1a7a45;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">COUNT</span>';
+    if(by.includes('Store Order Opened')) return '<span style="background:#fff8e6;color:#b35a00;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">ORDER OPEN</span>';
+    if(by.includes('Store Order Received')) return '<span style="background:#e6f4ee;color:#1a7a45;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">ORDER RCVD</span>';
+    if(by.includes('Store Order')) return '<span style="background:#e8edf8;color:#1a3266;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">STORE ORDER</span>';
+    if(by.includes('Warehouse Order')) return '<span style="background:#e8edf8;color:#0d1f4e;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">WH ORDER</span>';
+    if(by.includes('Inventory Count')||by.includes('Store Count')) return '<span style="background:#e6f4ee;color:#1a7a45;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">COUNT</span>';
     if(by.includes('Manual Edit')) return '<span style="background:#fff3e0;color:#b35a00;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">EDIT</span>';
     if(by.includes('Coffee')) return '<span style="background:#f3e8ff;color:#6b2fa0;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">COFFEE</span>';
     return '<span style="background:#f0f2f8;color:#5060a0;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">RESTOCK</span>';
@@ -2724,7 +2733,7 @@ async function saveStoreOrder(order){
 // ── Render Store Orders page ──
 function renderStoreOrders(){
   const openOrders = storeOrders.filter(o=>o.store_name===currentOrderStore && o.status==='open');
-  const closedOrders = storeOrders.filter(o=>o.store_name===currentOrderStore && o.status==='closed');
+  const closedOrders = storeOrders.filter(o=>o.store_name===currentOrderStore && o.status==='received');
   const storeItems = storeInventory.filter(x=>x.store_name===currentOrderStore);
 
   document.getElementById('main-body').innerHTML=`
@@ -2747,7 +2756,7 @@ function renderStoreOrders(){
 
     ${closedOrders.length>0?`
     <div style="margin-bottom:14px">
-      <div style="font-size:10px;font-weight:700;color:#8090b0;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px">Recent Closed Orders</div>
+      <div style="font-size:10px;font-weight:700;color:#8090b0;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px">Recently Received Orders</div>
       ${closedOrders.slice(0,3).map(o=>renderClosedOrderRow(o)).join('')}
     </div>`:''}
 
@@ -2852,7 +2861,16 @@ async function saveNewStoreOrder(){
   storeOrders.unshift(order);
   await saveStoreOrder(order);
   if(btn){ btn.disabled=false; btn.textContent='💾 Save as Open Order'; btn.style.opacity='1'; }
-  expandedOrderIds.add(order.id);
+  // Log order created to activity
+  const orderCreatedEntry = {
+    id: Date.now()+Math.random(),
+    date: new Date().toISOString().slice(0,10),
+    product: `Store Order #${order.id.toString().slice(-6)} — ${orderItems.length} items`,
+    qty: orderItems.reduce((s,i)=>s+i.order_qty,0),
+    by: `Store Order Opened — ${currentOrderStore}`
+  };
+  restockLog = [orderCreatedEntry, ...restockLog];
+  await saveRestock(orderCreatedEntry);
   renderStoreOrders();
   showToast(`Order saved — ${orderItems.length} item${orderItems.length!==1?'s':''} for ${currentOrderStore}`);
 }
@@ -3002,10 +3020,20 @@ async function receiveStoreOrder(orderId){
     await saveRestock(entry);
   }
 
-  // Mark order closed
-  order.status = 'closed';
+  // Mark order received
+  order.status = 'received';
   order.closed_at = new Date().toISOString();
   await saveStoreOrder(order);
+  // Log order received summary to activity
+  const orderRcvEntry = {
+    id: Date.now()+Math.random(),
+    date: new Date().toISOString().slice(0,10),
+    product: `Store Order #${orderId.toString().slice(-6)} — ${orderItemLines.length} items received`,
+    qty: order.items.reduce((s,i)=>s+(i.order_qty||0),0),
+    by: `Store Order Received — ${order.store_name}`
+  };
+  restockLog = [orderRcvEntry, ...restockLog];
+  await saveRestock(orderRcvEntry);
 
   updateSidebar();
   expandedOrderIds.delete(orderId);
@@ -3019,61 +3047,421 @@ async function receiveStoreOrder(orderId){
 let expandedActivityOrderIds = new Set();
 
 function renderOrderActivity(){
-  // Show all store orders across all stores, newest first
-  const sorted = [...storeOrders].sort((a,b)=>b.id-a.id);
+  const openOrders = [...storeOrders].filter(o=>o.status==='open').sort((a,b)=>b.id-a.id);
+  const rcvdOrders = [...storeOrders].filter(o=>o.status==='received').sort((a,b)=>b.id-a.id);
 
   document.getElementById('main-body').innerHTML=`
-    <div style="margin-bottom:14px">
-      <div style="font-size:12px;color:#5060a0;margin-bottom:12px">
-        ${sorted.length} total order${sorted.length!==1?'s':''} · ${sorted.filter(o=>o.status==='open').length} open · ${sorted.filter(o=>o.status==='closed').length} closed
+    <div style="margin-bottom:6px;display:flex;gap:10px">
+      <div class="stat-card" style="padding:8px 16px;min-width:0"><div class="stat-val" style="font-size:16px;color:#c9a84c">${openOrders.length}</div><div class="stat-label">Open Orders</div></div>
+      <div class="stat-card" style="padding:8px 16px;min-width:0;border-top-color:#1a7a45"><div class="stat-val" style="font-size:16px;color:#1a7a45">${rcvdOrders.length}</div><div class="stat-label">Received</div></div>
+    </div>
+
+    ${openOrders.length>0?`
+    <div style="margin-bottom:16px">
+      <div style="font-size:10px;font-weight:700;color:#b35a00;letter-spacing:1.5px;text-transform:uppercase;margin:14px 0 8px">Open Orders</div>
+      ${openOrders.map(o=>renderActivityOrderRow(o)).join('')}
+    </div>`:'<div style="font-size:12px;color:#7080a0;margin:14px 0 8px;text-align:center">No open orders</div>'}
+
+    ${rcvdOrders.length>0?`
+    <div>
+      <div style="font-size:10px;font-weight:700;color:#1a7a45;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px">Received Orders</div>
+      ${rcvdOrders.map(o=>renderActivityOrderRow(o)).join('')}
+    </div>`:''}
+  `;
+}
+
+function renderActivityOrderRow(o){
+  const isExpanded = expandedActivityOrderIds.has(o.id);
+  const dateStr = new Date(o.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+  const rcvdStr = o.closed_at ? ' · Rcvd '+new Date(o.closed_at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '';
+  const totalUnits = o.items.reduce((s,i)=>s+(i.order_qty||0),0);
+  const statusColor = o.status==='open' ? '#c9a84c' : '#1a7a45';
+  const statusBg = o.status==='open' ? '#fffbf0' : '#f0fff4';
+  const statusLabel = o.status==='open' ? 'OPEN' : 'RECEIVED';
+  return `
+    <div style="border:1px solid #e8ecf4;border-radius:8px;margin-bottom:8px;overflow:hidden">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:${statusBg};cursor:pointer"
+           onclick="toggleActivityOrder(${o.id})">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="font-size:12px;font-weight:700;color:#0d1f4e">Order #${o.id.toString().slice(-6)}</span>
+          <span style="background:${statusColor};color:${o.status==='open'?'#0d1f4e':'#fff'};border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700">${statusLabel}</span>
+          <span style="font-size:11px;color:#5060a0;font-weight:600">${o.store_name}</span>
+          <span style="font-size:11px;color:#7080a0">${dateStr}${rcvdStr} · ${o.items.length} items · ${totalUnits} units</span>
+        </div>
+        <span style="font-size:13px;color:#8090b0">${isExpanded?'▲':'▼'}</span>
       </div>
-      ${sorted.length===0?`<div class="card" style="text-align:center;padding:30px;color:#7080a0">No store orders yet. Create an order via Stores → Store Orders.</div>`
-      :sorted.map(o=>{
-        const isExpanded = expandedActivityOrderIds.has(o.id);
-        const dateStr = new Date(o.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
-        const closedStr = o.closed_at ? ' → '+new Date(o.closed_at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '';
-        const totalUnits = o.items.reduce((s,i)=>s+(i.order_qty||0),0);
-        const statusColor = o.status==='open' ? '#c9a84c' : '#1a7a45';
-        const statusBg = o.status==='open' ? '#fffbf0' : '#f0fff4';
-        return `
-          <div style="border:1px solid #e8ecf4;border-radius:8px;margin-bottom:8px;overflow:hidden">
-            <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:${statusBg};cursor:pointer"
-                 onclick="toggleActivityOrder(${o.id})">
-              <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-                <span style="font-size:12px;font-weight:700;color:#0d1f4e">Order #${o.id.toString().slice(-6)}</span>
-                <span style="background:${statusColor};color:${o.status==='open'?'#0d1f4e':'#fff'};border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700">${o.status.toUpperCase()}</span>
-                <span style="font-size:11px;color:#5060a0;font-weight:600">${o.store_name}</span>
-                <span style="font-size:11px;color:#7080a0">${dateStr}${closedStr} · ${o.items.length} items · ${totalUnits} units</span>
-              </div>
-              <span style="font-size:13px;color:#8090b0">${isExpanded?'▲':'▼'}</span>
-            </div>
-            ${isExpanded?`
-              <div style="padding:10px 14px;background:#fff;border-top:1px solid #e8ecf4">
-                <table style="width:100%">
-                  <thead><tr><th style="padding-left:4px">ITEM</th><th>SOURCE</th><th>QTY ORDERED</th></tr></thead>
-                  <tbody>
-                  ${o.items.map(item=>{
-                    const src = item.product_source==='coffee'
-                      ? '<span style="background:#f3e8ff;color:#6b2fa0;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700">COFFEE</span>'
-                      : '<span style="background:#e8edf8;color:#0d1f4e;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700">MM</span>';
-                    return `<tr>
-                      <td style="padding-left:4px;font-weight:600;color:#0d1f4e;white-space:normal">${item.product_name}</td>
-                      <td>${src}</td>
-                      <td style="font-weight:700;color:#0d1f4e">${item.order_qty}</td>
-                    </tr>`;
-                  }).join('')}
-                  </tbody>
-                </table>
-              </div>`:''}
-          </div>`;
-      }).join('')}
+      ${isExpanded?`
+        <div style="padding:10px 14px;background:#fff;border-top:1px solid #e8ecf4">
+          <table style="width:100%">
+            <thead><tr><th style="padding-left:4px">ITEM</th><th>SOURCE</th><th>QTY ORDERED</th></tr></thead>
+            <tbody>
+            ${o.items.map(item=>{
+              const src = item.product_source==='coffee'
+                ? '<span style="background:#f3e8ff;color:#6b2fa0;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700">COFFEE</span>'
+                : '<span style="background:#e8edf8;color:#0d1f4e;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700">MM</span>';
+              return `<tr>
+                <td style="padding-left:4px;font-weight:600;color:#0d1f4e;white-space:normal">${item.product_name}</td>
+                <td>${src}</td>
+                <td style="font-weight:700;color:#0d1f4e">${item.order_qty}</td>
+              </tr>`;
+            }).join('')}
+            </tbody>
+          </table>
+        </div>`:''}
     </div>`;
 }
+
+
 
 function toggleActivityOrder(id){
   if(expandedActivityOrderIds.has(id)) expandedActivityOrderIds.delete(id);
   else expandedActivityOrderIds.add(id);
   renderOrderActivity();
+}
+
+
+// ═══════════════════════════════════════════════════
+//  STORE INVENTORY COUNT
+// ═══════════════════════════════════════════════════
+let storeCountState = {};      // {storeItemId: {verified, actualQty, reason}}
+let storeCountStore = 'SM Toyota';
+let storeCountSkippedSources = new Set(); // 'mm' or 'coffee' sections skipped
+let storeCountSubmitted = false;
+let storeCountSubmitResult = null;
+
+const STORE_COUNT_NEG_REASONS = ['Theft/Walkoff','Complimentary','Spoilage','Return to Warehouse','Manual Decrease'];
+const STORE_COUNT_POS_REASONS = ['Manual Increase','Restock'];
+
+function initStoreCountState(){
+  storeCountState = {};
+  storeCountSkippedSources = new Set();
+  storeCountSubmitted = false;
+  storeCountSubmitResult = null;
+  const items = storeInventory.filter(x=>x.store_name===storeCountStore);
+  for(const item of items){
+    storeCountState[item.id] = {verified:false, actualQty:'', reason:''};
+  }
+}
+
+function renderStoreCount(){
+  const items = storeInventory.filter(x=>x.store_name===storeCountStore);
+  const mmItems = items.filter(x=>x.product_source==='mm');
+  const coffeeItems = items.filter(x=>x.product_source==='coffee');
+  const total = items.length;
+  const verified = Object.values(storeCountState).filter(s=>s.verified||(s.actualQty!==''&&s.reason!=='')).length;
+  const pending = Math.max(0, total - verified);
+
+  document.getElementById('main-body').innerHTML=`
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.8px">Store:</label>
+        <select onchange="storeCountStore=this.value;initStoreCountState();renderStoreCount()"
+          style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:6px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer">
+          ${STORES.map(s=>`<option value="${s}" ${s===storeCountStore?'selected':''}>${s}</option>`).join('')}
+        </select>
+        <div class="stat-card" style="padding:6px 12px;min-width:0;display:inline-flex;gap:8px;align-items:center">
+          <span style="font-size:14px;font-weight:800;color:#0d1f4e">${total}</span><span style="font-size:9px;color:#5060a0;font-weight:700;text-transform:uppercase">Total</span>
+          <span style="color:#d0d5e0">|</span>
+          <span style="font-size:14px;font-weight:800;color:#1a7a45">${verified}</span><span style="font-size:9px;color:#5060a0;font-weight:700;text-transform:uppercase">Verified</span>
+          <span style="color:#d0d5e0">|</span>
+          <span style="font-size:14px;font-weight:800;color:#b35a00">${pending}</span><span style="font-size:9px;color:#5060a0;font-weight:700;text-transform:uppercase">Pending</span>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button onclick="cancelStoreCount()" style="background:transparent;color:#b01c1c;border:1.5px solid #b01c1c;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer">✕ Cancel</button>
+        <button id="store-count-submit-btn" onclick="confirmSubmitStoreCount()" class="primary-btn" style="padding:8px 18px" ${storeCountSubmitted?'disabled style="opacity:0.4;cursor:not-allowed"':''}>✓ Submit Count</button>
+      </div>
+    </div>
+
+    ${storeCountSubmitResult ? renderStoreCountResult() : ''}
+
+    ${storeCountSubmitResult ? '' : [
+      {label:'MM Items', source:'mm', items:mmItems},
+      {label:'Coffee Items', source:'coffee', items:coffeeItems}
+    ].filter(g=>g.items.length>0).map(group=>{
+      const skipped = storeCountSkippedSources.has(group.source);
+      const catVerified = group.items.filter(x=>storeCountState[x.id]&&(storeCountState[x.id].verified||(storeCountState[x.id].actualQty!==''&&storeCountState[x.id].reason!==''))).length;
+      return `
+        <div class="card" style="margin-bottom:12px;${skipped?'opacity:0.5':''}">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${skipped?'0':'10px'}">
+            <div style="display:flex;align-items:center;gap:10px">
+              <div class="card-title" style="margin-bottom:0">${group.label}</div>
+              ${!skipped?`<span style="font-size:10px;color:#7080a0">${catVerified}/${group.items.length} verified</span>`:''}
+            </div>
+            <button onclick="toggleStoreCountSkip('${group.source}')"
+              style="background:${skipped?'#e8edf8':'#f4f6fa'};color:${skipped?'#0d1f4e':'#7080a0'};border:1.5px solid ${skipped?'#0d1f4e':'#d0d5e0'};border-radius:6px;padding:4px 12px;font-size:10px;font-weight:700;cursor:pointer">
+              ${skipped?'↩ Include Section':'⏭ Skip Section'}
+            </button>
+          </div>
+          ${skipped?'<div style="font-size:11px;color:#7080a0;padding:4px 0">This section is skipped.</div>':''}
+          ${!skipped?`
+          <table>
+            <thead><tr>
+              <th style="min-width:180px;padding-left:8px">ITEM</th>
+              <th>CURRENT QTY</th>
+              <th>✓ CORRECT</th>
+              <th>ACTUAL QTY</th>
+              <th>DIFFERENCE</th>
+              <th>REASON</th>
+              <th>VERIFIED QTY</th>
+            </tr></thead>
+            <tbody>
+            ${group.items.map(item=>renderStoreCountRow(item)).join('')}
+            </tbody>
+          </table>`:''}
+        </div>`;
+    }).join('')||''}
+  `;
+}
+
+function renderStoreCountRow(item){
+  const s = storeCountState[item.id] || {verified:false, actualQty:'', reason:''};
+  const currentQty = item.qty;
+  const actualQty = s.actualQty !== '' ? parseFloat(s.actualQty) : null;
+  const isDiff = actualQty !== null && actualQty !== currentQty;
+  const diff = isDiff ? actualQty - currentQty : null;
+  const verifiedQty = s.verified ? currentQty : (actualQty !== null ? actualQty : '');
+  const rowBg = s.verified ? '#f0fff4' : (isDiff ? '#fff8f0' : '');
+  const reasons = diff !== null ? (diff < 0 ? STORE_COUNT_NEG_REASONS : STORE_COUNT_POS_REASONS) : [];
+
+  return `<tr id="sc-row-${item.id}" style="background:${rowBg}">
+    <td style="padding-left:8px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:200px;line-height:1.3">${item.product_name}</td>
+    <td style="font-weight:700;color:#0d1f4e">${currentQty}</td>
+    <td>
+      <label style="display:flex;align-items:center;gap:7px;cursor:pointer">
+        <input type="checkbox" ${s.verified?'checked':''} onchange="toggleStoreCountVerified(${item.id},this.checked)"
+          style="width:16px;height:16px;accent-color:#1a7a45;cursor:pointer"/>
+        <span style="font-size:11px;color:${s.verified?'#1a7a45':'#7080a0'};font-weight:${s.verified?'700':'500'}">
+          ${s.verified?'✓ Correct':'Mark correct'}
+        </span>
+      </label>
+    </td>
+    <td>
+      ${!s.verified?`<input type="number" value="${s.actualQty}" placeholder="Enter qty"
+        style="width:80px;background:#f4f6fa;border:1.5px solid ${isDiff?'#c9a84c':'#d0d5e0'};border-radius:5px;padding:4px 7px;font-size:12px;color:#1a2340;outline:none"
+        oninput="updateStoreCountQty(${item.id},this.value)"/>`
+      :`<span style="color:#8090b0;font-size:11px">—</span>`}
+    </td>
+    <td class="sc-diff-${item.id}" style="font-weight:700;color:${diff===null?'#8090b0':diff>0?'#1a7a45':'#b01c1c'}">
+      ${diff===null?(s.verified?'—':''):diff>0?'+'+diff:diff}
+    </td>
+    <td>
+      ${isDiff&&!s.verified?`
+        <select onchange="updateStoreCountReason(${item.id},this.value)"
+          style="background:#f4f6fa;border:1.5px solid ${s.reason?'#0d1f4e':'#e8943a'};border-radius:5px;padding:4px 7px;font-size:11px;color:#1a2340;outline:none;cursor:pointer">
+          <option value="" ${!s.reason?'selected':''}>-- Select --</option>
+          ${reasons.map(r=>`<option value="${r}" ${s.reason===r?'selected':''}>${r}</option>`).join('')}
+        </select>`
+      :`<span style="color:#8090b0;font-size:11px">${s.verified?'—':(actualQty!==null&&!isDiff?'No change':'')}</span>`}
+    </td>
+    <td class="sc-vq-${item.id}" style="font-weight:700;color:#1a7a45">
+      ${verifiedQty!==''?verifiedQty:'<span style="color:#d0d5e0;font-size:11px">—</span>'}
+    </td>
+  </tr>`;
+}
+
+function toggleStoreCountVerified(id, checked){
+  storeCountState[id].verified = checked;
+  if(checked){ storeCountState[id].actualQty=''; storeCountState[id].reason=''; }
+  renderStoreCount();
+}
+
+function updateStoreCountQty(id, val){
+  storeCountState[id].actualQty = val;
+  storeCountState[id].verified = false;
+  const item = storeInventory.find(x=>x.id===id);
+  const currentQty = item ? item.qty : 0;
+  const newQty = val==='' ? null : parseFloat(val);
+  const diff = newQty !== null ? newQty - currentQty : null;
+  // Auto-set reason based on direction
+  if(diff !== null && newQty !== currentQty){
+    storeCountState[id].reason = diff < 0 ? 'Spoilage' : 'Restock';
+  } else {
+    storeCountState[id].reason = '';
+  }
+  // DOM patch — no full re-render
+  const rowEl = document.getElementById(`sc-row-${id}`);
+  if(rowEl){
+    const diffEl = rowEl.querySelector(`.sc-diff-${id}`)||rowEl.querySelectorAll('td')[4];
+    const vqEl = rowEl.querySelector(`.sc-vq-${id}`)||rowEl.querySelectorAll('td')[6];
+    if(diffEl){
+      diffEl.textContent = diff===null?'':(diff>0?'+'+diff:diff);
+      diffEl.style.color = diff===null?'#8090b0':diff>0?'#1a7a45':'#b01c1c';
+    }
+    if(vqEl) vqEl.textContent = newQty!==null?newQty:'—';
+    rowEl.style.background = diff!==null&&newQty!==currentQty?'#fff8f0':'';
+  }
+}
+
+function updateStoreCountReason(id, val){
+  storeCountState[id].reason = val;
+}
+
+function toggleStoreCountSkip(source){
+  if(storeCountSkippedSources.has(source)) storeCountSkippedSources.delete(source);
+  else storeCountSkippedSources.add(source);
+  renderStoreCount();
+}
+
+function cancelStoreCount(){
+  initStoreCountState();
+  renderStoreCount();
+}
+
+function confirmSubmitStoreCount(){
+  // Validate — check missing reasons
+  const items = storeInventory.filter(x=>x.store_name===storeCountStore);
+  const missing = items.filter(item=>{
+    const s = storeCountState[item.id];
+    if(!s||s.verified||storeCountSkippedSources.has(item.product_source)) return false;
+    const aq = s.actualQty!==''?parseFloat(s.actualQty):null;
+    return aq!==null && aq!==item.qty && !s.reason;
+  });
+  if(missing.length>0){
+    showToast(`⚠ Select a reason for: ${missing.map(x=>x.product_name).join(', ')}`,5000);
+    return;
+  }
+
+  const toUpdate = items.filter(item=>{
+    const s = storeCountState[item.id];
+    if(!s||s.verified||storeCountSkippedSources.has(item.product_source)) return false;
+    const aq = s.actualQty!==''?parseFloat(s.actualQty):null;
+    return aq!==null && aq!==item.qty && s.reason;
+  });
+  const unresolved = items.filter(item=>{
+    const s = storeCountState[item.id];
+    if(!s||s.verified||storeCountSkippedSources.has(item.product_source)) return false;
+    const aq = s.actualQty!==''?parseFloat(s.actualQty):null;
+    return aq===null;
+  });
+
+  document.getElementById('modal-container').innerHTML=`
+    <div class="modal-overlay">
+      <div class="modal" style="width:540px">
+        <div class="modal-title">Confirm Store Inventory Count — ${storeCountStore}</div>
+        ${toUpdate.length>0?`
+        <div style="background:#e8edf8;border-radius:7px;padding:10px 12px;margin-bottom:12px">
+          <div style="font-size:11px;font-weight:700;color:#0d1f4e;margin-bottom:6px">📦 ${toUpdate.length} adjustment${toUpdate.length>1?'s':''} will be saved:</div>
+          ${toUpdate.map(item=>{
+            const s=storeCountState[item.id];
+            const aq=parseFloat(s.actualQty);
+            const diff=aq-item.qty;
+            return `<div style="font-size:11px;color:#2a3455;padding:2px 0">• ${item.product_name}: ${item.qty} → ${aq} (${diff>0?'+':''}${diff}) — ${s.reason}</div>`;
+          }).join('')}
+        </div>`:''}
+        ${unresolved.length>0?`
+        <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:7px;padding:8px 12px;margin-bottom:12px">
+          <div style="font-size:11px;font-weight:700;color:#b35a00;margin-bottom:4px">⚠ ${unresolved.length} item${unresolved.length>1?'s':''} not verified (will be skipped)</div>
+          ${unresolved.map(x=>`<div style="font-size:11px;color:#8060a0;padding:1px 0">• ${x.product_name}</div>`).join('')}
+        </div>`:''}
+        <div style="font-size:12px;color:#5060a0;margin-bottom:14px">Update ${storeCountStore} store inventory?</div>
+        <div style="display:flex;gap:10px">
+          <button id="confirm-sc-btn" class="primary-btn" onclick="submitStoreCount()" style="padding:9px 18px">✓ Yes, Submit Count</button>
+          <button onclick="closeModal()" class="secondary-btn">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function submitStoreCount(){
+  const btn=document.getElementById('confirm-sc-btn');
+  if(btn){btn.disabled=true;btn.textContent='⏳ Saving…';btn.style.opacity='0.6';}
+  storeCountSubmitted=true;
+  closeModal();
+  storeCountSubmitResult={adjustments:[],errors:[]};
+  const now=new Date().toISOString();
+  const countDate=now.slice(0,10);
+  const items=storeInventory.filter(x=>x.store_name===storeCountStore);
+  const toUpdate=items.filter(item=>{
+    const s=storeCountState[item.id];
+    if(!s||s.verified||storeCountSkippedSources.has(item.product_source)) return false;
+    const aq=s.actualQty!==''?parseFloat(s.actualQty):null;
+    return aq!==null&&aq!==item.qty&&s.reason;
+  });
+
+  for(const item of toUpdate){
+    const s=storeCountState[item.id];
+    const newQty=parseFloat(s.actualQty);
+    const diff=newQty-item.qty;
+    const reason=s.reason;
+    try{
+      // Update store qty
+      item.qty=newQty;
+      await saveStoreItem(item);
+
+      // If "Return to Warehouse" — increase warehouse qty
+      if(reason==='Return to Warehouse'){
+        const absReturn=Math.abs(diff);
+        if(item.product_source==='coffee'){
+          const wh=coffeeProducts.find(p=>p.id===item.product_id);
+          if(wh){wh.qty+=absReturn;await saveCoffeeProduct(wh);}
+        } else {
+          const wh=products.find(p=>p.id===item.product_id);
+          if(wh){wh.qty+=absReturn;await saveProduct(wh);}
+        }
+      }
+
+      // Log to activity
+      const entry={
+        id:Date.now()+Math.random(),
+        date:countDate,
+        product:item.product_name,
+        qty:diff,
+        by:`Store Count — ${storeCountStore} (${reason})`
+      };
+      restockLog=[entry,...restockLog];
+      await saveRestock(entry);
+
+      // Log to inventory_count_log
+      if(useSupabase){
+        try{
+          await sbFetch('inventory_count_log',{
+            method:'POST',
+            prefer:'resolution=merge-duplicates,return=minimal',
+            body:JSON.stringify([{
+              id:Date.now()+Math.floor(Math.random()*10000),
+              product_id:item.product_id,
+              product_name:item.product_name,
+              previous_qty:item.qty-diff,
+              new_qty:newQty,
+              difference:diff,
+              reason:`Store Count — ${reason} — ${storeCountStore}`,
+              count_date:countDate,
+              created_at:now
+            }])
+          });
+        }catch(e){}
+      }
+      storeCountSubmitResult.adjustments.push({name:item.product_name,prev:item.qty-diff,newQty,diff,reason});
+    }catch(e){
+      storeCountSubmitResult.errors.push({name:item.product_name,error:e.message||'Save failed'});
+    }
+  }
+
+  storeCountState={};
+  storeCountSkippedSources=new Set();
+  updateSidebar();
+  renderStoreCount();
+  showToast(`Store count submitted — ${storeCountSubmitResult.adjustments.length} adjustment${storeCountSubmitResult.adjustments.length!==1?'s':''} saved`);
+}
+
+function renderStoreCountResult(){
+  const {adjustments,errors}=storeCountSubmitResult;
+  return `
+    <div class="card" style="border-top:3px solid ${errors.length===0?'#1a7a45':'#b35a00'};margin-bottom:14px">
+      <div class="card-title">${errors.length===0?'✓ Store Count Submitted':'⚠ Count Submitted with Errors'}</div>
+      ${adjustments.length>0?`
+        <div style="background:#e8edf8;border-radius:6px;padding:8px 12px;margin-bottom:8px">
+          <div style="font-size:12px;font-weight:700;color:#0d1f4e;margin-bottom:4px">✓ ${adjustments.length} adjustment${adjustments.length>1?'s':''} saved for ${storeCountStore}</div>
+          ${adjustments.map(a=>`<div style="font-size:11px;color:#2a3455;padding:1px 0">• ${a.name}: ${a.prev} → ${a.newQty} (${a.diff>0?'+':''}${a.diff}) — ${a.reason}</div>`).join('')}
+        </div>`:'<div style="font-size:12px;color:#7080a0;margin-bottom:8px">No quantity adjustments were made.</div>'}
+      ${errors.length>0?`
+        <div style="background:#fde8e8;border-radius:6px;padding:8px 12px;margin-bottom:8px">
+          <div style="font-size:12px;font-weight:700;color:#b01c1c;margin-bottom:4px">✗ ${errors.length} error${errors.length>1?'s':''}</div>
+          ${errors.map(e=>`<div style="font-size:11px;color:#b01c1c;padding:1px 0">• ${e.name}: ${e.error}</div>`).join('')}
+        </div>`:''}
+      <button onclick="initStoreCountState();storeCountSubmitResult=null;renderStoreCount()" style="margin-top:4px;background:#0d1f4e;color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:11px;font-weight:700;cursor:pointer">🔄 Start New Count</button>
+    </div>`;
 }
 
 // ═══════════════════════════════════════════════════
