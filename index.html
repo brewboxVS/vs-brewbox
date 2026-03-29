@@ -246,6 +246,7 @@ tr:hover td{background:#f7f9ff}
         <div id="warehouse-submenu" style="display:none">
           <button class="nav-btn nav-sub" onclick="setView('inventory')">▦ &nbsp;<span>Warehouse Inventory</span></button>
           <button class="nav-btn nav-sub" onclick="setView('orders')">📦 &nbsp;<span>Warehouse Orders</span></button>
+          <button class="nav-btn nav-sub" onclick="setView('count')">📋 &nbsp;<span>Inventory Count</span></button>
         </div>
       </div>
       <button class="nav-btn" onclick="setView('restock')">↑ &nbsp;<span>Restock Log</span></button>
@@ -885,7 +886,8 @@ function updateSidebar(){
   if(currentView==='orders') document.querySelector('.nav-btn[onclick*="orders"]')?.classList.add('active');
   if(currentView==='restock') document.querySelector('.nav-btn[onclick*="restock"]')?.classList.add('active');
   // Auto-open warehouse submenu when on warehouse views
-  if(currentView==='inventory'||currentView==='orders') openWarehouseMenu();
+  if(currentView==='inventory'||currentView==='orders'||currentView==='count') openWarehouseMenu();
+  if(currentView==='count') document.querySelector('.nav-btn[onclick*="count"]')?.classList.add('active');
 }
 
 function toggleWarehouseMenu(){
@@ -905,7 +907,8 @@ function openWarehouseMenu(){
 
 function setView(v){
   currentView=v;
-  const titles={dashboard:'Dashboard',inventory:'Warehouse Inventory',orders:'Warehouse Orders',restock:'Restock Log'};
+  const titles={dashboard:'Dashboard',inventory:'Warehouse Inventory',orders:'Warehouse Orders',count:'Inventory Count',restock:'Restock Log'};
+  if(v==='count' && Object.keys(countState).length===0) initCountState();
   document.getElementById('page-title').textContent=titles[v]||v;
   document.getElementById('header-action').innerHTML=v==='inventory'?`
     <div style="display:flex;gap:8px;align-items:center">
@@ -926,6 +929,7 @@ function render(){
   if(currentView==='dashboard') renderDashboard();
   else if(currentView==='inventory') renderInventory();
   else if(currentView==='orders') renderOrders();
+  else if(currentView==='count') renderCount();
   else renderRestock();
 }
 
@@ -1729,6 +1733,364 @@ function recalcAddUnitCost(){
 //  BOOT — credentials baked in, go straight to app
 // ═══════════════════════════════════════════════════
 initApp();
+
+
+// ═══════════════════════════════════════════════════
+//  WAREHOUSE INVENTORY COUNT
+// ═══════════════════════════════════════════════════
+const COUNT_CAT_ORDER = ['DRINKS','CHIPS','SNACKS','CANDY','PASTRY','COLD FOOD','FROZEN FOOD'];
+let countState = {};       // {productId: {verified, actualQty, reason, skip}}
+let countSkippedCats = new Set(); // categories skipped entirely
+let countSubmitted = false;
+let countSubmitResult = null;
+
+function initCountState(){
+  countState = {};
+  countSkippedCats = new Set();
+  countSubmitted = false;
+  countSubmitResult = null;
+  const activeProducts = products.filter(p=>p.active);
+  for(const p of activeProducts){
+    countState[p.id] = {verified:false, actualQty:'', reason:'', skip:false};
+  }
+}
+
+function renderCount(){
+  const activeProducts = products.filter(p=>p.active);
+  const byCategory = {};
+  for(const cat of COUNT_CAT_ORDER) byCategory[cat] = [];
+  for(const p of activeProducts){
+    const cat = p.cat1 && COUNT_CAT_ORDER.includes(p.cat1) ? p.cat1 : 'SNACKS';
+    byCategory[cat].push(p);
+  }
+
+  // Summary stats
+  const total = activeProducts.length;
+  const verified = Object.values(countState).filter(s=>s.verified||s.skip||(s.actualQty!==''&&s.reason!=='')).length;
+  const skippedCount = Object.values(countState).filter(s=>s.skip).length;
+  const pending = total - verified - skippedCount;
+
+  document.getElementById('main-body').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <div class="stat-card" style="padding:8px 14px;min-width:0">
+          <div class="stat-val" style="font-size:16px">${total}</div>
+          <div class="stat-label">Total Items</div>
+        </div>
+        <div class="stat-card" style="padding:8px 14px;min-width:0;border-top-color:#1a7a45">
+          <div class="stat-val" style="font-size:16px;color:#1a7a45">${verified}</div>
+          <div class="stat-label">Verified</div>
+        </div>
+        <div class="stat-card" style="padding:8px 14px;min-width:0;border-top-color:#b35a00">
+          <div class="stat-val" style="font-size:16px;color:#b35a00">${pending > 0 ? pending : 0}</div>
+          <div class="stat-label">Pending</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button onclick="cancelCount()" style="background:transparent;color:#b01c1c;border:1.5px solid #b01c1c;border-radius:7px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer">✕ Cancel</button>
+        <button id="count-submit-btn" onclick="confirmSubmitCount()" class="primary-btn" style="padding:9px 18px" ${countSubmitted?'disabled style="opacity:0.4;cursor:not-allowed"':''}>✓ Submit Count</button>
+      </div>
+    </div>
+
+    ${countSubmitResult ? renderCountResult() : ''}
+
+    ${COUNT_CAT_ORDER.map(cat => {
+      const items = byCategory[cat];
+      if(!items || items.length===0) return '';
+      const skipped = countSkippedCats.has(cat);
+      const catVerified = items.filter(p=>countState[p.id]&&(countState[p.id].verified||countState[p.id].skip||(countState[p.id].actualQty!==''&&countState[p.id].reason!==''))).length;
+      return `
+        <div class="card" style="margin-bottom:12px;${skipped?'opacity:0.5':''}">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${skipped?'0':'10px'}">
+            <div style="display:flex;align-items:center;gap:10px">
+              <div class="card-title" style="margin-bottom:0">${cat}</div>
+              ${!skipped?`<span style="font-size:10px;color:#7080a0">${catVerified}/${items.length} verified</span>`:''}
+            </div>
+            <button onclick="toggleSkipCat('${cat}')"
+              style="background:${skipped?'#e8edf8':'#f4f6fa'};color:${skipped?'#0d1f4e':'#7080a0'};border:1.5px solid ${skipped?'#0d1f4e':'#d0d5e0'};border-radius:6px;padding:4px 12px;font-size:10px;font-weight:700;cursor:pointer">
+              ${skipped?'↩ Include Category':'⏭ Skip Category'}
+            </button>
+          </div>
+          ${skipped?'<div style="font-size:11px;color:#7080a0;padding:4px 0">This category is skipped — quantities will not be updated.</div>':''}
+          ${!skipped?`
+          <table>
+            <thead><tr>
+              <th style="min-width:180px;padding-left:8px">ITEM NAME</th>
+              <th style="min-width:80px">CURRENT QTY</th>
+              <th style="min-width:110px">✓ CORRECT QTY</th>
+              <th style="min-width:100px">ACTUAL QTY</th>
+              <th style="min-width:80px">DIFFERENCE</th>
+              <th style="min-width:130px">REASON</th>
+              <th style="min-width:90px">VERIFIED QTY</th>
+            </tr></thead>
+            <tbody>
+            ${items.map(p => renderCountRow(p)).join('')}
+            </tbody>
+          </table>`:''}
+        </div>`;
+    }).join('')}
+  `;
+}
+
+function renderCountRow(p){
+  const s = countState[p.id] || {verified:false, actualQty:'', reason:'', skip:false};
+  const currentQty = p.qty;
+  const actualQty = s.actualQty !== '' ? parseFloat(s.actualQty) : null;
+  const isDiff = actualQty !== null && actualQty !== currentQty;
+  const diff = isDiff ? actualQty - currentQty : null;
+  const verifiedQty = s.verified ? currentQty : (actualQty !== null ? actualQty : '');
+  const rowBg = s.verified ? '#f0fff4' : (isDiff ? '#fff8f0' : '');
+
+  return `<tr style="background:${rowBg}">
+    <td style="padding-left:8px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:200px;line-height:1.3">${p.name}</td>
+    <td style="font-weight:700;color:#0d1f4e">${currentQty}</td>
+    <td>
+      <label style="display:flex;align-items:center;gap:7px;cursor:pointer">
+        <input type="checkbox" ${s.verified?'checked':''} onchange="toggleVerified(${p.id},this.checked)"
+          style="width:16px;height:16px;accent-color:#1a7a45;cursor:pointer"/>
+        <span style="font-size:11px;color:${s.verified?'#1a7a45':'#7080a0'};font-weight:${s.verified?'700':'500'}">
+          ${s.verified?'✓ Correct':'Mark correct'}
+        </span>
+      </label>
+    </td>
+    <td>
+      ${!s.verified?`<input type="number" value="${s.actualQty}" placeholder="Enter qty"
+        style="width:80px;background:#f4f6fa;border:1.5px solid ${isDiff?'#c9a84c':'#d0d5e0'};border-radius:5px;padding:4px 7px;font-size:12px;color:#1a2340;outline:none"
+        oninput="updateActualQty(${p.id},this.value)"
+        onchange="updateActualQty(${p.id},this.value)"/>`:
+        `<span style="color:#8090b0;font-size:11px">—</span>`}
+    </td>
+    <td style="font-weight:700;color:${diff===null?'#8090b0':diff>0?'#1a7a45':'#b01c1c'}">
+      ${diff===null?(s.verified?'—':''):diff>0?'+'+diff:diff}
+    </td>
+    <td>
+      ${isDiff&&!s.verified?`
+        <select onchange="updateReason(${p.id},this.value)"
+          style="background:#f4f6fa;border:1.5px solid ${s.reason?'#0d1f4e':'#e8943a'};border-radius:5px;padding:4px 7px;font-size:11px;color:#1a2340;outline:none;cursor:pointer">
+          <option value="" ${!s.reason?'selected':''}>-- Select --</option>
+          <option value="Spoilage" ${s.reason==='Spoilage'?'selected':''}>Spoilage</option>
+          <option value="Manual Increase" ${s.reason==='Manual Increase'?'selected':''}>Manual Increase</option>
+        </select>`:
+        `<span style="color:#8090b0;font-size:11px">${s.verified?'—':(actualQty!==null&&!isDiff?'No change':'')}</span>`}
+    </td>
+    <td style="font-weight:700;color:#1a7a45">
+      ${verifiedQty!==''?verifiedQty:'<span style="color:#d0d5e0;font-size:11px">—</span>'}
+    </td>
+  </tr>`;
+}
+
+function toggleVerified(id, checked){
+  countState[id].verified = checked;
+  if(checked){ countState[id].actualQty=''; countState[id].reason=''; }
+  render();
+}
+
+function updateActualQty(id, val){
+  countState[id].actualQty = val;
+  countState[id].verified = false;
+  if(parseFloat(val) === products.find(p=>p.id===id)?.qty) countState[id].reason='';
+  render();
+}
+
+function updateReason(id, val){
+  countState[id].reason = val;
+  // Don't re-render — just update state to avoid losing focus
+  countState[id]._pendingReason = val;
+}
+
+function toggleSkipCat(cat){
+  if(countSkippedCats.has(cat)){
+    countSkippedCats.delete(cat);
+    // un-skip all items in this cat
+    const items = products.filter(p=>p.active && p.cat1===cat);
+    for(const p of items) countState[p.id].skip = false;
+  } else {
+    countSkippedCats.add(cat);
+    const items = products.filter(p=>p.active && p.cat1===cat);
+    for(const p of items) countState[p.id].skip = true;
+  }
+  render();
+}
+
+function cancelCount(){
+  initCountState();
+  render();
+}
+
+function getUnresolvedItems(){
+  const activeProducts = products.filter(p=>p.active);
+  return activeProducts.filter(p=>{
+    const s = countState[p.id];
+    if(!s) return false;
+    if(s.skip || countSkippedCats.has(p.cat1)) return false;
+    if(s.verified) return false;
+    const actualQty = s.actualQty !== '' ? parseFloat(s.actualQty) : null;
+    if(actualQty !== null){
+      if(actualQty !== p.qty && !s.reason) return false; // has qty but missing reason — will catch separately
+      return false; // has qty entered
+    }
+    return true; // nothing entered
+  });
+}
+
+function getMissingReasonItems(){
+  const activeProducts = products.filter(p=>p.active);
+  return activeProducts.filter(p=>{
+    const s = countState[p.id];
+    if(!s || s.skip || countSkippedCats.has(p.cat1) || s.verified) return false;
+    const actualQty = s.actualQty !== '' ? parseFloat(s.actualQty) : null;
+    return actualQty !== null && actualQty !== p.qty && !s.reason && !(s._pendingReason);
+  });
+}
+
+function confirmSubmitCount(){
+  // Sync any pending reason selections
+  for(const id in countState){
+    if(countState[id]._pendingReason){
+      countState[id].reason = countState[id]._pendingReason;
+      delete countState[id]._pendingReason;
+    }
+  }
+
+  const unresolved = getUnresolvedItems();
+  const missingReason = getMissingReasonItems();
+
+  if(missingReason.length > 0){
+    showToast(`⚠ Please select a reason for: ${missingReason.map(p=>p.name).join(', ')}`, 5000);
+    return;
+  }
+
+  // Build summary for confirmation
+  const toUpdate = products.filter(p=>{
+    const s = countState[p.id];
+    if(!s || s.skip || countSkippedCats.has(p.cat1) || s.verified) return false;
+    const aq = s.actualQty !== '' ? parseFloat(s.actualQty) : null;
+    return aq !== null && aq !== p.qty && s.reason;
+  });
+
+  const skippedCatList = [...countSkippedCats];
+  const unresolvedNames = unresolved.map(p=>p.name);
+
+  // Show confirmation modal
+  document.getElementById('modal-container').innerHTML = `
+    <div class="modal-overlay">
+      <div class="modal" style="width:540px">
+        <div class="modal-title">Confirm Inventory Count Submission</div>
+
+        ${toUpdate.length>0?`
+        <div style="background:#e8edf8;border-radius:7px;padding:10px 12px;margin-bottom:12px">
+          <div style="font-size:11px;font-weight:700;color:#0d1f4e;margin-bottom:6px">📦 ${toUpdate.length} qty adjustment${toUpdate.length>1?'s':''} will be saved:</div>
+          ${toUpdate.map(p=>{
+            const s=countState[p.id];
+            const aq=parseFloat(s.actualQty);
+            const diff=aq-p.qty;
+            return `<div style="font-size:11px;color:#2a3455;padding:2px 0">• ${p.name}: ${p.qty} → ${aq} (${diff>0?'+':''}${diff}) — ${s.reason}</div>`;
+          }).join('')}
+        </div>`:''}
+
+        ${skippedCatList.length>0?`
+        <div style="background:#f4f6fa;border-radius:7px;padding:8px 12px;margin-bottom:12px">
+          <div style="font-size:11px;font-weight:700;color:#5060a0;margin-bottom:4px">⏭ Skipped categories (no changes):</div>
+          ${skippedCatList.map(c=>`<div style="font-size:11px;color:#7080a0;padding:1px 0">• ${c}</div>`).join('')}
+        </div>`:''}
+
+        ${unresolvedNames.length>0?`
+        <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:7px;padding:8px 12px;margin-bottom:12px">
+          <div style="font-size:11px;font-weight:700;color:#b35a00;margin-bottom:4px">⚠ ${unresolvedNames.length} item${unresolvedNames.length>1?'s':''} not verified (will be skipped):</div>
+          ${unresolvedNames.map(n=>`<div style="font-size:11px;color:#8060a0;padding:1px 0">• ${n}</div>`).join('')}
+        </div>`:''}
+
+        <div style="font-size:12px;color:#5060a0;margin-bottom:14px">Are you sure you want to update warehouse inventory?</div>
+
+        <div style="display:flex;gap:10px">
+          <button id="confirm-count-btn" class="primary-btn" onclick="submitCount()" style="padding:9px 18px">✓ Yes, Submit Count</button>
+          <button onclick="closeModal()" class="secondary-btn">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function submitCount(){
+  const btn = document.getElementById('confirm-count-btn');
+  if(btn){ btn.disabled=true; btn.textContent='⏳ Saving…'; btn.style.opacity='0.6'; btn.style.cursor='not-allowed'; }
+  countSubmitted = true;
+  closeModal();
+
+  countSubmitResult = {added:[], adjustments:[], errors:[]};
+
+  const now = new Date().toISOString();
+  const countDate = now.slice(0,10);
+
+  const toUpdate = products.filter(p=>{
+    const s = countState[p.id];
+    if(!s || s.skip || countSkippedCats.has(p.cat1) || s.verified) return false;
+    const aq = s.actualQty !== '' ? parseFloat(s.actualQty) : null;
+    return aq !== null && s.reason;
+  });
+
+  for(const p of toUpdate){
+    const s = countState[p.id];
+    const newQty = parseFloat(s.actualQty);
+    const diff = newQty - p.qty;
+    const reason = s.reason;
+
+    products = products.map(x=>x.id===p.id?{...x,qty:newQty}:x);
+
+    try{
+      await saveProduct(products.find(x=>x.id===p.id));
+      // Save to inventory_count_log table
+      if(useSupabase){
+        await sbFetch('inventory_count_log', {
+          method:'POST',
+          prefer:'resolution=merge-duplicates,return=minimal',
+          body: JSON.stringify([{
+            id: Date.now() + Math.floor(Math.random()*10000),
+            product_id: p.id,
+            product_name: p.name,
+            previous_qty: p.qty,
+            new_qty: newQty,
+            difference: diff,
+            reason: reason,
+            count_date: countDate,
+            created_at: now
+          }])
+        });
+      }
+      // Also log to restock log
+      const entry = {id:Date.now()+Math.random(), date:countDate, product:p.name, qty:diff, by:`Inventory Count (${reason})`};
+      restockLog = [entry,...restockLog];
+      await saveRestock(entry);
+
+      countSubmitResult.adjustments.push({name:p.name, prev:p.qty, newQty, diff, reason});
+    } catch(e){
+      countSubmitResult.errors.push({name:p.name, error:e.message||'Save failed'});
+    }
+  }
+
+  updateSidebar();
+  render();
+  showToast(`Count submitted — ${countSubmitResult.adjustments.length} adjustment${countSubmitResult.adjustments.length!==1?'s':''} saved`);
+}
+
+function renderCountResult(){
+  const {adjustments, errors} = countSubmitResult;
+  const allOk = errors.length===0;
+  return `
+    <div class="card" style="border-top:3px solid ${allOk?'#1a7a45':'#b35a00'};margin-bottom:14px">
+      <div class="card-title">${allOk?'✓ Inventory Count Submitted':'⚠ Count Submitted with Errors'}</div>
+      ${adjustments.length>0?`
+        <div style="background:#e8edf8;border-radius:6px;padding:8px 12px;margin-bottom:8px">
+          <div style="font-size:12px;font-weight:700;color:#0d1f4e;margin-bottom:4px">✓ ${adjustments.length} adjustment${adjustments.length>1?'s':''} saved</div>
+          ${adjustments.map(a=>`<div style="font-size:11px;color:#2a3455;padding:1px 0">• ${a.name}: ${a.prev} → ${a.newQty} (${a.diff>0?'+':''}${a.diff}) — ${a.reason}</div>`).join('')}
+        </div>`:'<div style="font-size:12px;color:#7080a0;margin-bottom:8px">No quantity adjustments were made.</div>'}
+      ${errors.length>0?`
+        <div style="background:#fde8e8;border-radius:6px;padding:8px 12px;margin-bottom:8px">
+          <div style="font-size:12px;font-weight:700;color:#b01c1c;margin-bottom:4px">✗ ${errors.length} error${errors.length>1?'s':''}</div>
+          ${errors.map(e=>`<div style="font-size:11px;color:#b01c1c;padding:1px 0">• ${e.name}: ${e.error}</div>`).join('')}
+        </div>`:''}
+      <button onclick="initCountState();countSubmitResult=null;render()" style="margin-top:4px;background:#0d1f4e;color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:11px;font-weight:700;cursor:pointer">🔄 Start New Count</button>
+    </div>`;
+}
 
 // Register service worker for PWA installability
 if('serviceWorker' in navigator){
