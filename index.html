@@ -1794,7 +1794,7 @@ function renderCount(){
 
     ${countSubmitResult ? renderCountResult() : ''}
 
-    ${COUNT_CAT_ORDER.map(cat => {
+    ${countSubmitResult ? '' : COUNT_CAT_ORDER.map(cat => {
       const items = byCategory[cat];
       if(!items || items.length===0) return '';
       const skipped = countSkippedCats.has(cat);
@@ -1828,7 +1828,7 @@ function renderCount(){
             </tbody>
           </table>`:''}
         </div>`;
-    }).join('')}
+    }).join('')||''}
   `;
 }
 
@@ -1841,7 +1841,7 @@ function renderCountRow(p){
   const verifiedQty = s.verified ? currentQty : (actualQty !== null ? actualQty : '');
   const rowBg = s.verified ? '#f0fff4' : (isDiff ? '#fff8f0' : '');
 
-  return `<tr style="background:${rowBg}">
+  return `<tr id="count-row-${p.id}" style="background:${rowBg}">
     <td style="padding-left:8px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:200px;line-height:1.3">${p.name}</td>
     <td style="font-weight:700;color:#0d1f4e">${currentQty}</td>
     <td>
@@ -1856,24 +1856,20 @@ function renderCountRow(p){
     <td>
       ${!s.verified?`<input type="number" value="${s.actualQty}" placeholder="Enter qty"
         style="width:80px;background:#f4f6fa;border:1.5px solid ${isDiff?'#c9a84c':'#d0d5e0'};border-radius:5px;padding:4px 7px;font-size:12px;color:#1a2340;outline:none"
-        oninput="updateActualQty(${p.id},this.value)"
-        onchange="updateActualQty(${p.id},this.value)"/>`:
+        oninput="updateActualQty(${p.id},this.value)"/>`:
         `<span style="color:#8090b0;font-size:11px">—</span>`}
     </td>
-    <td style="font-weight:700;color:${diff===null?'#8090b0':diff>0?'#1a7a45':'#b01c1c'}">
+    <td class="count-diff" style="font-weight:700;color:${diff===null?'#8090b0':diff>0?'#1a7a45':'#b01c1c'}">
       ${diff===null?(s.verified?'—':''):diff>0?'+'+diff:diff}
     </td>
     <td>
-      ${isDiff&&!s.verified?`
-        <select onchange="updateReason(${p.id},this.value)"
-          style="background:#f4f6fa;border:1.5px solid ${s.reason?'#0d1f4e':'#e8943a'};border-radius:5px;padding:4px 7px;font-size:11px;color:#1a2340;outline:none;cursor:pointer">
-          <option value="" ${!s.reason?'selected':''}>-- Select --</option>
-          <option value="Spoilage" ${s.reason==='Spoilage'?'selected':''}>Spoilage</option>
-          <option value="Manual Increase" ${s.reason==='Manual Increase'?'selected':''}>Manual Increase</option>
-        </select>`:
-        `<span style="color:#8090b0;font-size:11px">${s.verified?'—':(actualQty!==null&&!isDiff?'No change':'')}</span>`}
+      <span class="count-reason" style="font-size:11px;font-weight:600;color:${isDiff&&!s.verified?(s.reason==='Spoilage'?'#b01c1c':'#1a7a45'):'#8090b0'};display:${isDiff&&!s.verified&&s.reason?'':'none'}">
+        ${isDiff&&!s.verified&&s.reason?s.reason:''}
+      </span>
+      ${!isDiff&&!s.verified?`<span style="color:#8090b0;font-size:11px">${s.verified?'—':(actualQty!==null?'No change':'')}</span>`:''}
+      ${s.verified?`<span style="color:#8090b0;font-size:11px">—</span>`:''}
     </td>
-    <td style="font-weight:700;color:#1a7a45">
+    <td class="count-verified-qty" style="font-weight:700;color:#1a7a45">
       ${verifiedQty!==''?verifiedQty:'<span style="color:#d0d5e0;font-size:11px">—</span>'}
     </td>
   </tr>`;
@@ -1886,10 +1882,42 @@ function toggleVerified(id, checked){
 }
 
 function updateActualQty(id, val){
+  const p = products.find(x=>x.id===id);
+  const currentQty = p ? p.qty : 0;
+  const newQty = val === '' ? null : parseFloat(val);
   countState[id].actualQty = val;
   countState[id].verified = false;
-  if(parseFloat(val) === products.find(p=>p.id===id)?.qty) countState[id].reason='';
-  render();
+  // Auto-populate reason based on direction
+  if(newQty !== null && newQty !== currentQty){
+    countState[id].reason = newQty < currentQty ? 'Spoilage' : 'Manual Increase';
+  } else {
+    countState[id].reason = '';
+  }
+  // Update diff and verified qty cells without full re-render
+  const diff = newQty !== null ? newQty - currentQty : null;
+  const rowEl = document.getElementById('count-row-' + id);
+  if(rowEl){
+    const diffEl = rowEl.querySelector('.count-diff');
+    const verEl = rowEl.querySelector('.count-verified-qty');
+    const reasonEl = rowEl.querySelector('.count-reason');
+    const adjEl = rowEl.querySelector('.count-adj-row');
+    if(diffEl){
+      diffEl.textContent = diff === null ? '' : (diff > 0 ? '+' + diff : diff);
+      diffEl.style.color = diff === null ? '#8090b0' : diff > 0 ? '#1a7a45' : '#b01c1c';
+    }
+    if(verEl) verEl.textContent = newQty !== null ? newQty : '—';
+    if(reasonEl && diff !== null && newQty !== currentQty){
+      reasonEl.textContent = countState[id].reason;
+      reasonEl.style.display = '';
+    } else if(reasonEl){
+      reasonEl.textContent = '';
+    }
+    if(adjEl){
+      adjEl.style.display = (diff !== null && newQty !== currentQty) ? '' : 'none';
+    }
+    // Update row highlight
+    rowEl.style.background = diff !== null && newQty !== currentQty ? '#fff8f0' : '';
+  }
 }
 
 function updateReason(id, val){
@@ -2068,6 +2096,9 @@ async function submitCount(){
   }
 
   updateSidebar();
+  // Clear the count state so the forms disappear — result screen shows instead
+  countState = {};
+  countSkippedCats = new Set();
   render();
   showToast(`Count submitted — ${countSubmitResult.adjustments.length} adjustment${countSubmitResult.adjustments.length!==1?'s':''} saved`);
 }
