@@ -34,6 +34,12 @@ body{font-family:'Segoe UI',system-ui,sans-serif;font-size:13px;background:#f0f2
 .sync-busy{color:#c9a84c}
 .reset-btn{margin:0 8px 8px;background:none;border:1px solid #2a3a5e;color:#5060a0;padding:7px 12px;border-radius:7px;cursor:pointer;font-size:10px;font-weight:600;text-align:left;width:calc(100% - 16px)}
 
+
+/* ── Warehouse submenu ── */
+.nav-sub{padding-left:22px!important;font-size:11px!important;opacity:.9}
+.nav-arrow{margin-left:auto;font-size:14px;transition:transform .2s;display:inline-block}
+.nav-arrow.open{transform:rotate(90deg)}
+
 /* ── Main ── */
 #main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
 .main-header{background:#fff;border-bottom:1px solid #d0d5e0;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
@@ -235,7 +241,13 @@ tr:hover td{background:#f7f9ff}
     </div>
     <div class="sb-nav">
       <button class="nav-btn active" onclick="setView('dashboard')">◈ &nbsp;<span>Dashboard</span></button>
-      <button class="nav-btn" onclick="setView('inventory')">▦ &nbsp;<span>Warehouse Inventory</span></button>
+      <div id="warehouse-nav">
+        <button class="nav-btn" id="warehouse-toggle" onclick="toggleWarehouseMenu()">▦ &nbsp;<span>Warehouse</span><span class="nav-arrow" id="warehouse-arrow">›</span></button>
+        <div id="warehouse-submenu" style="display:none">
+          <button class="nav-btn nav-sub" onclick="setView('inventory')">▦ &nbsp;<span>Warehouse Inventory</span></button>
+          <button class="nav-btn nav-sub" onclick="setView('orders')">📦 &nbsp;<span>Warehouse Orders</span></button>
+        </div>
+      </div>
       <button class="nav-btn" onclick="setView('restock')">↑ &nbsp;<span>Restock Log</span></button>
     </div>
     <div id="low-alert-sb"></div>
@@ -583,7 +595,7 @@ let restockLog = [];
 let currentView = 'dashboard';
 let searchTerm = '';
 let showActiveOnly = false;
-let categoryFilter = '';
+let categoryFilters = new Set();
 let aiOpen = false;
 let aiMessages = [];
 let aiLoading = false;
@@ -866,14 +878,35 @@ function updateSidebar(){
   const low=getLow();
   document.getElementById('low-alert-sb').innerHTML=low.length>0
     ?`<div class="low-alert-sb">⚠ ${low.length} active item${low.length>1?'s':''} below min level</div>`:'';
-  document.querySelectorAll('.nav-btn').forEach((b,i)=>{
-    b.classList.toggle('active',['dashboard','inventory','restock'][i]===currentView);
-  });
+  // Update active states
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
+  if(currentView==='dashboard') document.querySelector('.nav-btn[onclick*="dashboard"]')?.classList.add('active');
+  if(currentView==='inventory') document.querySelector('.nav-btn[onclick*="inventory"]')?.classList.add('active');
+  if(currentView==='orders') document.querySelector('.nav-btn[onclick*="orders"]')?.classList.add('active');
+  if(currentView==='restock') document.querySelector('.nav-btn[onclick*="restock"]')?.classList.add('active');
+  // Auto-open warehouse submenu when on warehouse views
+  if(currentView==='inventory'||currentView==='orders') openWarehouseMenu();
+}
+
+function toggleWarehouseMenu(){
+  const sub=document.getElementById('warehouse-submenu');
+  const arrow=document.getElementById('warehouse-arrow');
+  if(!sub) return;
+  const isOpen=sub.style.display!=='none';
+  sub.style.display=isOpen?'none':'block';
+  arrow?.classList.toggle('open',!isOpen);
+}
+function openWarehouseMenu(){
+  const sub=document.getElementById('warehouse-submenu');
+  const arrow=document.getElementById('warehouse-arrow');
+  if(sub) sub.style.display='block';
+  if(arrow) arrow.classList.add('open');
 }
 
 function setView(v){
   currentView=v;
-  document.getElementById('page-title').textContent=v==='dashboard'?'Dashboard':v==='inventory'?'Warehouse Inventory':'Restock Log';
+  const titles={dashboard:'Dashboard',inventory:'Warehouse Inventory',orders:'Warehouse Orders',restock:'Restock Log'};
+  document.getElementById('page-title').textContent=titles[v]||v;
   document.getElementById('header-action').innerHTML=v==='inventory'?`
     <div style="display:flex;gap:8px;align-items:center">
       <div class="export-wrap" id="export-wrap">
@@ -892,6 +925,7 @@ function setView(v){
 function render(){
   if(currentView==='dashboard') renderDashboard();
   else if(currentView==='inventory') renderInventory();
+  else if(currentView==='orders') renderOrders();
   else renderRestock();
 }
 
@@ -946,15 +980,15 @@ function renderInventory(){
   let filtered=products.filter(p=>{
     const ms=p.name.toLowerCase().includes(searchTerm.toLowerCase())||p.upc.includes(searchTerm);
     const matchActive=showActiveOnly?p.active:true;
-    const matchCat=categoryFilter===''||p.cat1===categoryFilter;
+    const matchCat=categoryFilters.size===0||categoryFilters.has(p.cat1);
     return ms&&matchActive&&matchCat;
   });
   const activeCount=products.filter(p=>p.active).length;
   const inactiveCount=products.filter(p=>!p.active).length;
   document.getElementById('main-body').innerHTML=`
     <div class="cat-filters">
-      <button class="cat-btn${categoryFilter===''?' active':''}" onclick="categoryFilter='';render()">ALL</button>
-      ${CATEGORIES.map(c=>`<button class="cat-btn cat-${c.replace(' ','-')}${categoryFilter===c?' active':''}" onclick="categoryFilter='${c}';render()">${c}</button>`).join('')}
+      <button class="cat-btn${categoryFilters.size===0?' active':''}" onclick="categoryFilters.clear();render()">ALL</button>
+      ${CATEGORIES.map(c=>`<button class="cat-btn cat-${c.replace(' ','-')}${categoryFilters.has(c)?' active':''}" onclick="(function(){if(categoryFilters.has('${c}')){categoryFilters.delete('${c}')}else{categoryFilters.add('${c}')};render()})()">${c}</button>`).join('')}
     </div>
     <div class="filter-row" style="margin-bottom:10px">
       <input class="search-input" placeholder="Search by name or UPC…" value="${searchTerm}" oninput="searchTerm=this.value;render()"/>
@@ -1231,7 +1265,7 @@ function exportExcel(mode){
     data = products.filter(p=>{
       const ms = p.name.toLowerCase().includes(searchTerm.toLowerCase())||p.upc.includes(searchTerm);
       const matchActive = showActiveOnly ? p.active : true;
-      const matchCat = categoryFilter==='' || p.cat1===categoryFilter;
+      const matchCat = categoryFilters.size===0 || categoryFilters.has(p.cat1);
       return ms && matchActive && matchCat;
     });
   }
@@ -1260,6 +1294,223 @@ function exportExcel(mode){
   a.click();
   URL.revokeObjectURL(url);
   showToast(`Exported ${data.length} items to CSV`);
+}
+
+
+// ═══════════════════════════════════════════════════
+//  WAREHOUSE ORDERS
+// ═══════════════════════════════════════════════════
+let orderPreview = []; // [{name, casesOrdered, piecesPerBox, qtyToAdd, productId, matched}]
+let orderSubmitResult = null;
+
+function renderOrders(){
+  document.getElementById('main-body').innerHTML=`
+    <div class="card" style="margin-bottom:14px">
+      <div class="card-title">Upload Warehouse Order</div>
+      <div style="font-size:12px;color:#5060a0;margin-bottom:12px;line-height:1.6">
+        Upload an Excel file with <strong>Column A: Item Name</strong> and <strong>Column B: Cases Ordered</strong>.<br>
+        The system will match items to your inventory and calculate quantities automatically.
+      </div>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <label style="background:#0d1f4e;color:#fff;border-radius:7px;padding:8px 16px;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:8px">
+          📂 Choose Excel File
+          <input type="file" id="order-file-input" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleOrderFile(this)"/>
+        </label>
+        <span style="font-size:11px;color:#8090b0">Supports .xlsx, .xls, .csv</span>
+      </div>
+      <div style="margin-top:10px;font-size:11px;color:#8090b0">
+        💡 Tip: Column A = item name, Column B = number of cases purchased. No headers needed, but headers are fine too.
+      </div>
+    </div>
+
+    ${orderPreview.length>0 ? renderOrderPreview() : ''}
+    ${orderSubmitResult ? renderOrderResult() : ''}
+  `;
+}
+
+function renderOrderPreview(){
+  const matched = orderPreview.filter(r=>r.matched);
+  const unmatched = orderPreview.filter(r=>!r.matched);
+  return `
+    <div class="card" style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div>
+          <div class="card-title" style="margin-bottom:2px">Order Preview</div>
+          <div style="font-size:11px;color:#7080a0">${matched.length} matched · ${unmatched.length} unmatched · Review and adjust quantities before submitting</div>
+        </div>
+        <button class="primary-btn" onclick="submitOrder()" style="padding:9px 18px">✓ Submit Order & Update Inventory</button>
+      </div>
+
+      ${matched.length>0?`
+      <table style="margin-bottom:${unmatched.length>0?'16px':'0'}">
+        <thead><tr>
+          <th style="padding-left:8px;min-width:200px">ITEM NAME</th>
+          <th>CASES ORDERED</th>
+          <th>PCS / CASE</th>
+          <th>QTY TO ADD</th>
+          <th>CURRENT QTY</th>
+          <th>NEW QTY</th>
+        </tr></thead>
+        <tbody>
+        ${matched.map((r,i)=>{
+          const p=products.find(x=>x.id===r.productId);
+          const currentQty=p?p.qty:0;
+          return `<tr>
+            <td style="padding-left:8px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:220px">${r.name}</td>
+            <td style="color:#5060a0">${r.casesOrdered}</td>
+            <td style="color:#5060a0">${r.piecesPerBox}</td>
+            <td><input type="number" value="${r.qtyToAdd}" min="0"
+              style="width:70px;background:#f4f6fa;border:1.5px solid #c9a84c;border-radius:5px;padding:4px 7px;font-size:12px;font-weight:700;color:#0d1f4e;outline:none"
+              onchange="updateOrderQty(${i}, this.value)"
+              oninput="updateOrderQty(${i}, this.value)"/></td>
+            <td style="color:#7080a0">${currentQty}</td>
+            <td style="font-weight:700;color:#1a7a45">${currentQty + r.qtyToAdd}</td>
+          </tr>`;
+        }).join('')}
+        </tbody>
+      </table>
+      `:''}
+
+      ${unmatched.length>0?`
+      <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:7px;padding:10px 12px">
+        <div style="font-size:11px;font-weight:700;color:#b35a00;margin-bottom:6px">⚠ ${unmatched.length} item${unmatched.length>1?'s':''} not found in inventory (will be skipped)</div>
+        ${unmatched.map(r=>`<div style="font-size:11px;color:#7060a0;padding:2px 0">• ${r.name} (${r.casesOrdered} cases)</div>`).join('')}
+      </div>
+      `:''}
+    </div>
+  `;
+}
+
+function renderOrderResult(){
+  const ok = orderSubmitResult.filter(r=>r.success);
+  const fail = orderSubmitResult.filter(r=>!r.success);
+  return `
+    <div class="card" style="border-top:3px solid ${fail.length===0?'#1a7a45':'#b35a00'}">
+      <div class="card-title">${fail.length===0?'✓ Order Submitted Successfully':'⚠ Order Submitted with Errors'}</div>
+      ${ok.length>0?`<div style="font-size:12px;color:#1a7a45;margin-bottom:8px">✓ Updated ${ok.length} item${ok.length>1?'s':''} successfully</div>`:''}
+      ${fail.length>0?`
+        <div style="font-size:12px;color:#b01c1c;margin-bottom:6px">✗ ${fail.length} item${fail.length>1?'s':''} failed to update:</div>
+        ${fail.map(r=>`<div style="font-size:11px;color:#b01c1c;padding:2px 0">• ${r.name}: ${r.error}</div>`).join('')}
+      `:''}
+      <button onclick="orderPreview=[];orderSubmitResult=null;render()" style="margin-top:12px;background:none;border:1px solid #d0d5e0;border-radius:6px;padding:6px 14px;font-size:11px;font-weight:600;color:#5060a0;cursor:pointer">Upload Another Order</button>
+    </div>
+  `;
+}
+
+function updateOrderQty(index, val){
+  const n = parseInt(val)||0;
+  orderPreview[index].qtyToAdd = n;
+  // Update the new qty display in the same row
+  const rows = document.querySelectorAll('#main-body tbody tr');
+  if(rows[index]){
+    const p = products.find(x=>x.id===orderPreview.filter(r=>r.matched)[index]?.productId);
+    const currentQty = p?p.qty:0;
+    const cells = rows[index].querySelectorAll('td');
+    if(cells[5]) cells[5].textContent = currentQty + n;
+  }
+}
+
+function handleOrderFile(input){
+  const file = input.files[0];
+  if(!file) return;
+  orderSubmitResult = null;
+
+  if(file.name.endsWith('.csv')){
+    const reader = new FileReader();
+    reader.onload = e => parseOrderCSV(e.target.result);
+    reader.readAsText(file);
+  } else {
+    // Parse XLSX using SheetJS from CDN
+    if(typeof XLSX === 'undefined'){
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      script.onload = () => {
+        const reader = new FileReader();
+        reader.onload = e => parseOrderXLSX(e.target.result);
+        reader.readAsArrayBuffer(file);
+      };
+      document.head.appendChild(script);
+    } else {
+      const reader = new FileReader();
+      reader.onload = e => parseOrderXLSX(e.target.result);
+      reader.readAsArrayBuffer(file);
+    }
+  }
+}
+
+function parseOrderXLSX(buffer){
+  const wb = XLSX.read(new Uint8Array(buffer), {type:'array'});
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+  processOrderRows(rows);
+}
+
+function parseOrderCSV(text){
+  const rows = text.split(/\r?\n/).map(line=>line.split(',').map(c=>c.trim().replace(/^"|"$/g,'')));
+  processOrderRows(rows);
+}
+
+function processOrderRows(rows){
+  orderPreview = [];
+  for(const row of rows){
+    if(!row || row.length < 2) continue;
+    const rawName = String(row[0]).trim();
+    const rawCases = String(row[1]).trim();
+    if(!rawName || rawName === '') continue;
+    const cases = parseInt(rawCases) || 0;
+    if(isNaN(cases) && rawCases.toLowerCase()==='cases') continue; // skip header row
+
+    // Try to match product by name (fuzzy)
+    const lname = rawName.toLowerCase();
+    let matched = products.find(p=>p.name.toLowerCase()===lname);
+    if(!matched) matched = products.find(p=>p.name.toLowerCase().includes(lname)||lname.includes(p.name.toLowerCase()));
+
+    if(matched){
+      const ppb = matched.piecesPerBox || 1;
+      orderPreview.push({
+        name: rawName,
+        casesOrdered: cases,
+        piecesPerBox: ppb,
+        qtyToAdd: cases * ppb,
+        productId: matched.id,
+        matched: true
+      });
+    } else {
+      orderPreview.push({name:rawName, casesOrdered:cases, piecesPerBox:0, qtyToAdd:0, productId:null, matched:false});
+    }
+  }
+  render();
+  // Scroll to preview
+  setTimeout(()=>window.scrollTo({top:300,behavior:'smooth'}), 100);
+}
+
+async function submitOrder(){
+  orderSubmitResult = [];
+  const toUpdate = orderPreview.filter(r=>r.matched && r.qtyToAdd > 0);
+
+  for(const item of toUpdate){
+    const p = products.find(x=>x.id===item.productId);
+    if(!p){ orderSubmitResult.push({name:item.name, success:false, error:'Product not found'}); continue; }
+
+    const newQty = p.qty + item.qtyToAdd;
+    products = products.map(x=>x.id===p.id ? {...x, qty:newQty} : x);
+
+    // Log to restock
+    const entry = {id:Date.now()+Math.random(), date:new Date().toISOString().slice(0,10), product:p.name, qty:item.qtyToAdd, by:'Warehouse Order'};
+    restockLog = [entry, ...restockLog];
+
+    try{
+      await saveProduct(products.find(x=>x.id===p.id));
+      await saveRestock(entry);
+      orderSubmitResult.push({name:item.name, success:true});
+    } catch(e){
+      orderSubmitResult.push({name:item.name, success:false, error:e.message||'Save failed'});
+    }
+  }
+
+  updateSidebar();
+  render();
+  showToast(`Order submitted — ${orderSubmitResult.filter(r=>r.success).length} items updated`);
 }
 
 // ═══════════════════════════════════════════════════
