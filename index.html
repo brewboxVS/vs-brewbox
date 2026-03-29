@@ -1091,6 +1091,18 @@ function openAddModal(){
     </div>`;
 }
 
+function openAddModalPrefilled(name, cases){
+  // Open add modal with name pre-filled, switch to inventory first
+  setView('inventory');
+  setTimeout(()=>{
+    openAddModal();
+    setTimeout(()=>{
+      const nameEl = document.getElementById('n-name');
+      if(nameEl) nameEl.value = name;
+    }, 50);
+  }, 100);
+}
+
 async function addProduct(){
   const sv=Array.from(document.querySelectorAll('#n-vendors input:checked')).map(c=>c.value);
   const p={id:Date.now(),name:document.getElementById('n-name').value||'New Item',upc:document.getElementById('n-upc').value||'',qty:parseFloat(document.getElementById('n-qty').value)||0,minLevel:parseFloat(document.getElementById('n-min').value)||0,maxLevel:parseFloat(document.getElementById('n-max').value)||0,unitCost:parseFloat(document.getElementById('n-cost').value)||0,salePrice:parseFloat(document.getElementById('n-price').value)||0,costPerBox:parseFloat(document.getElementById('n-cpb').value)||0,piecesPerBox:parseFloat(document.getElementById('n-ppb').value)||0,cat1:document.getElementById('n-cat1').value,cat2:document.getElementById('n-cat2').value,vendors:sv,active:true};
@@ -1338,7 +1350,7 @@ function renderOrderPreview(){
           <div class="card-title" style="margin-bottom:2px">Order Preview</div>
           <div style="font-size:11px;color:#7080a0">${matched.length} matched · ${unmatched.length} unmatched · Review and adjust quantities before submitting</div>
         </div>
-        <button class="primary-btn" onclick="submitOrder()" style="padding:9px 18px">✓ Submit Order & Update Inventory</button>
+        <button class="primary-btn" id="submit-order-btn" onclick="submitOrder()" style="padding:9px 18px">✓ Submit Order & Update Inventory</button>
       </div>
 
       ${matched.length>0?`
@@ -1373,8 +1385,14 @@ function renderOrderPreview(){
 
       ${unmatched.length>0?`
       <div style="background:#fff8e6;border:1px solid #f0c040;border-radius:7px;padding:10px 12px">
-        <div style="font-size:11px;font-weight:700;color:#b35a00;margin-bottom:6px">⚠ ${unmatched.length} item${unmatched.length>1?'s':''} not found in inventory (will be skipped)</div>
-        ${unmatched.map(r=>`<div style="font-size:11px;color:#7060a0;padding:2px 0">• ${r.name} (${r.casesOrdered} cases)</div>`).join('')}
+        <div style="font-size:11px;font-weight:700;color:#b35a00;margin-bottom:8px">⚠ ${unmatched.length} item${unmatched.length>1?'s':''} not found in inventory (will be skipped)</div>
+        ${unmatched.map(r=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0;border-bottom:1px solid #f0e8c8">
+          <span style="font-size:11px;color:#7060a0">• ${r.name} (${r.casesOrdered} cases)</span>
+          <button onclick="openAddModalPrefilled('${r.name.replace(/'/g,"\\'")}', ${r.casesOrdered})"
+            style="background:#0d1f4e;color:#fff;border:none;border-radius:5px;padding:3px 9px;font-size:10px;font-weight:700;cursor:pointer;white-space:nowrap;margin-left:10px">
+            + Add to Inventory
+          </button>
+        </div>`).join('')}
       </div>
       `:''}
     </div>
@@ -1392,7 +1410,7 @@ function renderOrderResult(){
         <div style="font-size:12px;color:#b01c1c;margin-bottom:6px">✗ ${fail.length} item${fail.length>1?'s':''} failed to update:</div>
         ${fail.map(r=>`<div style="font-size:11px;color:#b01c1c;padding:2px 0">• ${r.name}: ${r.error}</div>`).join('')}
       `:''}
-      <button onclick="orderPreview=[];orderSubmitResult=null;render()" style="margin-top:12px;background:none;border:1px solid #d0d5e0;border-radius:6px;padding:6px 14px;font-size:11px;font-weight:600;color:#5060a0;cursor:pointer">Upload Another Order</button>
+      <button onclick="orderPreview=[];orderSubmitResult=null;document.getElementById('order-file-input')&&(document.getElementById('order-file-input').value='');render()" style="margin-top:12px;background:#0d1f4e;color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:11px;font-weight:700;cursor:pointer">↑ Upload Another Order</button>
     </div>
   `;
 }
@@ -1457,8 +1475,13 @@ function processOrderRows(rows){
     const rawName = String(row[0]).trim();
     const rawCases = String(row[1]).trim();
     if(!rawName || rawName === '') continue;
-    const cases = parseInt(rawCases) || 0;
-    if(isNaN(cases) && rawCases.toLowerCase()==='cases') continue; // skip header row
+
+    // Skip header rows — if col B is not a number or common header words
+    const casesNum = parseFloat(rawCases);
+    const isHeader = isNaN(casesNum) || ['cases','qty','quantity','#','count','ordered','col b','column b'].includes(rawCases.toLowerCase());
+    if(isHeader) continue;
+
+    const cases = casesNum;
 
     // Try to match product by name (fuzzy)
     const lname = rawName.toLowerCase();
@@ -1480,11 +1503,14 @@ function processOrderRows(rows){
     }
   }
   render();
-  // Scroll to preview
   setTimeout(()=>window.scrollTo({top:300,behavior:'smooth'}), 100);
 }
 
 async function submitOrder(){
+  // Disable button immediately to prevent double-click
+  const btn = document.getElementById('submit-order-btn');
+  if(btn){ btn.disabled=true; btn.textContent='⏳ Submitting…'; btn.style.opacity='0.6'; btn.style.cursor='not-allowed'; }
+
   orderSubmitResult = [];
   const toUpdate = orderPreview.filter(r=>r.matched && r.qtyToAdd > 0);
 
