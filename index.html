@@ -1302,6 +1302,7 @@ function exportExcel(mode){
 // ═══════════════════════════════════════════════════
 let orderPreview = []; // [{name, casesOrdered, piecesPerBox, qtyToAdd, productId, matched, newItemData, showAddForm}]
 let orderSubmitResult = null;
+let orderSubmitted = false;
 
 function renderOrders(){
   document.getElementById('main-body').innerHTML=`
@@ -1341,7 +1342,7 @@ function renderOrderPreview(){
         </div>
         <div style="display:flex;gap:8px">
           <button onclick="cancelOrder()" style="background:transparent;color:#b01c1c;border:1.5px solid #b01c1c;border-radius:7px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer">✕ Cancel</button>
-          <button class="primary-btn" id="submit-order-btn" onclick="submitOrder()" style="padding:9px 18px">✓ Submit Order</button>
+          <button class="primary-btn" id="submit-order-btn" onclick="submitOrder()" style="padding:9px 18px;${orderSubmitted?'opacity:0.4;cursor:not-allowed':''}" ${orderSubmitted?'disabled':''}>✓ Submit Order</button>
         </div>
       </div>
 
@@ -1487,6 +1488,7 @@ function recalcNewQty(opi){
 function cancelOrder(){
   orderPreview = [];
   orderSubmitResult = null;
+  orderSubmitted = false;
   const fi = document.getElementById('order-file-input');
   if(fi) fi.value = '';
   render();
@@ -1516,7 +1518,7 @@ function renderOrderResult(){
           <div style="font-size:12px;font-weight:700;color:#b01c1c;margin-bottom:4px">✗ ${fail.length} item${fail.length>1?'s':''} failed</div>
           ${fail.map(r=>`<div style="font-size:11px;color:#b01c1c;padding:1px 0">• ${r.name}: ${r.error}</div>`).join('')}
         </div>`:''}
-      <button onclick="orderPreview=[];orderSubmitResult=null;const fi=document.getElementById('order-file-input');if(fi)fi.value='';render()" 
+      <button onclick="orderPreview=[];orderSubmitResult=null;orderSubmitted=false;const fi=document.getElementById('order-file-input');if(fi)fi.value='';render()" 
         style="margin-top:4px;background:#0d1f4e;color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:11px;font-weight:700;cursor:pointer">↑ Upload Another Order</button>
     </div>
   `;
@@ -1536,6 +1538,7 @@ function handleOrderFile(input){
   const file = input.files[0];
   if(!file) return;
   orderSubmitResult = null;
+  orderSubmitted = false;
   if(file.name.endsWith('.csv')){
     const reader = new FileReader();
     reader.onload = e => parseOrderCSV(e.target.result);
@@ -1592,6 +1595,7 @@ async function submitOrder(){
   // Disable button immediately
   const btn = document.getElementById('submit-order-btn');
   if(btn){ btn.disabled=true; btn.textContent='⏳ Submitting…'; btn.style.opacity='0.6'; btn.style.cursor='not-allowed'; }
+  orderSubmitted = true;
 
   // Validate new items first
   const newItems = orderPreview.filter(r=>!r.matched && r.showAddForm && r.newItemData);
@@ -1605,6 +1609,7 @@ async function submitOrder(){
       if(!val || val==='0' && ['minLevel','maxLevel'].includes(field) === false && val===''){
         // More lenient — just check not empty
         if(!val){
+          orderSubmitted = false;
           if(btn){ btn.disabled=false; btn.textContent='✓ Submit Order'; btn.style.opacity='1'; btn.style.cursor='pointer'; }
           showToast(`⚠ Required field missing for "${item.name}": ${reqLabels[field]}`, 4000);
           return;
