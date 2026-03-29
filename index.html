@@ -776,7 +776,7 @@ async function loadData(){
       setSyncStatus('busy','Syncing…');
       const [pRows, rRows] = await Promise.all([
         sbSelect('products'),
-        sbFetch('restock_log?order=id.desc&limit=100', {method:'GET', prefer:''})
+        sbFetch('restock_log?order=id.desc&limit=500', {method:'GET', prefer:'return=representation'})
       ]);
       if(pRows.length===0){
         // First time — seed default data
@@ -851,13 +851,17 @@ async function deleteProductFromDB(id){
 async function saveRestock(entry){
   if(useSupabase){
     try{
-      await sbUpsert('restock_log',[{
-        id: entry.id,
-        product_name: entry.product,
-        qty_added: entry.qty,
-        team_member: entry.by,
-        restock_date: entry.date
-      }]);
+      await sbFetch('restock_log', {
+        method:'POST',
+        prefer:'resolution=merge-duplicates,return=minimal',
+        body: JSON.stringify([{
+          id: Math.floor(entry.id),
+          product_name: entry.product,
+          qty_added: entry.qty,
+          team_member: entry.by,
+          restock_date: entry.date
+        }])
+      });
     }catch(e){ showToast('⚠ Restock not saved to database'); }
   }
   localStorage.setItem(LS_RESTOCK, JSON.stringify(restockLog));
