@@ -1074,12 +1074,17 @@ function openAddModal(){
           <div><label class="form-label">Qty / Hand</label><input class="form-input" id="n-qty" type="number" value="0"/></div>
           <div><label class="form-label">Min Level</label><input class="form-input" id="n-min" type="number" value="0"/></div>
           <div><label class="form-label">Max Level</label><input class="form-input" id="n-max" type="number" value="0"/></div>
-          <div><label class="form-label">Unit Cost ($)</label><input class="form-input" id="n-cost" type="number" value="0" step="0.0001"/></div>
           <div><label class="form-label">Sale Price ($)</label><input class="form-input" id="n-price" type="number" value="0" step="0.01"/></div>
-          <div><label class="form-label">Cost Per Box ($)</label><input class="form-input" id="n-cpb" type="number" value="0" step="0.01"/></div>
-          <div><label class="form-label">Pieces Per Box</label><input class="form-input" id="n-ppb" type="number" value="0"/></div>
+          <div><label class="form-label">Cost Per Box ($)</label><input class="form-input" id="n-cpb" type="number" value="0" step="0.01" oninput="recalcAddUnitCost()"/></div>
+          <div><label class="form-label">Pieces Per Box</label><input class="form-input" id="n-ppb" type="number" value="0" oninput="recalcAddUnitCost()"/></div>
           <div><label class="form-label">Category 1</label><input class="form-input" id="n-cat1"/></div>
           <div><label class="form-label">Category 2</label><input class="form-input" id="n-cat2"/></div>
+          <div style="grid-column:1/-1">
+            <label class="form-label">Unit Cost (auto-calculated)</label>
+            <div id="n-unit-cost-display" style="background:#e8f4ee;border:1px solid #b8d8c8;border-radius:6px;padding:7px 10px;font-size:12px;font-weight:700;color:#1a7a45;margin-bottom:8px">
+              $0.0000 &nbsp;<span style="font-size:10px;font-weight:400;color:#5a9a7a">(Cost Per Box ÷ Pieces Per Box)</span>
+            </div>
+          </div>
         </div>
         <label class="form-label" style="margin-top:4px">Vendor</label>
         <div class="multi-select-container" id="n-vendors">${vendorCheckboxes([])}</div>
@@ -1093,7 +1098,10 @@ function openAddModal(){
 
 async function addProduct(){
   const sv=Array.from(document.querySelectorAll('#n-vendors input:checked')).map(c=>c.value);
-  const p={id:Date.now(),name:document.getElementById('n-name').value||'New Item',upc:document.getElementById('n-upc').value||'',qty:parseFloat(document.getElementById('n-qty').value)||0,minLevel:parseFloat(document.getElementById('n-min').value)||0,maxLevel:parseFloat(document.getElementById('n-max').value)||0,unitCost:parseFloat(document.getElementById('n-cost').value)||0,salePrice:parseFloat(document.getElementById('n-price').value)||0,costPerBox:parseFloat(document.getElementById('n-cpb').value)||0,piecesPerBox:parseFloat(document.getElementById('n-ppb').value)||0,cat1:document.getElementById('n-cat1').value,cat2:document.getElementById('n-cat2').value,vendors:sv,active:true};
+  const _ncpb=parseFloat(document.getElementById('n-cpb').value)||0;
+  const _nppb=parseFloat(document.getElementById('n-ppb').value)||1;
+  const _nuc=_nppb>0?_ncpb/_nppb:0;
+  const p={id:Date.now(),name:document.getElementById('n-name').value||'New Item',upc:document.getElementById('n-upc').value||'',qty:parseFloat(document.getElementById('n-qty').value)||0,minLevel:parseFloat(document.getElementById('n-min').value)||0,maxLevel:parseFloat(document.getElementById('n-max').value)||0,unitCost:_nuc,salePrice:parseFloat(document.getElementById('n-price').value)||0,costPerBox:_ncpb,piecesPerBox:_nppb,cat1:document.getElementById('n-cat1').value,cat2:document.getElementById('n-cat2').value,vendors:sv,active:true};
   products.push(p);
   closeModal();render();updateSidebar();
   await saveProduct(p);
@@ -1115,12 +1123,17 @@ function openEditModal(id){
           <div><label class="form-label">Qty / Hand</label><input class="form-input" id="e-qty" type="number" value="${p.qty}"/></div>
           <div><label class="form-label">Min Level</label><input class="form-input" id="e-min" type="number" value="${p.minLevel}"/></div>
           <div><label class="form-label">Max Level</label><input class="form-input" id="e-max" type="number" value="${p.maxLevel}"/></div>
-          <div><label class="form-label">Unit Cost ($)</label><input class="form-input" id="e-cost" type="number" value="${p.unitCost}" step="0.0001"/></div>
           <div><label class="form-label">Sale Price ($)</label><input class="form-input" id="e-price" type="number" value="${p.salePrice}" step="0.01"/></div>
-          <div><label class="form-label">Cost Per Box ($)</label><input class="form-input" id="e-cpb" type="number" value="${p.costPerBox}" step="0.01"/></div>
-          <div><label class="form-label">Pieces Per Box</label><input class="form-input" id="e-ppb" type="number" value="${p.piecesPerBox}"/></div>
+          <div><label class="form-label">Cost Per Box ($)</label><input class="form-input" id="e-cpb" type="number" value="${p.costPerBox}" step="0.01" oninput="recalcEditUnitCost()"/></div>
+          <div><label class="form-label">Pieces Per Box</label><input class="form-input" id="e-ppb" type="number" value="${p.piecesPerBox}" oninput="recalcEditUnitCost()"/></div>
           <div><label class="form-label">Category 1</label><input class="form-input" id="e-cat1" value="${p.cat1}"/></div>
           <div><label class="form-label">Category 2</label><input class="form-input" id="e-cat2" value="${p.cat2}"/></div>
+          <div style="grid-column:1/-1">
+            <label class="form-label">Unit Cost (auto-calculated)</label>
+            <div id="e-unit-cost-display" style="background:#e8f4ee;border:1px solid #b8d8c8;border-radius:6px;padding:7px 10px;font-size:12px;font-weight:700;color:#1a7a45;margin-bottom:8px">
+              $${p.piecesPerBox>0?(p.costPerBox/p.piecesPerBox).toFixed(4):'0.0000'} &nbsp;<span style="font-size:10px;font-weight:400;color:#5a9a7a">(Cost Per Box ÷ Pieces Per Box)</span>
+            </div>
+          </div>
         </div>
         <label class="form-label" style="margin-top:4px">Vendor</label>
         <div class="multi-select-container" id="e-vendors">${vendorCheckboxes(p.vendors)}</div>
@@ -1134,7 +1147,10 @@ function openEditModal(id){
 
 async function saveEdit(id){
   const sv=Array.from(document.querySelectorAll('#e-vendors input:checked')).map(c=>c.value);
-  products=products.map(p=>p.id===id?{...p,name:document.getElementById('e-name').value,upc:document.getElementById('e-upc').value,qty:parseFloat(document.getElementById('e-qty').value)||0,minLevel:parseFloat(document.getElementById('e-min').value)||0,maxLevel:parseFloat(document.getElementById('e-max').value)||0,unitCost:parseFloat(document.getElementById('e-cost').value)||0,salePrice:parseFloat(document.getElementById('e-price').value)||0,costPerBox:parseFloat(document.getElementById('e-cpb').value)||0,piecesPerBox:parseFloat(document.getElementById('e-ppb').value)||0,cat1:document.getElementById('e-cat1').value,cat2:document.getElementById('e-cat2').value,vendors:sv}:p);
+  const _cpb=parseFloat(document.getElementById('e-cpb').value)||0;
+  const _ppb=parseFloat(document.getElementById('e-ppb').value)||1;
+  const _uc=_ppb>0?_cpb/_ppb:0;
+  products=products.map(p=>p.id===id?{...p,name:document.getElementById('e-name').value,upc:document.getElementById('e-upc').value,qty:parseFloat(document.getElementById('e-qty').value)||0,minLevel:parseFloat(document.getElementById('e-min').value)||0,maxLevel:parseFloat(document.getElementById('e-max').value)||0,unitCost:_uc,salePrice:parseFloat(document.getElementById('e-price').value)||0,costPerBox:_cpb,piecesPerBox:_ppb,cat1:document.getElementById('e-cat1').value,cat2:document.getElementById('e-cat2').value,vendors:sv}:p);
   closeModal();render();updateSidebar();
   const updated=products.find(p=>p.id===id);
   await saveProduct(updated);
@@ -1691,6 +1707,23 @@ async function submitOrder(){
   showToast(`Done — ${newCount>0?newCount+' new item'+(newCount>1?'s':'')+' added, ':''}${updCount} quantit${updCount!==1?'ies':'y'} updated`);
 }
 
+
+
+function recalcEditUnitCost(){
+  const cpb = parseFloat(document.getElementById('e-cpb')?.value)||0;
+  const ppb = parseFloat(document.getElementById('e-ppb')?.value)||0;
+  const uc = ppb>0 ? cpb/ppb : 0;
+  const el = document.getElementById('e-unit-cost-display');
+  if(el) el.innerHTML = `$${uc.toFixed(4)} &nbsp;<span style="font-size:10px;font-weight:400;color:#5a9a7a">(Cost Per Box ÷ Pieces Per Box)</span>`;
+}
+
+function recalcAddUnitCost(){
+  const cpb = parseFloat(document.getElementById('n-cpb')?.value)||0;
+  const ppb = parseFloat(document.getElementById('n-ppb')?.value)||0;
+  const uc = ppb>0 ? cpb/ppb : 0;
+  const el = document.getElementById('n-unit-cost-display');
+  if(el) el.innerHTML = `$${uc.toFixed(4)} &nbsp;<span style="font-size:10px;font-weight:400;color:#5a9a7a">(Cost Per Box ÷ Pieces Per Box)</span>`;
+}
 
 // ═══════════════════════════════════════════════════
 //  BOOT — credentials baked in, go straight to app
