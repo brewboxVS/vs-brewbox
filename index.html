@@ -163,6 +163,15 @@ tr:hover td{background:#f7f9ff}
 .export-item:hover{background:#f4f6fa;color:#0d1f4e}
 .export-item+.export-item{border-top:1px solid #f0f2f8}
 
+
+/* ── Inline row edit ── */
+.edit-input{background:#fff;border:1.5px solid #c9a84c;border-radius:5px;padding:3px 6px;font-size:11px;color:#1a2340;outline:none;width:100%;min-width:0}
+.edit-input:focus{border-color:#0d1f4e;box-shadow:0 0 0 2px rgba(13,31,78,.08)}
+.edit-select{background:#fff;border:1.5px solid #c9a84c;border-radius:5px;padding:3px 6px;font-size:11px;color:#1a2340;outline:none;cursor:pointer}
+tr.editing-row td{background:#fffbf0!important}
+tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
+.edit-unit-cost{font-size:10px;color:#1a7a45;font-weight:700;white-space:nowrap}
+
 /* ── Mobile responsive ── */
 @media(max-width:700px){
   #sidebar{width:56px}
@@ -597,6 +606,7 @@ let currentView = 'dashboard';
 let searchTerm = '';
 let showActiveOnly = false;
 let categoryFilters = new Set();
+let editingId = null;
 let aiOpen = false;
 let aiMessages = [];
 let aiLoading = false;
@@ -1013,26 +1023,7 @@ function renderInventory(){
           <th>STATUS</th><th>ACTIVE</th><th>ACTIONS</th>
         </tr></thead>
         <tbody>
-        ${filtered.map(p=>`<tr class="${p.active?'':'inactive-row'}">
-          <td style="padding-left:12px;font-weight:600;color:#0d1f4e;white-space:normal;line-height:1.3;max-width:220px">${p.name}</td>
-          <td style="font-family:monospace;font-size:10px;color:#7080a0;max-width:110px;overflow:hidden;text-overflow:ellipsis" title="${p.upc}">${p.upc.substring(0,15)}</td>
-          <td style="font-weight:700;color:${p.qty<=0?'#b01c1c':p.qty<=p.minLevel&&p.minLevel>0?'#b35a00':'#1a7a45'}">${p.qty}</td>
-          <td>${p.minLevel}</td><td style="color:#7080a0">${p.maxLevel}</td>
-          <td>$${p.unitCost.toFixed(4)}</td>
-          <td style="color:#1a7a45">$${p.salePrice.toFixed(2)}</td>
-          <td>$${p.costPerBox.toFixed(2)}</td>
-          <td>${p.piecesPerBox}</td>
-          <td style="font-size:11px;color:#5060a0">${p.cat1||'—'}</td>
-          <td style="font-size:11px;color:#5060a0">${p.cat2||'—'}</td>
-          <td style="min-width:90px">${p.vendors&&p.vendors.length>0?p.vendors.map(v=>`<span class="vendor-tag">${v.split(' ')[0]}</span>`).join(''):'<span style="color:#b0b8cc;font-size:11px">—</span>'}</td>
-          <td>${badge(p.qty,p.minLevel)}</td>
-          <td style="min-width:110px">${toggleSwitch(p.active,`toggleActive(${p.id})`)}</td>
-          <td style="min-width:130px"><div style="display:flex;gap:4px">
-            ${p.active?`<button class="action-btn" style="color:#0d1f4e;border-color:#c0c8dc" onclick="openRestockModal(${p.id})">Restock</button>`:''}
-            <button class="action-btn" style="color:#1a5296;border-color:#b0c8e8" onclick="openEditModal(${p.id})">Edit</button>
-            <button class="action-btn" style="color:#b01c1c;border-color:#f0b8b8" onclick="deleteProduct(${p.id})">Del</button>
-          </div></td>
-        </tr>`).join('')}
+        ${filtered.map(p=>renderInventoryRow(p)).join('')}
         </tbody>
       </table>
       </div>
@@ -1112,54 +1103,127 @@ async function addProduct(){
   showToast('Item added');
 }
 
-function openEditModal(id){
-  const p=products.find(x=>x.id===id);
-  document.getElementById('modal-container').innerHTML=`
-    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
-      <div class="modal">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <div class="modal-title">Edit: ${p.name}</div>
-          <button onclick="closeModal()" style="background:none;border:none;color:#7080a0;cursor:pointer;font-size:20px">✕</button>
+// ── Inline row rendering ──
+const CATS_LIST = ['DRINKS','SNACKS','CHIPS','CANDY','PASTRY','COLD FOOD','FROZEN FOOD'];
+
+function renderInventoryRow(p){
+  const isEditing = editingId === p.id;
+  const isLocked = editingId !== null && editingId !== p.id;
+  const uc = p.piecesPerBox>0 ? (p.costPerBox/p.piecesPerBox) : 0;
+
+  if(isEditing){
+    return `<tr class="editing-row" id="inv-row-${p.id}">
+      <td style="padding-left:8px;min-width:180px"><input class="edit-input" id="e-name" value="${p.name.replace(/"/g,'&quot;')}" style="min-width:160px"/></td>
+      <td><input class="edit-input" id="e-upc" value="${p.upc}" style="width:110px;font-family:monospace;font-size:10px"/></td>
+      <td><input class="edit-input" id="e-qty" type="number" value="${p.qty}" style="width:55px"/></td>
+      <td><input class="edit-input" id="e-min" type="number" value="${p.minLevel}" style="width:45px"/></td>
+      <td><input class="edit-input" id="e-max" type="number" value="${p.maxLevel}" style="width:45px"/></td>
+      <td><span class="edit-unit-cost" id="e-uc-display">$${uc.toFixed(4)}</span></td>
+      <td><input class="edit-input" id="e-price" type="number" value="${p.salePrice}" step="0.01" style="width:60px"/></td>
+      <td><input class="edit-input" id="e-cpb" type="number" value="${p.costPerBox}" step="0.01" style="width:65px" oninput="inlineRecalcUC()"/></td>
+      <td><input class="edit-input" id="e-ppb" type="number" value="${p.piecesPerBox}" style="width:45px" oninput="inlineRecalcUC()"/></td>
+      <td><select class="edit-select" id="e-cat1" style="width:90px">
+        <option value="">—</option>
+        ${CATS_LIST.map(c=>`<option value="${c}" ${p.cat1===c?'selected':''}>${c}</option>`).join('')}
+      </select></td>
+      <td><input class="edit-input" id="e-cat2" value="${p.cat2||''}" style="width:60px"/></td>
+      <td style="min-width:110px">
+        <div style="display:flex;flex-wrap:wrap;gap:3px">
+          ${VENDORS.map(v=>`<label style="display:flex;align-items:center;gap:3px;font-size:9px;color:#1a2340;cursor:pointer;white-space:nowrap">
+            <input type="checkbox" value="${v}" ${p.vendors&&p.vendors.includes(v)?'checked':''} class="e-vendor-cb" style="accent-color:#0d1f4e"/> ${v.split(' ')[0]}
+          </label>`).join('')}
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 16px">
-          <div style="grid-column:1/-1"><label class="form-label">Item Name</label><input class="form-input" id="e-name" value="${p.name}"/></div>
-          <div><label class="form-label">UPC</label><input class="form-input" id="e-upc" value="${p.upc}"/></div>
-          <div><label class="form-label">Qty / Hand</label><input class="form-input" id="e-qty" type="number" value="${p.qty}"/></div>
-          <div><label class="form-label">Min Level</label><input class="form-input" id="e-min" type="number" value="${p.minLevel}"/></div>
-          <div><label class="form-label">Max Level</label><input class="form-input" id="e-max" type="number" value="${p.maxLevel}"/></div>
-          <div><label class="form-label">Sale Price ($)</label><input class="form-input" id="e-price" type="number" value="${p.salePrice}" step="0.01"/></div>
-          <div><label class="form-label">Cost Per Box ($)</label><input class="form-input" id="e-cpb" type="number" value="${p.costPerBox}" step="0.01" oninput="recalcEditUnitCost()"/></div>
-          <div><label class="form-label">Pieces Per Box</label><input class="form-input" id="e-ppb" type="number" value="${p.piecesPerBox}" oninput="recalcEditUnitCost()"/></div>
-          <div><label class="form-label">Category 1</label><input class="form-input" id="e-cat1" value="${p.cat1}"/></div>
-          <div><label class="form-label">Category 2</label><input class="form-input" id="e-cat2" value="${p.cat2}"/></div>
-          <div style="grid-column:1/-1">
-            <label class="form-label">Unit Cost (auto-calculated)</label>
-            <div id="e-unit-cost-display" style="background:#e8f4ee;border:1px solid #b8d8c8;border-radius:6px;padding:7px 10px;font-size:12px;font-weight:700;color:#1a7a45;margin-bottom:8px">
-              $${p.piecesPerBox>0?(p.costPerBox/p.piecesPerBox).toFixed(4):'0.0000'} &nbsp;<span style="font-size:10px;font-weight:400;color:#5a9a7a">(Cost Per Box ÷ Pieces Per Box)</span>
-            </div>
-          </div>
-        </div>
-        <label class="form-label" style="margin-top:4px">Vendor</label>
-        <div class="multi-select-container" id="e-vendors">${vendorCheckboxes(p.vendors)}</div>
-        <div style="display:flex;gap:10px;margin-top:12px">
-          <button class="primary-btn" onclick="saveEdit(${id})">Save Changes</button>
-          <button class="secondary-btn" onclick="closeModal()">Cancel</button>
-        </div>
-      </div>
-    </div>`;
+      </td>
+      <td>${badge(p.qty,p.minLevel)}</td>
+      <td style="min-width:110px">${toggleSwitch(p.active,`toggleActive(${p.id})`)}</td>
+      <td style="min-width:145px"><div style="display:flex;gap:4px">
+        <button class="action-btn" style="color:#fff;background:#1a7a45;border-color:#1a7a45;font-weight:700" onclick="saveInlineEdit(${p.id})">💾 Save</button>
+        <button class="action-btn" style="color:#7080a0;border-color:#d0d5e0" onclick="cancelInlineEdit()">✕</button>
+      </div></td>
+    </tr>`;
+  }
+
+  // Normal (read-only) row
+  const rowStyle = isLocked ? 'opacity:0.45;pointer-events:none;' : '';
+  return `<tr class="${p.active?'':'inactive-row'}" id="inv-row-${p.id}" style="${rowStyle}">
+    <td style="padding-left:12px;font-weight:600;color:#0d1f4e;white-space:normal;line-height:1.3;max-width:220px">${p.name}</td>
+    <td style="font-family:monospace;font-size:10px;color:#7080a0;max-width:110px;overflow:hidden;text-overflow:ellipsis" title="${p.upc}">${p.upc.substring(0,15)}</td>
+    <td style="font-weight:700;color:${p.qty<=0?'#b01c1c':p.qty<=p.minLevel&&p.minLevel>0?'#b35a00':'#1a7a45'}">${p.qty}</td>
+    <td>${p.minLevel}</td><td style="color:#7080a0">${p.maxLevel}</td>
+    <td>$${uc.toFixed(4)}</td>
+    <td style="color:#1a7a45">$${p.salePrice.toFixed(2)}</td>
+    <td>$${p.costPerBox.toFixed(2)}</td>
+    <td>${p.piecesPerBox}</td>
+    <td style="font-size:11px;color:#5060a0">${p.cat1||'—'}</td>
+    <td style="font-size:11px;color:#5060a0">${p.cat2||'—'}</td>
+    <td style="min-width:90px">${p.vendors&&p.vendors.length>0?p.vendors.map(v=>`<span class="vendor-tag">${v.split(' ')[0]}</span>`).join(''):'<span style="color:#b0b8cc;font-size:11px">—</span>'}</td>
+    <td>${badge(p.qty,p.minLevel)}</td>
+    <td style="min-width:110px">${toggleSwitch(p.active,`toggleActive(${p.id})`)}</td>
+    <td style="min-width:130px"><div style="display:flex;gap:4px">
+      ${p.active&&!isLocked?`<button class="action-btn" style="color:#0d1f4e;border-color:#c0c8dc" onclick="openRestockModal(${p.id})">Restock</button>`:''}
+      ${!isLocked?`<button class="action-btn" style="color:#1a5296;border-color:#b0c8e8" onclick="startInlineEdit(${p.id})">Edit</button>`:''}
+      ${!isLocked?`<button class="action-btn" style="color:#b01c1c;border-color:#f0b8b8" onclick="deleteProduct(${p.id})">Del</button>`:''}
+    </div></td>
+  </tr>`;
 }
 
-async function saveEdit(id){
-  const sv=Array.from(document.querySelectorAll('#e-vendors input:checked')).map(c=>c.value);
-  const _cpb=parseFloat(document.getElementById('e-cpb').value)||0;
-  const _ppb=parseFloat(document.getElementById('e-ppb').value)||1;
-  const _uc=_ppb>0?_cpb/_ppb:0;
-  products=products.map(p=>p.id===id?{...p,name:document.getElementById('e-name').value,upc:document.getElementById('e-upc').value,qty:parseFloat(document.getElementById('e-qty').value)||0,minLevel:parseFloat(document.getElementById('e-min').value)||0,maxLevel:parseFloat(document.getElementById('e-max').value)||0,unitCost:_uc,salePrice:parseFloat(document.getElementById('e-price').value)||0,costPerBox:_cpb,piecesPerBox:_ppb,cat1:document.getElementById('e-cat1').value,cat2:document.getElementById('e-cat2').value,vendors:sv}:p);
-  closeModal();render();updateSidebar();
-  const updated=products.find(p=>p.id===id);
+function inlineRecalcUC(){
+  const cpb = parseFloat(document.getElementById('e-cpb')?.value)||0;
+  const ppb = parseFloat(document.getElementById('e-ppb')?.value)||0;
+  const uc = ppb>0 ? cpb/ppb : 0;
+  const el = document.getElementById('e-uc-display');
+  if(el) el.textContent = '$' + uc.toFixed(4);
+}
+
+function startInlineEdit(id){
+  editingId = id;
+  render();
+  // Scroll the editing row into view and focus first input
+  setTimeout(()=>{
+    const row = document.getElementById('inv-row-' + id);
+    if(row){
+      row.scrollIntoView({behavior:'smooth', block:'nearest'});
+      const first = row.querySelector('.edit-input');
+      if(first) first.focus();
+    }
+  }, 50);
+}
+
+function cancelInlineEdit(){
+  editingId = null;
+  render();
+}
+
+async function saveInlineEdit(id){
+  const sv = Array.from(document.querySelectorAll('.e-vendor-cb:checked')).map(c=>c.value);
+  const cpb = parseFloat(document.getElementById('e-cpb')?.value)||0;
+  const ppb = parseFloat(document.getElementById('e-ppb')?.value)||1;
+  const uc = ppb>0 ? cpb/ppb : 0;
+  products = products.map(p=>p.id===id?{
+    ...p,
+    name: document.getElementById('e-name')?.value || p.name,
+    upc: document.getElementById('e-upc')?.value || '',
+    qty: parseFloat(document.getElementById('e-qty')?.value)||0,
+    minLevel: parseFloat(document.getElementById('e-min')?.value)||0,
+    maxLevel: parseFloat(document.getElementById('e-max')?.value)||0,
+    unitCost: uc,
+    salePrice: parseFloat(document.getElementById('e-price')?.value)||0,
+    costPerBox: cpb,
+    piecesPerBox: ppb,
+    cat1: document.getElementById('e-cat1')?.value||'',
+    cat2: document.getElementById('e-cat2')?.value||'',
+    vendors: sv
+  }:p);
+  editingId = null;
+  render();
+  updateSidebar();
+  const updated = products.find(p=>p.id===id);
   await saveProduct(updated);
   showToast('Changes saved');
 }
+
+// Keep openEditModal as alias (used nowhere now but safe to keep)
+function openEditModal(id){ startInlineEdit(id); }
 
 function openRestockModal(id){
   const p=products.find(x=>x.id===id);
