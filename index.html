@@ -644,7 +644,7 @@ let currentView = 'dashboard';
 let searchTerm = '';
 let showActiveOnly = false;
 let categoryFilters = new Set();
-let editingId = null;
+let editingRows = new Set(); // set of product IDs currently being edited
 let aiOpen = false;
 let aiMessages = [];
 let aiLoading = false;
@@ -1118,6 +1118,14 @@ function renderInventory(){
       </div>
       <span style="font-size:11px;color:#7080a0;margin-left:2px">${filtered.length} shown · ${activeCount} active · ${inactiveCount} inactive</span>
     </div>
+    ${editingRows.size>0?`
+    <div style="display:flex;justify-content:space-between;align-items:center;background:#fffbf0;border:1.5px solid #c9a84c;border-radius:8px;padding:9px 14px;margin-bottom:10px">
+      <span style="font-size:12px;font-weight:600;color:#0d1f4e">${editingRows.size} row${editingRows.size>1?'s':''} in edit mode</span>
+      <div style="display:flex;gap:8px">
+        <button onclick="saveAllEdits()" style="background:#1a7a45;color:#fff;border:none;border-radius:6px;padding:7px 16px;font-size:12px;font-weight:700;cursor:pointer">💾 Save All Changes</button>
+        <button onclick="cancelAllEdits()" style="background:transparent;color:#b01c1c;border:1.5px solid #b01c1c;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer">✕ Cancel</button>
+      </div>
+    </div>`:''}
     <div style="background:#fff;border:1px solid #d8dde8;border-radius:9px;overflow:hidden">
       <div style="overflow-x:auto">
       <table>
@@ -1262,28 +1270,28 @@ async function addProduct(){
 const CATS_LIST = ['DRINKS','SNACKS','CHIPS','CANDY','PASTRY','COLD FOOD','FROZEN FOOD'];
 
 function renderInventoryRow(p){
-  const isEditing = editingId === p.id;
-  const isLocked = editingId !== null && editingId !== p.id;
+  const isEditing = editingRows.has(p.id);
+  const isLocked = false; // all rows accessible in multi-edit mode
   const uc = p.piecesPerBox>0 ? (p.costPerBox/p.piecesPerBox) : 0;
 
   if(isEditing){
     return `<tr class="editing-row" id="inv-row-${p.id}">
-      <td style="padding-left:8px;min-width:180px"><input class="edit-input" id="e-name" value="${p.name.replace(/"/g,'&quot;')}" style="min-width:160px"/></td>
-      <td><input class="edit-input" id="e-upc" value="${p.upc}" style="width:110px;font-family:monospace;font-size:10px"/></td>
-      <td><input class="edit-input" id="e-qty" type="number" value="${p.qty}" style="width:55px"/></td>
-      <td><input class="edit-input" id="e-min" type="number" value="${p.minLevel}" style="width:45px"/></td>
-      <td><input class="edit-input" id="e-max" type="number" value="${p.maxLevel}" style="width:45px"/></td>
-      <td><span class="edit-unit-cost" id="e-uc-display">$${uc.toFixed(4)}</span></td>
-      <td><input class="edit-input" id="e-price" type="number" value="${p.salePrice}" step="0.01" style="width:60px"/></td>
-      <td><input class="edit-input" id="e-cpb" type="number" value="${p.costPerBox}" step="0.01" style="width:65px" oninput="inlineRecalcUC()"/></td>
-      <td><input class="edit-input" id="e-ppb" type="number" value="${p.piecesPerBox}" style="width:45px" oninput="inlineRecalcUC()"/></td>
-      <td><select class="edit-select" id="e-cat1" style="width:90px">
+      <td style="padding-left:8px;min-width:180px"><input class="edit-input" id="ei-name-${p.id}" value="${p.name.replace(/"/g,'&quot;')}" style="min-width:160px"/></td>
+      <td><input class="edit-input" id="ei-upc-${p.id}" value="${p.upc}" style="width:110px;font-family:monospace;font-size:10px"/></td>
+      <td><input class="edit-input" id="ei-qty-${p.id}" type="number" value="${p.qty}" style="width:55px"/></td>
+      <td><input class="edit-input" id="ei-min-${p.id}" type="number" value="${p.minLevel}" style="width:45px"/></td>
+      <td><input class="edit-input" id="ei-max-${p.id}" type="number" value="${p.maxLevel}" style="width:45px"/></td>
+      <td><span class="edit-unit-cost" id="ei-uc-${p.id}">$${uc.toFixed(4)}</span></td>
+      <td><input class="edit-input" id="ei-price-${p.id}" type="number" value="${p.salePrice}" step="0.01" style="width:60px"/></td>
+      <td><input class="edit-input" id="ei-cpb-${p.id}" type="number" value="${p.costPerBox}" step="0.01" style="width:65px" oninput="mmRecalcUC(${p.id})"/></td>
+      <td><input class="edit-input" id="ei-ppb-${p.id}" type="number" value="${p.piecesPerBox}" style="width:45px" oninput="mmRecalcUC(${p.id})"/></td>
+      <td><select class="edit-select" id="ei-cat1-${p.id}" style="width:90px">
         <option value="">—</option>
         ${CATS_LIST.map(c=>`<option value="${c}" ${p.cat1===c?'selected':''}>${c}</option>`).join('')}
       </select></td>
-      <td><input class="edit-input" id="e-cat2" value="${p.cat2||''}" style="width:60px"/></td>
+      <td><input class="edit-input" id="ei-cat2-${p.id}" value="${p.cat2||''}" style="width:60px"/></td>
       <td style="min-width:130px">
-        <select id="e-vendors-select" multiple
+        <select id="ei-vendors-${p.id}" multiple
           style="width:120px;height:68px;background:#fff;border:1.5px solid #c9a84c;border-radius:5px;font-size:10px;color:#1a2340;outline:none;padding:2px">
           ${VENDORS.map(v=>`<option value="${v}" ${p.vendors&&p.vendors.includes(v)?'selected':''}>${v}</option>`).join('')}
         </select>
@@ -1292,15 +1300,14 @@ function renderInventoryRow(p){
       <td style="min-width:120px">${storeMultiSelect(p.id,'mm',p.stores||[])}</td>
       <td>${badge(p.qty,p.minLevel)}</td>
       <td style="min-width:110px">${toggleSwitch(p.active,`toggleActive(${p.id})`)}</td>
-      <td style="min-width:145px"><div style="display:flex;gap:4px">
-        <button class="action-btn" style="color:#fff;background:#1a7a45;border-color:#1a7a45;font-weight:700" onclick="saveInlineEdit(${p.id})">💾 Save</button>
-        <button class="action-btn" style="color:#7080a0;border-color:#d0d5e0" onclick="cancelInlineEdit()">✕</button>
-      </div></td>
+      <td style="min-width:110px">
+        <span style="font-size:10px;color:#c9a84c;font-weight:700">✎ EDITING</span>
+      </td>
     </tr>`;
   }
 
   // Normal (read-only) row
-  const rowStyle = isLocked ? 'opacity:0.45;pointer-events:none;' : '';
+  const rowStyle = '';
   return `<tr class="${p.active?'':'inactive-row'}" id="inv-row-${p.id}" style="${rowStyle}">
     <td style="padding-left:12px;font-weight:600;color:#0d1f4e;white-space:normal;line-height:1.3;max-width:220px">${p.name}</td>
     <td style="font-family:monospace;font-size:10px;color:#7080a0;max-width:110px;overflow:hidden;text-overflow:ellipsis" title="${p.upc}">${p.upc.substring(0,15)}</td>
@@ -1317,25 +1324,24 @@ function renderInventoryRow(p){
     <td>${badge(p.qty,p.minLevel)}</td>
     <td style="min-width:110px">${toggleSwitch(p.active,`toggleActive(${p.id})`)}</td>
     <td style="min-width:130px"><div style="display:flex;gap:4px">
-      ${p.active&&!isLocked?`<button class="action-btn" style="color:#0d1f4e;border-color:#c0c8dc" onclick="openRestockModal(${p.id})">Restock</button>`:''}
-      ${!isLocked?`<button class="action-btn" style="color:#1a5296;border-color:#b0c8e8" onclick="startInlineEdit(${p.id})">Edit</button>`:''}
-      ${!isLocked?`<button class="action-btn" style="color:#b01c1c;border-color:#f0b8b8" onclick="deleteProduct(${p.id})">Del</button>`:''}
+      ${p.active&&!isEditing?`<button class="action-btn" style="color:#0d1f4e;border-color:#c0c8dc" onclick="openRestockModal(${p.id})">Restock</button>`:''}
+      ${!isEditing?`<button class="action-btn" style="color:#1a5296;border-color:#b0c8e8" onclick="startInlineEdit(${p.id})">Edit</button>`:`<button class="action-btn" style="color:#7080a0;border-color:#d0d5e0" onclick="cancelSingleEdit(${p.id})">✕</button>`}
+      <button class="action-btn" style="color:#b01c1c;border-color:#f0b8b8" onclick="deleteProduct(${p.id})">Del</button>
     </div></td>
   </tr>`;
 }
 
-function inlineRecalcUC(){
-  const cpb = parseFloat(document.getElementById('e-cpb')?.value)||0;
-  const ppb = parseFloat(document.getElementById('e-ppb')?.value)||0;
-  const uc = ppb>0 ? cpb/ppb : 0;
-  const el = document.getElementById('e-uc-display');
-  if(el) el.textContent = '$' + uc.toFixed(4);
+function mmRecalcUC(id){
+  const cpb=parseFloat(document.getElementById('ei-cpb-'+id)?.value)||0;
+  const ppb=parseFloat(document.getElementById('ei-ppb-'+id)?.value)||0;
+  const el=document.getElementById('ei-uc-'+id);
+  if(el) el.textContent='$'+(ppb>0?cpb/ppb:0).toFixed(4);
 }
+function inlineRecalcUC(){ /* legacy - no-op */ }
 
 function startInlineEdit(id){
-  editingId = id;
+  editingRows.add(id);
   render();
-  // Scroll the editing row into view and focus first input
   setTimeout(()=>{
     const row = document.getElementById('inv-row-' + id);
     if(row){
@@ -1346,36 +1352,48 @@ function startInlineEdit(id){
   }, 50);
 }
 
-function cancelInlineEdit(){
-  editingId = null;
+function cancelSingleEdit(id){
+  editingRows.delete(id);
   render();
 }
 
-async function saveInlineEdit(id){
-  const sv = Array.from(document.querySelectorAll('#e-vendors-select option:checked')).map(o=>o.value);
-  const cpb = parseFloat(document.getElementById('e-cpb')?.value)||0;
-  const ppb = parseFloat(document.getElementById('e-ppb')?.value)||1;
-  const uc = ppb>0 ? cpb/ppb : 0;
-  const oldQty = products.find(p=>p.id===id)?.qty ?? 0;
-  products = products.map(p=>p.id===id?{
-    ...p,
-    name: document.getElementById('e-name')?.value || p.name,
-    upc: document.getElementById('e-upc')?.value || '',
-    qty: parseFloat(document.getElementById('e-qty')?.value)||0,
-    minLevel: parseFloat(document.getElementById('e-min')?.value)||0,
-    maxLevel: parseFloat(document.getElementById('e-max')?.value)||0,
-    unitCost: uc,
-    salePrice: parseFloat(document.getElementById('e-price')?.value)||0,
-    costPerBox: cpb,
-    piecesPerBox: ppb,
-    cat1: document.getElementById('e-cat1')?.value||'',
-    cat2: document.getElementById('e-cat2')?.value||'',
-    vendors: sv
-  }:p);
-  editingId = null;
+function cancelAllEdits(){
+  editingRows.clear();
   render();
-  updateSidebar();
-  const updated = products.find(p=>p.id===id);
+}
+
+async function saveAllEdits(){
+  const ids = [...editingRows];
+  let saved=0;
+  for(const id of ids){
+    if(!document.getElementById('ei-name-'+id)) continue;
+    await saveInlineEdit(id, true);
+    saved++;
+  }
+  editingRows.clear();
+  render(); updateSidebar();
+  showToast(`${saved} item${saved!==1?'s':''} saved`);
+}
+
+async function saveInlineEdit(id, silent=false){
+  const g=eid=>document.getElementById('ei-'+eid+'-'+id);
+  const cpb=parseFloat(g('cpb')?.value)||0;
+  const ppb=parseFloat(g('ppb')?.value)||1;
+  const uc=ppb>0?cpb/ppb:0;
+  const sv=Array.from(document.querySelectorAll('#ei-vendors-'+id+' option:checked')).map(o=>o.value);
+  const oldQty=products.find(p=>p.id===id)?.qty??0;
+  products=products.map(p=>p.id===id?{
+    ...p,
+    name:g('name')?.value||p.name, upc:g('upc')?.value||'',
+    qty:parseFloat(g('qty')?.value)||0,
+    minLevel:parseFloat(g('min')?.value)||0,
+    maxLevel:parseFloat(g('max')?.value)||0,
+    unitCost:uc, salePrice:parseFloat(g('price')?.value)||0,
+    costPerBox:cpb, piecesPerBox:ppb,
+    cat1:g('cat1')?.value||'', cat2:g('cat2')?.value||'', vendors:sv
+  }:p);
+  if(!silent){ editingRows.delete(id); render(); updateSidebar(); }
+  const updated=products.find(p=>p.id===id);
   await saveProduct(updated);
 
   // Log qty change to restock_log if qty changed
@@ -1417,7 +1435,6 @@ async function saveInlineEdit(id){
   }
 }
 
-// Keep openEditModal as alias (used nowhere now but safe to keep)
 function openEditModal(id){ startInlineEdit(id); }
 
 function openRestockModal(id){
@@ -2002,7 +2019,7 @@ let coffeeProducts = [];
 let coffeeSearchTerm = '';
 let coffeeShowActiveOnly = false;
 let coffeeCategoryFilters = new Set();
-let coffeeEditingId = null;
+let coffeeEditingRows = new Set();
 const LS_COFFEE = 'vs_brewbox_coffee';
 
 const COFFEE_CATS = ['WB ESPRESSO','WB MED ROAST','WB DECAF','GROUND COFFEE','SOLUBLE POWDERS','FLAVORED SYRUPS','COFFEE PERIPHERALS','KITCHEN SUPPLIES'];
@@ -2075,6 +2092,7 @@ async function saveCoffeeProduct(p){
       showToast('⚠ Could not save coffee item to database');
     }
   }
+  // Always keep local backup
   localStorage.setItem(LS_COFFEE, JSON.stringify(coffeeProducts));
 }
 
@@ -2124,6 +2142,14 @@ function renderCoffeeInventory(){
       </div>
       <span style="font-size:11px;color:#7080a0;margin-left:2px">${filtered.length} shown · ${activeCount} active · ${inactiveCount} inactive</span>
     </div>
+    ${coffeeEditingRows.size>0?`
+    <div style="display:flex;justify-content:space-between;align-items:center;background:#fffbf0;border:1.5px solid #c9a84c;border-radius:8px;padding:9px 14px;margin-bottom:10px">
+      <span style="font-size:12px;font-weight:600;color:#0d1f4e">${coffeeEditingRows.size} row${coffeeEditingRows.size>1?'s':''} in edit mode</span>
+      <div style="display:flex;gap:8px">
+        <button onclick="saveAllCoffeeEdits()" style="background:#1a7a45;color:#fff;border:none;border-radius:6px;padding:7px 16px;font-size:12px;font-weight:700;cursor:pointer">💾 Save All Changes</button>
+        <button onclick="coffeeEditingRows.clear();renderCoffeeInventory()" style="background:transparent;color:#b01c1c;border:1.5px solid #b01c1c;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer">✕ Cancel</button>
+      </div>
+    </div>`:''}
     <div style="background:#fff;border:1px solid #d8dde8;border-radius:9px;overflow:hidden">
       <div style="overflow-x:auto">
       <table>
@@ -2144,28 +2170,28 @@ function renderCoffeeInventory(){
 }
 
 function renderCoffeeRow(p){
-  const isEditing = coffeeEditingId === p.id;
-  const isLocked = coffeeEditingId !== null && coffeeEditingId !== p.id;
+  const isEditing = coffeeEditingRows.has(p.id);
+  const isLocked = false;
   const uc = p.piecesPerBox>0 ? (p.costPerBox/p.piecesPerBox) : 0;
 
   if(isEditing){
     return `<tr class="editing-row" id="coffee-row-${p.id}">
-      <td style="padding-left:8px;min-width:180px"><input class="edit-input" id="ce-name" value="${p.name.replace(/"/g,'&quot;')}" style="min-width:160px"/></td>
-      <td><input class="edit-input" id="ce-upc" value="${p.upc}" style="width:110px;font-family:monospace;font-size:10px"/></td>
-      <td><input class="edit-input" id="ce-qty" type="number" value="${p.qty}" style="width:55px"/></td>
-      <td><input class="edit-input" id="ce-min" type="number" value="${p.minLevel}" style="width:45px"/></td>
-      <td><input class="edit-input" id="ce-max" type="number" value="${p.maxLevel}" style="width:45px"/></td>
-      <td><span class="edit-unit-cost" id="ce-uc-display">$${uc.toFixed(4)}</span></td>
-      <td><input class="edit-input" id="ce-price" type="number" value="${p.salePrice}" step="0.01" style="width:60px"/></td>
-      <td><input class="edit-input" id="ce-cpb" type="number" value="${p.costPerBox}" step="0.01" style="width:65px" oninput="coffeeRecalcUC()"/></td>
-      <td><input class="edit-input" id="ce-ppb" type="number" value="${p.piecesPerBox}" style="width:45px" oninput="coffeeRecalcUC()"/></td>
-      <td><select class="edit-select" id="ce-cat1" style="width:100px">
+      <td style="padding-left:8px;min-width:180px"><input class="edit-input" id="ci-name-${p.id}" value="${p.name.replace(/"/g,'&quot;')}" style="min-width:160px"/></td>
+      <td><input class="edit-input" id="ci-upc-${p.id}" value="${p.upc}" style="width:110px;font-family:monospace;font-size:10px"/></td>
+      <td><input class="edit-input" id="ci-qty-${p.id}" type="number" value="${p.qty}" style="width:55px"/></td>
+      <td><input class="edit-input" id="ci-min-${p.id}" type="number" value="${p.minLevel}" style="width:45px"/></td>
+      <td><input class="edit-input" id="ci-max-${p.id}" type="number" value="${p.maxLevel}" style="width:45px"/></td>
+      <td><span class="edit-unit-cost" id="ci-uc-${p.id}">$${uc.toFixed(4)}</span></td>
+      <td><input class="edit-input" id="ci-price-${p.id}" type="number" value="${p.salePrice}" step="0.01" style="width:60px"/></td>
+      <td><input class="edit-input" id="ci-cpb-${p.id}" type="number" value="${p.costPerBox}" step="0.01" style="width:65px" oninput="ciRecalcUC(${p.id})"/></td>
+      <td><input class="edit-input" id="ci-ppb-${p.id}" type="number" value="${p.piecesPerBox}" style="width:45px" oninput="ciRecalcUC(${p.id})"/></td>
+      <td><select class="edit-select" id="ci-cat1-${p.id}" style="width:100px">
         <option value="">—</option>
         ${COFFEE_CATS.map(c=>`<option value="${c}" ${p.cat1===c?'selected':''}>${c}</option>`).join('')}
       </select></td>
-      <td><input class="edit-input" id="ce-cat2" value="${p.cat2||''}" style="width:60px"/></td>
+      <td><input class="edit-input" id="ci-cat2-${p.id}" value="${p.cat2||''}" style="width:60px"/></td>
       <td style="min-width:130px">
-        <select id="ce-vendors-select" multiple style="width:120px;height:68px;background:#fff;border:1.5px solid #c9a84c;border-radius:5px;font-size:10px;color:#1a2340;outline:none;padding:2px">
+        <select id="ci-vendors-${p.id}" multiple style="width:120px;height:68px;background:#fff;border:1.5px solid #c9a84c;border-radius:5px;font-size:10px;color:#1a2340;outline:none;padding:2px">
           ${VENDORS.map(v=>`<option value="${v}" ${p.vendors&&p.vendors.includes(v)?'selected':''}>${v}</option>`).join('')}
         </select>
         <div style="font-size:9px;color:#8090b0;margin-top:2px">Ctrl+click multi</div>
@@ -2173,10 +2199,7 @@ function renderCoffeeRow(p){
       <td style="min-width:120px">${storeMultiSelect(p.id,'coffee',p.stores||[])}</td>
       <td>${badge(p.qty,p.minLevel)}</td>
       <td style="min-width:110px">${toggleSwitch(p.active,`toggleCoffeeActive(${p.id})`)}</td>
-      <td style="min-width:145px"><div style="display:flex;gap:4px">
-        <button class="action-btn" style="color:#fff;background:#1a7a45;border-color:#1a7a45;font-weight:700" onclick="saveCoffeeEdit(${p.id})">💾 Save</button>
-        <button class="action-btn" style="color:#7080a0;border-color:#d0d5e0" onclick="cancelCoffeeEdit()">✕</button>
-      </div></td>
+      <td style="min-width:110px"><span style="font-size:10px;color:#c9a84c;font-weight:700">✎ EDITING</span></td>
     </tr>`;
   }
 
@@ -2198,48 +2221,61 @@ function renderCoffeeRow(p){
     <td style="min-width:110px">${toggleSwitch(p.active,`toggleCoffeeActive(${p.id})`)}</td>
     <td style="min-width:130px"><div style="display:flex;gap:4px">
       ${p.active&&!isLocked?`<button class="action-btn" style="color:#0d1f4e;border-color:#c0c8dc" onclick="openCoffeeRestockModal(${p.id})">Restock</button>`:''}
-      ${!isLocked?`<button class="action-btn" style="color:#1a5296;border-color:#b0c8e8" onclick="startCoffeeEdit(${p.id})">Edit</button>`:''}
-      ${!isLocked?`<button class="action-btn" style="color:#b01c1c;border-color:#f0b8b8" onclick="deleteCoffeeProduct(${p.id})">Del</button>`:''}
+      ${!isEditing?`<button class="action-btn" style="color:#1a5296;border-color:#b0c8e8" onclick="startCoffeeEdit(${p.id})">Edit</button>`:`<button class="action-btn" style="color:#7080a0;border-color:#d0d5e0" onclick="cancelCoffeeEdit(${p.id})">✕</button>`}
+      <button class="action-btn" style="color:#b01c1c;border-color:#f0b8b8" onclick="deleteCoffeeProduct(${p.id})">Del</button>
     </div></td>
   </tr>`;
 }
 
-function coffeeRecalcUC(){
-  const cpb=parseFloat(document.getElementById('ce-cpb')?.value)||0;
-  const ppb=parseFloat(document.getElementById('ce-ppb')?.value)||0;
-  const el=document.getElementById('ce-uc-display');
+function ciRecalcUC(id){
+  const cpb=parseFloat(document.getElementById('ci-cpb-'+id)?.value)||0;
+  const ppb=parseFloat(document.getElementById('ci-ppb-'+id)?.value)||0;
+  const el=document.getElementById('ci-uc-'+id);
   if(el) el.textContent='$'+(ppb>0?cpb/ppb:0).toFixed(4);
 }
+function coffeeRecalcUC(){ /* legacy */ }
 
 function startCoffeeEdit(id){
-  coffeeEditingId=id; renderCoffeeInventory();
+  coffeeEditingRows.add(id); renderCoffeeInventory();
   setTimeout(()=>{
     const row=document.getElementById('coffee-row-'+id);
     if(row){row.scrollIntoView({behavior:'smooth',block:'nearest'});row.querySelector('.edit-input')?.focus();}
   },50);
 }
 
-function cancelCoffeeEdit(){ coffeeEditingId=null; renderCoffeeInventory(); }
+function cancelCoffeeEdit(id){ if(id) coffeeEditingRows.delete(id); else coffeeEditingRows.clear(); renderCoffeeInventory(); }
 
-async function saveCoffeeEdit(id){
+async function saveAllCoffeeEdits(){
+  const ids=[...coffeeEditingRows];
+  let saved=0;
+  for(const id of ids){
+    if(!document.getElementById('ci-name-'+id)) continue;
+    await saveCoffeeEdit(id, true);
+    saved++;
+  }
+  coffeeEditingRows.clear();
+  renderCoffeeInventory();
+  showToast(`${saved} coffee item${saved!==1?'s':''} saved`);
+}
+
+async function saveCoffeeEdit(id, silent=false){
+  const g=eid=>document.getElementById('ci-'+eid+'-'+id);
   const oldQty = coffeeProducts.find(p=>p.id===id)?.qty ?? 0;
-  const sv=Array.from(document.querySelectorAll('#ce-vendors-select option:checked')).map(o=>o.value);
-  const cpb=parseFloat(document.getElementById('ce-cpb')?.value)||0;
-  const ppb=parseFloat(document.getElementById('ce-ppb')?.value)||1;
+  const sv=Array.from(document.querySelectorAll('#ci-vendors-'+id+' option:checked')).map(o=>o.value);
+  const cpb=parseFloat(g('cpb')?.value)||0;
+  const ppb=parseFloat(g('ppb')?.value)||1;
   const uc=ppb>0?cpb/ppb:0;
   coffeeProducts=coffeeProducts.map(p=>p.id===id?{
     ...p,
-    name:document.getElementById('ce-name')?.value||p.name,
-    upc:document.getElementById('ce-upc')?.value||'',
-    qty:parseFloat(document.getElementById('ce-qty')?.value)||0,
-    minLevel:parseFloat(document.getElementById('ce-min')?.value)||0,
-    maxLevel:parseFloat(document.getElementById('ce-max')?.value)||0,
-    unitCost:uc, salePrice:parseFloat(document.getElementById('ce-price')?.value)||0,
+    name:g('name')?.value||p.name, upc:g('upc')?.value||'',
+    qty:parseFloat(g('qty')?.value)||0,
+    minLevel:parseFloat(g('min')?.value)||0,
+    maxLevel:parseFloat(g('max')?.value)||0,
+    unitCost:uc, salePrice:parseFloat(g('price')?.value)||0,
     costPerBox:cpb, piecesPerBox:ppb,
-    cat1:document.getElementById('ce-cat1')?.value||'',
-    cat2:document.getElementById('ce-cat2')?.value||'', vendors:sv
+    cat1:g('cat1')?.value||'', cat2:g('cat2')?.value||'', vendors:sv
   }:p);
-  coffeeEditingId=null; renderCoffeeInventory();
+  if(!silent){ coffeeEditingRows.delete(id); renderCoffeeInventory(); }
   const updated=coffeeProducts.find(p=>p.id===id);
   await saveCoffeeProduct(updated);
   if(oldQty!==updated.qty){
@@ -2370,7 +2406,7 @@ const COFFEE_STORES = ['Safran','Exodus']; // stores with coffee service
 let storeInventory = []; // all store_inventory rows loaded
 let currentStore = 'SM Toyota';
 let storeSearchTerm = '';
-let storeEditingId = null;
+let storeEditingRows = new Set();
 const LS_STORE_INV = 'vs_brewbox_store_inventory';
 
 // ── Supabase helpers for store_inventory ──
@@ -2479,6 +2515,14 @@ function renderStoreInventory(){
         <div style="font-size:16px;margin-bottom:8px">No items at ${currentStore}</div>
         <div style="font-size:12px">Click "+ Import Item" to add warehouse items to this store.</div>
       </div>`:`
+    ${storeEditingRows.size>0?`
+    <div style="display:flex;justify-content:space-between;align-items:center;background:#fffbf0;border:1.5px solid #c9a84c;border-radius:8px;padding:9px 14px;margin-bottom:10px">
+      <span style="font-size:12px;font-weight:600;color:#0d1f4e">${storeEditingRows.size} row${storeEditingRows.size>1?'s':''} in edit mode</span>
+      <div style="display:flex;gap:8px">
+        <button onclick="saveAllStoreEdits()" style="background:#1a7a45;color:#fff;border:none;border-radius:6px;padding:7px 16px;font-size:12px;font-weight:700;cursor:pointer">💾 Save All Changes</button>
+        <button onclick="storeEditingRows.clear();renderStoreInventory()" style="background:transparent;color:#b01c1c;border:1.5px solid #b01c1c;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer">✕ Cancel</button>
+      </div>
+    </div>`:''}
     <div style="background:#fff;border:1px solid #d8dde8;border-radius:9px;overflow:hidden">
       <div style="overflow-x:auto">
       <table>
@@ -2498,7 +2542,7 @@ function renderStoreInventory(){
 }
 
 function renderStoreRow(item){
-  const isEditing = storeEditingId === item.id;
+  const isEditing = storeEditingRows.has(item.id);
   const sourceBadge = item.product_source==='coffee'
     ? '<span style="background:#f3e8ff;color:#6b2fa0;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">COFFEE</span>'
     : '<span style="background:#e8edf8;color:#0d1f4e;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">MM</span>';
@@ -2507,14 +2551,11 @@ function renderStoreRow(item){
     return `<tr class="editing-row" id="store-row-${item.id}">
       <td style="padding-left:12px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:220px">${item.product_name}</td>
       <td>${sourceBadge}</td>
-      <td><input class="edit-input" id="si-qty" type="number" value="${item.qty}" style="width:60px"/></td>
-      <td><input class="edit-input" id="si-min" type="number" value="${item.min_level}" style="width:50px"/></td>
-      <td><input class="edit-input" id="si-max" type="number" value="${item.max_level}" style="width:50px"/></td>
+      <td><input class="edit-input" id="si-qty-${item.id}" type="number" value="${item.qty}" style="width:60px"/></td>
+      <td><input class="edit-input" id="si-min-${item.id}" type="number" value="${item.min_level}" style="width:50px"/></td>
+      <td><input class="edit-input" id="si-max-${item.id}" type="number" value="${item.max_level}" style="width:50px"/></td>
       <td>${badge(item.qty, item.min_level)}</td>
-      <td><div style="display:flex;gap:4px">
-        <button class="action-btn" style="color:#fff;background:#1a7a45;border-color:#1a7a45;font-weight:700" onclick="saveStoreRowEdit(${item.id})">💾 Save</button>
-        <button class="action-btn" style="color:#7080a0;border-color:#d0d5e0" onclick="storeEditingId=null;renderStoreInventory()">✕</button>
-      </div></td>
+      <td><span style="font-size:10px;color:#c9a84c;font-weight:700">✎ EDITING</span></td>
     </tr>`;
   }
 
@@ -2526,22 +2567,34 @@ function renderStoreRow(item){
     <td style="color:#7080a0">${item.max_level}</td>
     <td>${badge(item.qty, item.min_level)}</td>
     <td><div style="display:flex;gap:4px">
-      <button class="action-btn" style="color:#1a5296;border-color:#b0c8e8" onclick="storeEditingId=${item.id};renderStoreInventory()">Edit</button>
+      ${!isEditing?`<button class="action-btn" style="color:#1a5296;border-color:#b0c8e8" onclick="storeEditingRows.add(${item.id});renderStoreInventory()">Edit</button>`:`<button class="action-btn" style="color:#7080a0;border-color:#d0d5e0" onclick="storeEditingRows.delete(${item.id});renderStoreInventory()">✕</button>`}
       <button class="action-btn" style="color:#b01c1c;border-color:#f0b8b8" onclick="removeStoreItem(${item.id})">Remove</button>
     </div></td>
   </tr>`;
 }
 
-async function saveStoreRowEdit(id){
+async function saveAllStoreEdits(){
+  const ids=[...storeEditingRows];
+  let saved=0;
+  for(const id of ids){
+    if(!document.getElementById('si-qty-'+id)) continue;
+    await saveStoreRowEdit(id, true);
+    saved++;
+  }
+  storeEditingRows.clear();
+  renderStoreInventory();
+  showToast(`${saved} store item${saved!==1?'s':''} saved`);
+}
+
+async function saveStoreRowEdit(id, silent=false){
   const item = storeInventory.find(x=>x.id===id);
   if(!item) return;
-  item.qty = parseFloat(document.getElementById('si-qty')?.value)||0;
-  item.min_level = parseFloat(document.getElementById('si-min')?.value)||0;
-  item.max_level = parseFloat(document.getElementById('si-max')?.value)||0;
-  storeEditingId = null;
-  renderStoreInventory();
+  item.qty = parseFloat(document.getElementById('si-qty-'+id)?.value)||0;
+  item.min_level = parseFloat(document.getElementById('si-min-'+id)?.value)||0;
+  item.max_level = parseFloat(document.getElementById('si-max-'+id)?.value)||0;
+  if(!silent){ storeEditingRows.delete(id); renderStoreInventory(); }
   await saveStoreItem(item);
-  showToast('Store item updated');
+  if(!silent) showToast('Store item updated');
 }
 
 async function removeStoreItem(id){
@@ -2693,14 +2746,22 @@ async function loadStoreOrders(){
   if(useSupabase){
     try{
       const rows = await sbFetch('store_orders?order=id.desc&limit=200',{method:'GET',prefer:'return=representation'});
-      storeOrders = rows.map(r=>({
-        id: r.id,
-        store_name: r.store_name,
-        status: r.status,
-        created_at: r.created_at,
-        closed_at: r.closed_at||null,
-        items: Array.isArray(r.items)?r.items:(typeof r.items==='string'?JSON.parse(r.items):[])
-      }));
+      storeOrders = rows.map(r=>{
+        let items = [];
+        try{
+          if(Array.isArray(r.items)) items = r.items;
+          else if(typeof r.items==='string' && r.items) items = JSON.parse(r.items);
+          else if(r.items && typeof r.items==='object') items = Object.values(r.items);
+        }catch(e){ items=[]; }
+        return {
+          id: r.id,
+          store_name: r.store_name,
+          status: r.status,
+          created_at: r.created_at,
+          closed_at: r.closed_at||null,
+          items
+        };
+      });
     } catch(e){
       try{ storeOrders=JSON.parse(localStorage.getItem(LS_STORE_ORDERS)||'[]'); }catch(e2){ storeOrders=[]; }
     }
@@ -3269,27 +3330,42 @@ function toggleStoreCountVerified(id, checked){
 function updateStoreCountQty(id, val){
   storeCountState[id].actualQty = val;
   storeCountState[id].verified = false;
+  storeCountState[id].reason = ''; // always reset — user must pick
   const item = storeInventory.find(x=>x.id===id);
   const currentQty = item ? item.qty : 0;
   const newQty = val==='' ? null : parseFloat(val);
   const diff = newQty !== null ? newQty - currentQty : null;
-  // Auto-set reason based on direction
-  if(diff !== null && newQty !== currentQty){
-    storeCountState[id].reason = diff < 0 ? 'Spoilage' : 'Restock';
-  } else {
-    storeCountState[id].reason = '';
-  }
+  const isDiff = diff !== null && newQty !== currentQty;
+
   // DOM patch — no full re-render
   const rowEl = document.getElementById(`sc-row-${id}`);
   if(rowEl){
-    const diffEl = rowEl.querySelector(`.sc-diff-${id}`)||rowEl.querySelectorAll('td')[4];
-    const vqEl = rowEl.querySelector(`.sc-vq-${id}`)||rowEl.querySelectorAll('td')[6];
-    if(diffEl){
-      diffEl.textContent = diff===null?'':(diff>0?'+'+diff:diff);
-      diffEl.style.color = diff===null?'#8090b0':diff>0?'#1a7a45':'#b01c1c';
+    const tds = rowEl.querySelectorAll('td');
+    // td[4] = diff, td[5] = reason, td[6] = verified qty
+    const diffTd = tds[4];
+    const reasonTd = tds[5];
+    const vqTd = tds[6];
+
+    if(diffTd){
+      diffTd.textContent = diff===null?'':(diff>0?'+'+diff:String(diff));
+      diffTd.style.color = diff===null?'#8090b0':diff>0?'#1a7a45':'#b01c1c';
     }
-    if(vqEl) vqEl.textContent = newQty!==null?newQty:'—';
-    rowEl.style.background = diff!==null&&newQty!==currentQty?'#fff8f0':'';
+    if(vqTd) vqTd.textContent = newQty!==null?newQty:'—';
+    rowEl.style.background = isDiff?'#fff8f0':'';
+
+    // Inject or remove reason dropdown
+    if(reasonTd){
+      if(isDiff){
+        const reasons = diff < 0 ? STORE_COUNT_NEG_REASONS : STORE_COUNT_POS_REASONS;
+        reasonTd.innerHTML = `<select onchange="updateStoreCountReason(${id},this.value)"
+          style="background:#f4f6fa;border:1.5px solid #e8943a;border-radius:5px;padding:4px 7px;font-size:11px;color:#1a2340;outline:none;cursor:pointer">
+          <option value="">-- Select --</option>
+          ${reasons.map(r=>`<option value="${r}">${r}</option>`).join('')}
+        </select>`;
+      } else {
+        reasonTd.innerHTML = `<span style="color:#8090b0;font-size:11px">${newQty!==null?'No change':''}</span>`;
+      }
+    }
   }
 }
 
@@ -3794,7 +3870,8 @@ async function submitCount(){
   for(const p of toUpdate){
     const s = countState[p.id];
     const newQty = parseFloat(s.actualQty);
-    const diff = newQty - p.qty;
+    const prevQty = p.qty; // capture BEFORE updating
+    const diff = newQty - prevQty;
     const reason = s.reason;
 
     products = products.map(x=>x.id===p.id?{...x,qty:newQty}:x);
@@ -3810,7 +3887,7 @@ async function submitCount(){
             id: Date.now() + Math.floor(Math.random()*10000),
             product_id: p.id,
             product_name: p.name,
-            previous_qty: p.qty,
+            previous_qty: prevQty,
             new_qty: newQty,
             difference: diff,
             reason: reason,
