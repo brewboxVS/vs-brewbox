@@ -1127,12 +1127,12 @@ function renderInventoryRow(p){
         ${CATS_LIST.map(c=>`<option value="${c}" ${p.cat1===c?'selected':''}>${c}</option>`).join('')}
       </select></td>
       <td><input class="edit-input" id="e-cat2" value="${p.cat2||''}" style="width:60px"/></td>
-      <td style="min-width:110px">
-        <div style="display:flex;flex-wrap:wrap;gap:3px">
-          ${VENDORS.map(v=>`<label style="display:flex;align-items:center;gap:3px;font-size:9px;color:#1a2340;cursor:pointer;white-space:nowrap">
-            <input type="checkbox" value="${v}" ${p.vendors&&p.vendors.includes(v)?'checked':''} class="e-vendor-cb" style="accent-color:#0d1f4e"/> ${v.split(' ')[0]}
-          </label>`).join('')}
-        </div>
+      <td style="min-width:130px">
+        <select id="e-vendors-select" multiple
+          style="width:120px;height:68px;background:#fff;border:1.5px solid #c9a84c;border-radius:5px;font-size:10px;color:#1a2340;outline:none;padding:2px">
+          ${VENDORS.map(v=>`<option value="${v}" ${p.vendors&&p.vendors.includes(v)?'selected':''}>${v}</option>`).join('')}
+        </select>
+        <div style="font-size:9px;color:#8090b0;margin-top:2px">Ctrl+click multi</div>
       </td>
       <td>${badge(p.qty,p.minLevel)}</td>
       <td style="min-width:110px">${toggleSwitch(p.active,`toggleActive(${p.id})`)}</td>
@@ -1195,10 +1195,11 @@ function cancelInlineEdit(){
 }
 
 async function saveInlineEdit(id){
-  const sv = Array.from(document.querySelectorAll('.e-vendor-cb:checked')).map(c=>c.value);
+  const sv = Array.from(document.querySelectorAll('#e-vendors-select option:checked')).map(o=>o.value);
   const cpb = parseFloat(document.getElementById('e-cpb')?.value)||0;
   const ppb = parseFloat(document.getElementById('e-ppb')?.value)||1;
   const uc = ppb>0 ? cpb/ppb : 0;
+  const oldQty = products.find(p=>p.id===id)?.qty ?? 0;
   products = products.map(p=>p.id===id?{
     ...p,
     name: document.getElementById('e-name')?.value || p.name,
@@ -1219,7 +1220,44 @@ async function saveInlineEdit(id){
   updateSidebar();
   const updated = products.find(p=>p.id===id);
   await saveProduct(updated);
-  showToast('Changes saved');
+
+  // Log qty change to restock_log if qty changed
+  if(oldQty !== updated.qty){
+    const diff = updated.qty - oldQty;
+    const reason = diff < 0 ? 'Spoilage' : 'Manual Increase';
+    const entry = {
+      id: Date.now() + Math.random(),
+      date: new Date().toISOString().slice(0,10),
+      product: updated.name,
+      qty: diff,
+      by: `Manual Edit (${reason})`
+    };
+    restockLog = [entry, ...restockLog];
+    await saveRestock(entry);
+    // Also log to inventory_count_log for reporting
+    if(useSupabase){
+      try{
+        await sbFetch('inventory_count_log', {
+          method:'POST',
+          prefer:'resolution=merge-duplicates,return=minimal',
+          body: JSON.stringify([{
+            id: Date.now() + Math.floor(Math.random()*10000),
+            product_id: updated.id,
+            product_name: updated.name,
+            previous_qty: oldQty,
+            new_qty: updated.qty,
+            difference: diff,
+            reason: reason,
+            count_date: new Date().toISOString().slice(0,10),
+            created_at: new Date().toISOString()
+          }])
+        });
+      } catch(e){ console.warn('Could not log to inventory_count_log:', e); }
+    }
+    showToast(`Saved · Qty change logged as ${reason} (${diff>0?'+':''}${diff})`);
+  } else {
+    showToast('Changes saved');
+  }
 }
 
 // Keep openEditModal as alias (used nowhere now but safe to keep)
