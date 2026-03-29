@@ -253,9 +253,15 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
       <div id="warehouse-nav">
         <button class="nav-btn" id="warehouse-toggle" onclick="toggleWarehouseMenu()">▦ &nbsp;<span>Warehouse</span><span class="nav-arrow" id="warehouse-arrow">›</span></button>
         <div id="warehouse-submenu" style="display:none">
-          <button class="nav-btn nav-sub" onclick="setView('inventory')">▦ &nbsp;<span>Warehouse Inventory</span></button>
-          <button class="nav-btn nav-sub" onclick="setView('orders')">📦 &nbsp;<span>Warehouse Orders</span></button>
+          <button class="nav-btn nav-sub" onclick="setView('inventory')">▦ &nbsp;<span>Warehouse MM Inventory</span></button>
+          <button class="nav-btn nav-sub" onclick="setView('coffee')">☕ &nbsp;<span>Warehouse Coffee Inventory</span></button>
           <button class="nav-btn nav-sub" onclick="setView('count')">📋 &nbsp;<span>Inventory Count</span></button>
+        </div>
+      </div>
+      <div id="import-nav">
+        <button class="nav-btn" id="import-toggle" onclick="toggleImportMenu()">⬆ &nbsp;<span>Import</span><span class="nav-arrow" id="import-arrow">›</span></button>
+        <div id="import-submenu" style="display:none">
+          <button class="nav-btn nav-sub" onclick="setView('orders')">📦 &nbsp;<span>Warehouse Orders</span></button>
         </div>
       </div>
       <button class="nav-btn" onclick="setView('restock')">↑ &nbsp;<span>Restock Log</span></button>
@@ -872,6 +878,7 @@ async function initApp(){
   document.getElementById('app').style.display='flex';
   showLoading('Loading inventory…');
   await loadData();
+  await loadCoffeeData();
   hideLoading();
   setView('dashboard');
 }
@@ -911,11 +918,14 @@ function updateSidebar(){
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('active'));
   if(currentView==='dashboard') document.querySelector('.nav-btn[onclick*="dashboard"]')?.classList.add('active');
   if(currentView==='inventory') document.querySelector('.nav-btn[onclick*="inventory"]')?.classList.add('active');
+  if(currentView==='coffee') document.querySelector('.nav-btn[onclick*="coffee"]')?.classList.add('active');
   if(currentView==='orders') document.querySelector('.nav-btn[onclick*="orders"]')?.classList.add('active');
   if(currentView==='restock') document.querySelector('.nav-btn[onclick*="restock"]')?.classList.add('active');
-  // Auto-open warehouse submenu when on warehouse views
-  if(currentView==='inventory'||currentView==='orders'||currentView==='count') openWarehouseMenu();
   if(currentView==='count') document.querySelector('.nav-btn[onclick*="count"]')?.classList.add('active');
+  // Auto-open warehouse submenu when on warehouse views
+  if(currentView==='inventory'||currentView==='coffee'||currentView==='count') openWarehouseMenu();
+  // Auto-open import submenu when on import views
+  if(currentView==='orders') openImportMenu();
 }
 
 function toggleWarehouseMenu(){
@@ -933,12 +943,27 @@ function openWarehouseMenu(){
   if(arrow) arrow.classList.add('open');
 }
 
+function toggleImportMenu(){
+  const sub=document.getElementById('import-submenu');
+  const arrow=document.getElementById('import-arrow');
+  if(!sub) return;
+  const isOpen=sub.style.display!=='none';
+  sub.style.display=isOpen?'none':'block';
+  arrow?.classList.toggle('open',!isOpen);
+}
+function openImportMenu(){
+  const sub=document.getElementById('import-submenu');
+  const arrow=document.getElementById('import-arrow');
+  if(sub) sub.style.display='block';
+  if(arrow) arrow.classList.add('open');
+}
+
 function setView(v){
   currentView=v;
-  const titles={dashboard:'Dashboard',inventory:'Warehouse Inventory',orders:'Warehouse Orders',count:'Inventory Count',restock:'Restock Log'};
+  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory',orders:'Warehouse Orders',count:'Inventory Count',restock:'Restock Log'};
   if(v==='count' && Object.keys(countState).length===0) initCountState();
   document.getElementById('page-title').textContent=titles[v]||v;
-  document.getElementById('header-action').innerHTML=v==='inventory'?`
+  document.getElementById('header-action').innerHTML=(v==='inventory'||v==='coffee')?`
     <div style="display:flex;gap:8px;align-items:center">
       <div class="export-wrap" id="export-wrap">
         <button class="export-btn" onclick="toggleExportMenu()">⬇ Export to Excel <span style="font-size:9px">▼</span></button>
@@ -948,7 +973,7 @@ function setView(v){
           <div class="export-item" onclick="exportExcel('filtered')">🔍 Export Current Filtered View</div>
         </div>
       </div>
-      <button class="primary-btn" onclick="openAddModal()">+ Add Item</button>
+      <button class="primary-btn" onclick="${v==='coffee'?'openAddCoffeeModal()':'openAddModal()'}">+ Add Item</button>
     </div>`:'';
   updateSidebar();render();
 }
@@ -956,6 +981,7 @@ function setView(v){
 function render(){
   if(currentView==='dashboard') renderDashboard();
   else if(currentView==='inventory') renderInventory();
+  else if(currentView==='coffee') renderCoffeeInventory();
   else if(currentView==='orders') renderOrders();
   else if(currentView==='count') renderCount();
   else renderRestock();
@@ -1396,16 +1422,22 @@ function exportExcel(mode){
 
   let data;
   const CATEGORIES = ['DRINKS','SNACKS','CHIPS','CANDY','PASTRY','COLD FOOD','FROZEN FOOD'];
+  const onCoffee = currentView==='coffee';
   if(mode === 'all'){
-    data = products;
+    data = onCoffee ? coffeeProducts : products;
   } else if(mode === 'active'){
-    data = products.filter(p=>p.active);
+    data = (onCoffee ? coffeeProducts : products).filter(p=>p.active);
   } else {
     // current filtered view
-    data = products.filter(p=>{
-      const ms = p.name.toLowerCase().includes(searchTerm.toLowerCase())||p.upc.includes(searchTerm);
-      const matchActive = showActiveOnly ? p.active : true;
-      const matchCat = categoryFilters.size===0 || categoryFilters.has(p.cat1);
+    const isCoffee = currentView==='coffee';
+    const srcProducts = isCoffee ? coffeeProducts : products;
+    const srcSearch = isCoffee ? coffeeSearchTerm : searchTerm;
+    const srcActiveOnly = isCoffee ? coffeeShowActiveOnly : showActiveOnly;
+    const srcCatFilters = isCoffee ? coffeeCategoryFilters : categoryFilters;
+    data = srcProducts.filter(p=>{
+      const ms = p.name.toLowerCase().includes(srcSearch.toLowerCase())||p.upc.includes(srcSearch);
+      const matchActive = srcActiveOnly ? p.active : true;
+      const matchCat = srcCatFilters.size===0 || srcCatFilters.has(p.cat1);
       return ms && matchActive && matchCat;
     });
   }
@@ -1847,6 +1879,365 @@ function recalcAddUnitCost(){
   const uc = ppb>0 ? cpb/ppb : 0;
   const el = document.getElementById('n-unit-cost-display');
   if(el) el.innerHTML = `$${uc.toFixed(4)} &nbsp;<span style="font-size:10px;font-weight:400;color:#5a9a7a">(Cost Per Box ÷ Pieces Per Box)</span>`;
+}
+
+
+// ═══════════════════════════════════════════════════
+//  WAREHOUSE COFFEE INVENTORY
+// ═══════════════════════════════════════════════════
+let coffeeProducts = [];
+let coffeeSearchTerm = '';
+let coffeeShowActiveOnly = false;
+let coffeeCategoryFilters = new Set();
+let coffeeEditingId = null;
+const LS_COFFEE = 'vs_brewbox_coffee';
+
+const COFFEE_CATS = ['SINGLE SERVE','WHOLE BEAN','GROUND','COLD BREW','TEA','EQUIPMENT','SUPPLIES','OTHER'];
+const COFFEE_CAT_COLORS = {
+  'SINGLE SERVE': {btn:'#6b2fa0'}, 'WHOLE BEAN': {btn:'#5a3010'}, 'GROUND': {btn:'#3d1a0a'},
+  'COLD BREW': {btn:'#006080'}, 'TEA': {btn:'#2e7d32'}, 'EQUIPMENT': {btn:'#1a3266'},
+  'SUPPLIES': {btn:'#b35a00'}, 'OTHER': {btn:'#5060a0'}
+};
+
+async function loadCoffeeData(){
+  if(useSupabase){
+    try{
+      const rows = await sbFetch('coffee_products?order=id', {method:'GET', prefer:''});
+      coffeeProducts = rows.map(rowToCoffeeProduct);
+    } catch(e){
+      loadCoffeeFallback();
+    }
+  } else {
+    loadCoffeeFallback();
+  }
+}
+
+function loadCoffeeFallback(){
+  try{
+    const p = localStorage.getItem(LS_COFFEE);
+    coffeeProducts = p ? JSON.parse(p) : [];
+  } catch(e){ coffeeProducts = []; }
+}
+
+function rowToCoffeeProduct(row){
+  return {
+    id: row.id, name: row.name, upc: row.upc||'',
+    qty: parseFloat(row.qty)||0, minLevel: parseFloat(row.min_level)||0, maxLevel: parseFloat(row.max_level)||0,
+    unitCost: parseFloat(row.unit_cost)||0, salePrice: parseFloat(row.sale_price)||0,
+    costPerBox: parseFloat(row.cost_per_box)||0, piecesPerBox: parseFloat(row.pieces_per_box)||0,
+    cat1: row.cat1||'', cat2: row.cat2||'',
+    vendors: Array.isArray(row.vendors)?row.vendors:[],
+    active: row.active!==false
+  };
+}
+
+function coffeeProductToRow(p){
+  return {
+    id:p.id, name:p.name, upc:p.upc||'', qty:p.qty,
+    min_level:p.minLevel, max_level:p.maxLevel, unit_cost:p.unitCost,
+    sale_price:p.salePrice, cost_per_box:p.costPerBox, pieces_per_box:p.piecesPerBox,
+    cat1:p.cat1||'', cat2:p.cat2||'', vendors:p.vendors||[], active:p.active,
+    updated_at:new Date().toISOString()
+  };
+}
+
+async function saveCoffeeProduct(p){
+  if(useSupabase){
+    try{
+      setSyncStatus('busy','Saving…');
+      await sbFetch('coffee_products', {
+        method:'POST',
+        prefer:'resolution=merge-duplicates,return=minimal',
+        body: JSON.stringify([coffeeProductToRow(p)])
+      });
+      setSyncStatus('ok','Saved ✓');
+    } catch(e){
+      setSyncStatus('err','Save failed');
+      showToast('⚠ Could not save coffee item to database');
+    }
+  }
+  localStorage.setItem(LS_COFFEE, JSON.stringify(coffeeProducts));
+}
+
+async function deleteCoffeeProduct(id){
+  if(!confirm('Delete this coffee item?')) return;
+  coffeeProducts = coffeeProducts.filter(p=>p.id!==id);
+  renderCoffeeInventory();
+  if(useSupabase){
+    try{ await sbFetch(`coffee_products?id=eq.${id}`,{method:'DELETE',prefer:''}); } catch(e){}
+  }
+  localStorage.setItem(LS_COFFEE, JSON.stringify(coffeeProducts));
+  showToast('Item deleted');
+}
+
+async function toggleCoffeeActive(id){
+  coffeeProducts = coffeeProducts.map(p=>p.id===id?{...p,active:!p.active}:p);
+  renderCoffeeInventory();
+  const p = coffeeProducts.find(x=>x.id===id);
+  await saveCoffeeProduct(p);
+}
+
+function renderCoffeeInventory(){
+  let filtered = coffeeProducts.filter(p=>{
+    const ms = p.name.toLowerCase().includes(coffeeSearchTerm.toLowerCase())||p.upc.includes(coffeeSearchTerm);
+    const matchActive = coffeeShowActiveOnly ? p.active : true;
+    const matchCat = coffeeCategoryFilters.size===0 || coffeeCategoryFilters.has(p.cat1);
+    return ms && matchActive && matchCat;
+  });
+  const activeCount = coffeeProducts.filter(p=>p.active).length;
+  const inactiveCount = coffeeProducts.filter(p=>!p.active).length;
+
+  document.getElementById('main-body').innerHTML=`
+    <div class="cat-filters">
+      <button class="cat-btn${coffeeCategoryFilters.size===0?' active':''}" onclick="coffeeCategoryFilters.clear();renderCoffeeInventory()">ALL</button>
+      ${COFFEE_CATS.map(c=>{
+        const col = COFFEE_CAT_COLORS[c]?.btn||'#5060a0';
+        return `<button class="cat-btn${coffeeCategoryFilters.has(c)?' active':''}"
+          style="${coffeeCategoryFilters.has(c)?`background:${col};border-color:${col};color:#fff`:''}"
+          onclick="(function(){if(coffeeCategoryFilters.has('${c}')){coffeeCategoryFilters.delete('${c}')}else{coffeeCategoryFilters.add('${c}')};renderCoffeeInventory()})()">${c}</button>`;
+      }).join('')}
+    </div>
+    <div class="filter-row" style="margin-bottom:10px">
+      <input class="search-input" placeholder="Search by name or UPC…" value="${coffeeSearchTerm}" oninput="coffeeSearchTerm=this.value;renderCoffeeInventory()"/>
+      <div class="filter-toggle${coffeeShowActiveOnly?' active-filter':''}" onclick="coffeeShowActiveOnly=!coffeeShowActiveOnly;renderCoffeeInventory()">
+        <div class="filter-toggle-track${coffeeShowActiveOnly?' on':''}"><div class="filter-toggle-thumb"></div></div>
+        <span>Active items only</span>
+      </div>
+      <span style="font-size:11px;color:#7080a0;margin-left:2px">${filtered.length} shown · ${activeCount} active · ${inactiveCount} inactive</span>
+    </div>
+    <div style="background:#fff;border:1px solid #d8dde8;border-radius:9px;overflow:hidden">
+      <div style="overflow-x:auto">
+      <table>
+        <thead><tr>
+          <th style="padding-left:12px;min-width:200px">NAME</th>
+          <th>UPC</th><th>QTY</th><th>MIN</th><th>MAX</th>
+          <th>UNIT COST</th><th>SALE PRICE</th><th>COST/BOX</th><th>PCS/BOX</th>
+          <th>CAT 1</th><th>CAT 2</th><th>VENDOR</th>
+          <th>STATUS</th><th>ACTIVE</th><th>ACTIONS</th>
+        </tr></thead>
+        <tbody>
+        ${filtered.length===0?`<tr><td colspan="15" style="text-align:center;padding:30px;color:#7080a0">No coffee items yet. Click "+ Add Item" to get started.</td></tr>`
+          :filtered.map(p=>renderCoffeeRow(p)).join('')}
+        </tbody>
+      </table>
+      </div>
+    </div>`;
+}
+
+function renderCoffeeRow(p){
+  const isEditing = coffeeEditingId === p.id;
+  const isLocked = coffeeEditingId !== null && coffeeEditingId !== p.id;
+  const uc = p.piecesPerBox>0 ? (p.costPerBox/p.piecesPerBox) : 0;
+
+  if(isEditing){
+    return `<tr class="editing-row" id="coffee-row-${p.id}">
+      <td style="padding-left:8px;min-width:180px"><input class="edit-input" id="ce-name" value="${p.name.replace(/"/g,'&quot;')}" style="min-width:160px"/></td>
+      <td><input class="edit-input" id="ce-upc" value="${p.upc}" style="width:110px;font-family:monospace;font-size:10px"/></td>
+      <td><input class="edit-input" id="ce-qty" type="number" value="${p.qty}" style="width:55px"/></td>
+      <td><input class="edit-input" id="ce-min" type="number" value="${p.minLevel}" style="width:45px"/></td>
+      <td><input class="edit-input" id="ce-max" type="number" value="${p.maxLevel}" style="width:45px"/></td>
+      <td><span class="edit-unit-cost" id="ce-uc-display">$${uc.toFixed(4)}</span></td>
+      <td><input class="edit-input" id="ce-price" type="number" value="${p.salePrice}" step="0.01" style="width:60px"/></td>
+      <td><input class="edit-input" id="ce-cpb" type="number" value="${p.costPerBox}" step="0.01" style="width:65px" oninput="coffeeRecalcUC()"/></td>
+      <td><input class="edit-input" id="ce-ppb" type="number" value="${p.piecesPerBox}" style="width:45px" oninput="coffeeRecalcUC()"/></td>
+      <td><select class="edit-select" id="ce-cat1" style="width:100px">
+        <option value="">—</option>
+        ${COFFEE_CATS.map(c=>`<option value="${c}" ${p.cat1===c?'selected':''}>${c}</option>`).join('')}
+      </select></td>
+      <td><input class="edit-input" id="ce-cat2" value="${p.cat2||''}" style="width:60px"/></td>
+      <td style="min-width:130px">
+        <select id="ce-vendors-select" multiple style="width:120px;height:68px;background:#fff;border:1.5px solid #c9a84c;border-radius:5px;font-size:10px;color:#1a2340;outline:none;padding:2px">
+          ${VENDORS.map(v=>`<option value="${v}" ${p.vendors&&p.vendors.includes(v)?'selected':''}>${v}</option>`).join('')}
+        </select>
+        <div style="font-size:9px;color:#8090b0;margin-top:2px">Ctrl+click multi</div>
+      </td>
+      <td>${badge(p.qty,p.minLevel)}</td>
+      <td style="min-width:110px">${toggleSwitch(p.active,`toggleCoffeeActive(${p.id})`)}</td>
+      <td style="min-width:145px"><div style="display:flex;gap:4px">
+        <button class="action-btn" style="color:#fff;background:#1a7a45;border-color:#1a7a45;font-weight:700" onclick="saveCoffeeEdit(${p.id})">💾 Save</button>
+        <button class="action-btn" style="color:#7080a0;border-color:#d0d5e0" onclick="cancelCoffeeEdit()">✕</button>
+      </div></td>
+    </tr>`;
+  }
+
+  const rowStyle = isLocked ? 'opacity:0.45;pointer-events:none;' : '';
+  return `<tr class="${p.active?'':'inactive-row'}" id="coffee-row-${p.id}" style="${rowStyle}">
+    <td style="padding-left:12px;font-weight:600;color:#0d1f4e;white-space:normal;line-height:1.3;max-width:220px">${p.name}</td>
+    <td style="font-family:monospace;font-size:10px;color:#7080a0;max-width:110px;overflow:hidden;text-overflow:ellipsis" title="${p.upc}">${p.upc.substring(0,15)}</td>
+    <td style="font-weight:700;color:${p.qty<=0?'#b01c1c':p.qty<=p.minLevel&&p.minLevel>0?'#b35a00':'#1a7a45'}">${p.qty}</td>
+    <td>${p.minLevel}</td><td style="color:#7080a0">${p.maxLevel}</td>
+    <td>$${uc.toFixed(4)}</td>
+    <td style="color:#1a7a45">$${p.salePrice.toFixed(2)}</td>
+    <td>$${p.costPerBox.toFixed(2)}</td>
+    <td>${p.piecesPerBox}</td>
+    <td style="font-size:11px;color:#5060a0">${p.cat1||'—'}</td>
+    <td style="font-size:11px;color:#5060a0">${p.cat2||'—'}</td>
+    <td style="min-width:90px">${p.vendors&&p.vendors.length>0?p.vendors.map(v=>{const vc=VENDOR_COLORS[v]||{bg:'#e8edf8',color:'#0d1f4e'};return `<span class="vendor-tag" style="background:${vc.bg};color:${vc.color}" title="${v}">${vendorAbbr(v)}</span>`;}).join(''):'<span style="color:#b0b8cc;font-size:11px">—</span>'}</td>
+    <td>${badge(p.qty,p.minLevel)}</td>
+    <td style="min-width:110px">${toggleSwitch(p.active,`toggleCoffeeActive(${p.id})`)}</td>
+    <td style="min-width:130px"><div style="display:flex;gap:4px">
+      ${p.active&&!isLocked?`<button class="action-btn" style="color:#0d1f4e;border-color:#c0c8dc" onclick="openCoffeeRestockModal(${p.id})">Restock</button>`:''}
+      ${!isLocked?`<button class="action-btn" style="color:#1a5296;border-color:#b0c8e8" onclick="startCoffeeEdit(${p.id})">Edit</button>`:''}
+      ${!isLocked?`<button class="action-btn" style="color:#b01c1c;border-color:#f0b8b8" onclick="deleteCoffeeProduct(${p.id})">Del</button>`:''}
+    </div></td>
+  </tr>`;
+}
+
+function coffeeRecalcUC(){
+  const cpb=parseFloat(document.getElementById('ce-cpb')?.value)||0;
+  const ppb=parseFloat(document.getElementById('ce-ppb')?.value)||0;
+  const el=document.getElementById('ce-uc-display');
+  if(el) el.textContent='$'+(ppb>0?cpb/ppb:0).toFixed(4);
+}
+
+function startCoffeeEdit(id){
+  coffeeEditingId=id; renderCoffeeInventory();
+  setTimeout(()=>{
+    const row=document.getElementById('coffee-row-'+id);
+    if(row){row.scrollIntoView({behavior:'smooth',block:'nearest'});row.querySelector('.edit-input')?.focus();}
+  },50);
+}
+
+function cancelCoffeeEdit(){ coffeeEditingId=null; renderCoffeeInventory(); }
+
+async function saveCoffeeEdit(id){
+  const oldQty = coffeeProducts.find(p=>p.id===id)?.qty ?? 0;
+  const sv=Array.from(document.querySelectorAll('#ce-vendors-select option:checked')).map(o=>o.value);
+  const cpb=parseFloat(document.getElementById('ce-cpb')?.value)||0;
+  const ppb=parseFloat(document.getElementById('ce-ppb')?.value)||1;
+  const uc=ppb>0?cpb/ppb:0;
+  coffeeProducts=coffeeProducts.map(p=>p.id===id?{
+    ...p,
+    name:document.getElementById('ce-name')?.value||p.name,
+    upc:document.getElementById('ce-upc')?.value||'',
+    qty:parseFloat(document.getElementById('ce-qty')?.value)||0,
+    minLevel:parseFloat(document.getElementById('ce-min')?.value)||0,
+    maxLevel:parseFloat(document.getElementById('ce-max')?.value)||0,
+    unitCost:uc, salePrice:parseFloat(document.getElementById('ce-price')?.value)||0,
+    costPerBox:cpb, piecesPerBox:ppb,
+    cat1:document.getElementById('ce-cat1')?.value||'',
+    cat2:document.getElementById('ce-cat2')?.value||'', vendors:sv
+  }:p);
+  coffeeEditingId=null; renderCoffeeInventory();
+  const updated=coffeeProducts.find(p=>p.id===id);
+  await saveCoffeeProduct(updated);
+  if(oldQty!==updated.qty){
+    const diff=updated.qty-oldQty;
+    const reason=diff<0?'Spoilage':'Manual Increase';
+    const entry={id:Date.now()+Math.random(),date:new Date().toISOString().slice(0,10),product:updated.name,qty:diff,by:`Coffee Manual Edit (${reason})`};
+    restockLog=[entry,...restockLog];
+    await saveRestock(entry);
+    showToast(`Saved · Qty change logged as ${reason} (${diff>0?'+':''}${diff})`);
+  } else { showToast('Changes saved'); }
+}
+
+function openAddCoffeeModal(){
+  document.getElementById('modal-container').innerHTML=`
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div class="modal-title">Add Coffee Inventory Item</div>
+          <button onclick="closeModal()" style="background:none;border:none;color:#7080a0;cursor:pointer;font-size:20px">✕</button>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 16px">
+          <div style="grid-column:1/-1"><label class="form-label">Item Name</label><input class="form-input" id="cn-name" placeholder="e.g. Starbucks Pike Place K-Cup"/></div>
+          <div><label class="form-label">UPC</label><input class="form-input" id="cn-upc"/></div>
+          <div><label class="form-label">Qty / Hand</label><input class="form-input" id="cn-qty" type="number" value="0"/></div>
+          <div><label class="form-label">Min Level</label><input class="form-input" id="cn-min" type="number" value="0"/></div>
+          <div><label class="form-label">Max Level</label><input class="form-input" id="cn-max" type="number" value="0"/></div>
+          <div><label class="form-label">Sale Price ($)</label><input class="form-input" id="cn-price" type="number" value="0" step="0.01"/></div>
+          <div><label class="form-label">Cost Per Box ($)</label><input class="form-input" id="cn-cpb" type="number" value="0" step="0.01" oninput="recalcCoffeeAddUC()"/></div>
+          <div><label class="form-label">Pieces Per Box</label><input class="form-input" id="cn-ppb" type="number" value="0" oninput="recalcCoffeeAddUC()"/></div>
+          <div><label class="form-label">Category 1</label>
+            <select class="form-input" id="cn-cat1">
+              <option value="">-- Select --</option>
+              ${COFFEE_CATS.map(c=>`<option value="${c}">${c}</option>`).join('')}
+            </select>
+          </div>
+          <div><label class="form-label">Category 2</label><input class="form-input" id="cn-cat2"/></div>
+          <div style="grid-column:1/-1">
+            <label class="form-label">Unit Cost (auto-calculated)</label>
+            <div id="cn-uc-display" style="background:#e8f4ee;border:1px solid #b8d8c8;border-radius:6px;padding:7px 10px;font-size:12px;font-weight:700;color:#1a7a45;margin-bottom:8px">
+              $0.0000 &nbsp;<span style="font-size:10px;font-weight:400;color:#5a9a7a">(Cost Per Box ÷ Pieces Per Box)</span>
+            </div>
+          </div>
+        </div>
+        <label class="form-label" style="margin-top:4px">Vendor</label>
+        <div class="multi-select-container" id="cn-vendors">${vendorCheckboxes([])}</div>
+        <div style="display:flex;gap:10px;margin-top:12px">
+          <button class="primary-btn" onclick="addCoffeeProduct()">Add Item</button>
+          <button class="secondary-btn" onclick="closeModal()">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function recalcCoffeeAddUC(){
+  const cpb=parseFloat(document.getElementById('cn-cpb')?.value)||0;
+  const ppb=parseFloat(document.getElementById('cn-ppb')?.value)||0;
+  const el=document.getElementById('cn-uc-display');
+  if(el) el.innerHTML=`$${(ppb>0?cpb/ppb:0).toFixed(4)} &nbsp;<span style="font-size:10px;font-weight:400;color:#5a9a7a">(Cost Per Box ÷ Pieces Per Box)</span>`;
+}
+
+async function addCoffeeProduct(){
+  const sv=Array.from(document.querySelectorAll('#cn-vendors input:checked')).map(c=>c.value);
+  const cpb=parseFloat(document.getElementById('cn-cpb').value)||0;
+  const ppb=parseFloat(document.getElementById('cn-ppb').value)||1;
+  const p={
+    id:Date.now(),
+    name:document.getElementById('cn-name').value||'New Coffee Item',
+    upc:document.getElementById('cn-upc').value||'',
+    qty:parseFloat(document.getElementById('cn-qty').value)||0,
+    minLevel:parseFloat(document.getElementById('cn-min').value)||0,
+    maxLevel:parseFloat(document.getElementById('cn-max').value)||0,
+    unitCost:ppb>0?cpb/ppb:0,
+    salePrice:parseFloat(document.getElementById('cn-price').value)||0,
+    costPerBox:cpb, piecesPerBox:ppb,
+    cat1:document.getElementById('cn-cat1').value,
+    cat2:document.getElementById('cn-cat2').value,
+    vendors:sv, active:true
+  };
+  coffeeProducts.push(p);
+  closeModal(); renderCoffeeInventory();
+  await saveCoffeeProduct(p);
+  showToast('Coffee item added');
+}
+
+function openCoffeeRestockModal(id){
+  const p=coffeeProducts.find(x=>x.id===id);
+  document.getElementById('modal-container').innerHTML=`
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="width:380px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div class="modal-title">Restock: ${p.name}</div>
+          <button onclick="closeModal()" style="background:none;border:none;color:#7080a0;cursor:pointer;font-size:20px">✕</button>
+        </div>
+        <div style="background:#f4f6fa;border-radius:7px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:#5060a0">
+          Current qty: <strong style="color:#0d1f4e">${p.qty}</strong> · Min: ${p.minLevel} · Max: ${p.maxLevel}
+        </div>
+        <label class="form-label">Qty to Add</label>
+        <input class="form-input" id="cr-qty" type="number" value="${Math.max(0,p.maxLevel-p.qty)||10}"/>
+        <label class="form-label">Team Member Name</label>
+        <input class="form-input" id="cr-by" placeholder="e.g. Marcus T."/>
+        <div style="display:flex;gap:10px;margin-top:12px">
+          <button class="primary-btn" onclick="doCoffeeRestock(${id})">Log Restock</button>
+          <button class="secondary-btn" onclick="closeModal()">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function doCoffeeRestock(id){
+  const qty=parseInt(document.getElementById('cr-qty').value)||0;
+  const by=document.getElementById('cr-by').value||'Unknown';
+  const p=coffeeProducts.find(x=>x.id===id);
+  coffeeProducts=coffeeProducts.map(x=>x.id===id?{...x,qty:x.qty+qty}:x);
+  const entry={id:Date.now(),date:new Date().toISOString().slice(0,10),product:p.name,qty,by};
+  restockLog=[entry,...restockLog];
+  closeModal(); renderCoffeeInventory();
+  await saveCoffeeProduct(coffeeProducts.find(x=>x.id===id));
+  await saveRestock(entry);
+  showToast(`Restocked ${qty} × ${p.name}`);
 }
 
 // ═══════════════════════════════════════════════════
