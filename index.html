@@ -258,6 +258,12 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
           <button class="nav-btn nav-sub" onclick="setView('count')">📋 &nbsp;<span>Inventory Count</span></button>
         </div>
       </div>
+      <div id="stores-nav">
+        <button class="nav-btn" id="stores-toggle" onclick="toggleStoresMenu()">🏪 &nbsp;<span>Stores</span><span class="nav-arrow" id="stores-arrow">›</span></button>
+        <div id="stores-submenu" style="display:none">
+          <button class="nav-btn nav-sub" onclick="setView('store-inventory')">📊 &nbsp;<span>Store Inventory</span></button>
+        </div>
+      </div>
       <div id="import-nav">
         <button class="nav-btn" id="import-toggle" onclick="toggleImportMenu()">⬆ &nbsp;<span>Import</span><span class="nav-arrow" id="import-arrow">›</span></button>
         <div id="import-submenu" style="display:none">
@@ -733,6 +739,7 @@ function rowToProduct(row){
     cat1: row.cat1||'',
     cat2: row.cat2||'',
     vendors: Array.isArray(row.vendors)?row.vendors:[],
+    stores: Array.isArray(row.stores)?row.stores:[],
     active: row.active!==false
   };
 }
@@ -752,6 +759,7 @@ function productToRow(p){
     cat1: p.cat1||'',
     cat2: p.cat2||'',
     vendors: p.vendors||[],
+    stores: p.stores||[],
     active: p.active,
     updated_at: new Date().toISOString()
   };
@@ -883,6 +891,7 @@ async function initApp(){
   showLoading('Loading inventory…');
   await loadData();
   await loadCoffeeData();
+  await loadStoreInventory();
   hideLoading();
   setView('dashboard');
 }
@@ -923,11 +932,13 @@ function updateSidebar(){
   if(currentView==='dashboard') document.querySelector('.nav-btn[onclick*="dashboard"]')?.classList.add('active');
   if(currentView==='inventory') document.querySelector('.nav-btn[onclick*="inventory"]')?.classList.add('active');
   if(currentView==='coffee') document.querySelector('.nav-btn[onclick*="coffee"]')?.classList.add('active');
+  if(currentView==='store-inventory') document.querySelector('.nav-btn[onclick*="store-inventory"]')?.classList.add('active');
   if(currentView==='orders') document.querySelector('.nav-btn[onclick*="orders"]')?.classList.add('active');
   if(currentView==='restock') document.querySelector('.nav-btn[onclick*="restock"]')?.classList.add('active');
   if(currentView==='count') document.querySelector('.nav-btn[onclick*="count"]')?.classList.add('active');
   // Auto-open warehouse submenu when on warehouse views
   if(currentView==='inventory'||currentView==='coffee'||currentView==='count') openWarehouseMenu();
+  if(currentView==='store-inventory') openStoresMenu();
   // Auto-open import submenu when on import views
   if(currentView==='orders') openImportMenu();
 }
@@ -962,9 +973,24 @@ function openImportMenu(){
   if(arrow) arrow.classList.add('open');
 }
 
+function toggleStoresMenu(){
+  const sub=document.getElementById('stores-submenu');
+  const arrow=document.getElementById('stores-arrow');
+  if(!sub) return;
+  const isOpen=sub.style.display!=='none';
+  sub.style.display=isOpen?'none':'block';
+  arrow?.classList.toggle('open',!isOpen);
+}
+function openStoresMenu(){
+  const sub=document.getElementById('stores-submenu');
+  const arrow=document.getElementById('stores-arrow');
+  if(sub) sub.style.display='block';
+  if(arrow) arrow.classList.add('open');
+}
+
 function setView(v){
   currentView=v;
-  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory',orders:'Warehouse Orders',count:'Inventory Count',restock:'Activity Log'};
+  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory',orders:'Warehouse Orders',count:'Inventory Count',restock:'Activity Log'};
   if(v==='count' && Object.keys(countState).length===0) initCountState();
   document.getElementById('page-title').textContent=titles[v]||v;
   document.getElementById('header-action').innerHTML=(v==='inventory'||v==='coffee')?`
@@ -986,6 +1012,7 @@ function render(){
   if(currentView==='dashboard') renderDashboard();
   else if(currentView==='inventory') renderInventory();
   else if(currentView==='coffee') renderCoffeeInventory();
+  else if(currentView==='store-inventory') renderStoreInventory();
   else if(currentView==='orders') renderOrders();
   else if(currentView==='count') renderCount();
   else renderRestock();
@@ -1068,7 +1095,7 @@ function renderInventory(){
           <th>UPC</th><th>QTY</th><th>MIN</th><th>MAX</th>
           <th>UNIT COST</th><th>SALE PRICE</th><th>COST/BOX</th><th>PCS/BOX</th>
           <th>CAT 1</th><th>CAT 2</th><th>VENDOR</th>
-          <th>STATUS</th><th>ACTIVE</th><th>ACTIONS</th>
+          <th>STORES</th><th>STATUS</th><th>ACTIVE</th><th>ACTIONS</th>
         </tr></thead>
         <tbody>
         ${filtered.map(p=>renderInventoryRow(p)).join('')}
@@ -1226,6 +1253,7 @@ function renderInventoryRow(p){
         </select>
         <div style="font-size:9px;color:#8090b0;margin-top:2px">Ctrl+click multi</div>
       </td>
+      <td style="min-width:120px">${storeMultiSelect(p.id,'mm',p.stores||[])}</td>
       <td>${badge(p.qty,p.minLevel)}</td>
       <td style="min-width:110px">${toggleSwitch(p.active,`toggleActive(${p.id})`)}</td>
       <td style="min-width:145px"><div style="display:flex;gap:4px">
@@ -1249,6 +1277,7 @@ function renderInventoryRow(p){
     <td style="font-size:11px;color:#5060a0">${p.cat1||'—'}</td>
     <td style="font-size:11px;color:#5060a0">${p.cat2||'—'}</td>
     <td style="min-width:90px">${p.vendors&&p.vendors.length>0?p.vendors.map(v=>{const vc=VENDOR_COLORS[v]||{bg:'#e8edf8',color:'#0d1f4e'};return `<span class="vendor-tag" style="background:${vc.bg};color:${vc.color}" title="${v}">${vendorAbbr(v)}</span>`;}).join(''):'<span style="color:#b0b8cc;font-size:11px">—</span>'}</td>
+    <td style="min-width:120px">${storeMultiSelect(p.id,'mm',p.stores||[])}</td>
     <td>${badge(p.qty,p.minLevel)}</td>
     <td style="min-width:110px">${toggleSwitch(p.active,`toggleActive(${p.id})`)}</td>
     <td style="min-width:130px"><div style="display:flex;gap:4px">
@@ -1980,6 +2009,7 @@ function rowToCoffeeProduct(row){
     costPerBox: parseFloat(row.cost_per_box)||0, piecesPerBox: parseFloat(row.pieces_per_box)||0,
     cat1: row.cat1||'', cat2: row.cat2||'',
     vendors: Array.isArray(row.vendors)?row.vendors:[],
+    stores: Array.isArray(row.stores)?row.stores:[],
     active: row.active!==false
   };
 }
@@ -1989,7 +2019,7 @@ function coffeeProductToRow(p){
     id:p.id, name:p.name, upc:p.upc||'', qty:p.qty,
     min_level:p.minLevel, max_level:p.maxLevel, unit_cost:p.unitCost,
     sale_price:p.salePrice, cost_per_box:p.costPerBox, pieces_per_box:p.piecesPerBox,
-    cat1:p.cat1||'', cat2:p.cat2||'', vendors:p.vendors||[], active:p.active,
+    cat1:p.cat1||'', cat2:p.cat2||'', vendors:p.vendors||[], stores:p.stores||[], active:p.active,
     updated_at:new Date().toISOString()
   };
 }
@@ -2066,7 +2096,7 @@ function renderCoffeeInventory(){
           <th>UPC</th><th>QTY</th><th>MIN</th><th>MAX</th>
           <th>UNIT COST</th><th>SALE PRICE</th><th>COST/BOX</th><th>PCS/BOX</th>
           <th>CAT 1</th><th>CAT 2</th><th>VENDOR</th>
-          <th>STATUS</th><th>ACTIVE</th><th>ACTIONS</th>
+          <th>STORES</th><th>STATUS</th><th>ACTIVE</th><th>ACTIONS</th>
         </tr></thead>
         <tbody>
         ${filtered.length===0?`<tr><td colspan="15" style="text-align:center;padding:30px;color:#7080a0">No coffee items yet. Click "+ Add Item" to get started.</td></tr>`
@@ -2104,6 +2134,7 @@ function renderCoffeeRow(p){
         </select>
         <div style="font-size:9px;color:#8090b0;margin-top:2px">Ctrl+click multi</div>
       </td>
+      <td style="min-width:120px">${storeMultiSelect(p.id,'coffee',p.stores||[])}</td>
       <td>${badge(p.qty,p.minLevel)}</td>
       <td style="min-width:110px">${toggleSwitch(p.active,`toggleCoffeeActive(${p.id})`)}</td>
       <td style="min-width:145px"><div style="display:flex;gap:4px">
@@ -2126,6 +2157,7 @@ function renderCoffeeRow(p){
     <td style="font-size:11px;color:#5060a0">${p.cat1||'—'}</td>
     <td style="font-size:11px;color:#5060a0">${p.cat2||'—'}</td>
     <td style="min-width:90px">${p.vendors&&p.vendors.length>0?p.vendors.map(v=>{const vc=VENDOR_COLORS[v]||{bg:'#e8edf8',color:'#0d1f4e'};return `<span class="vendor-tag" style="background:${vc.bg};color:${vc.color}" title="${v}">${vendorAbbr(v)}</span>`;}).join(''):'<span style="color:#b0b8cc;font-size:11px">—</span>'}</td>
+    <td style="min-width:120px">${storeMultiSelect(p.id,'coffee',p.stores||[])}</td>
     <td>${badge(p.qty,p.minLevel)}</td>
     <td style="min-width:110px">${toggleSwitch(p.active,`toggleCoffeeActive(${p.id})`)}</td>
     <td style="min-width:130px"><div style="display:flex;gap:4px">
@@ -2291,6 +2323,324 @@ async function doCoffeeRestock(id){
   await saveCoffeeProduct(coffeeProducts.find(x=>x.id===id));
   await saveRestock(entry);
   showToast(`Restocked ${qty} × ${p.name}`);
+}
+
+
+// ═══════════════════════════════════════════════════
+//  STORES
+// ═══════════════════════════════════════════════════
+const STORES = ['SM Toyota','Safran','Exodus','Elevated Brandz','SR Honda'];
+const COFFEE_STORES = ['Safran','Exodus']; // stores with coffee service
+let storeInventory = []; // all store_inventory rows loaded
+let currentStore = 'SM Toyota';
+let storeSearchTerm = '';
+let storeEditingId = null;
+const LS_STORE_INV = 'vs_brewbox_store_inventory';
+
+// ── Supabase helpers for store_inventory ──
+async function loadStoreInventory(){
+  if(useSupabase){
+    try{
+      const rows = await sbFetch('store_inventory?order=id', {method:'GET', prefer:'return=representation'});
+      storeInventory = rows;
+    } catch(e){
+      try{ storeInventory = JSON.parse(localStorage.getItem(LS_STORE_INV)||'[]'); }catch(e2){ storeInventory=[]; }
+    }
+  } else {
+    try{ storeInventory = JSON.parse(localStorage.getItem(LS_STORE_INV)||'[]'); }catch(e){ storeInventory=[]; }
+  }
+}
+
+async function saveStoreItem(item){
+  if(useSupabase){
+    try{
+      await sbFetch('store_inventory', {
+        method:'POST',
+        prefer:'resolution=merge-duplicates,return=minimal',
+        body: JSON.stringify([item])
+      });
+    } catch(e){ showToast('⚠ Could not save store item'); }
+  }
+  localStorage.setItem(LS_STORE_INV, JSON.stringify(storeInventory));
+}
+
+async function deleteStoreItem(id){
+  storeInventory = storeInventory.filter(x=>x.id!==id);
+  if(useSupabase){
+    try{ await sbFetch(`store_inventory?id=eq.${id}`,{method:'DELETE',prefer:''}); }catch(e){}
+  }
+  localStorage.setItem(LS_STORE_INV, JSON.stringify(storeInventory));
+}
+
+// ── Sync warehouse "stores" array to store_inventory table ──
+async function syncStoreAssignment(productId, source, productName, newStores, oldStores){
+  const added = newStores.filter(s=>!oldStores.includes(s));
+  const removed = oldStores.filter(s=>!newStores.includes(s));
+
+  for(const store of added){
+    const existing = storeInventory.find(x=>x.product_id===productId && x.store_name===store);
+    if(!existing){
+      const newItem = {
+        id: Date.now() + Math.floor(Math.random()*10000),
+        store_name: store,
+        product_id: productId,
+        product_source: source,
+        product_name: productName,
+        qty: 0,
+        min_level: 0,
+        max_level: 0,
+        active: true
+      };
+      storeInventory.push(newItem);
+      await saveStoreItem(newItem);
+    }
+  }
+
+  for(const store of removed){
+    const existing = storeInventory.find(x=>x.product_id===productId && x.store_name===store);
+    if(existing){
+      await deleteStoreItem(existing.id);
+    }
+  }
+}
+
+// ── Render Store Inventory page ──
+function renderStoreInventory(){
+  const storeItems = storeInventory.filter(x=>x.store_name===currentStore);
+  const mmItems = storeItems.filter(x=>x.product_source==='mm');
+  const coffeeItems = storeItems.filter(x=>x.product_source==='coffee');
+
+  const filtered = storeItems.filter(x=>
+    x.product_name.toLowerCase().includes(storeSearchTerm.toLowerCase())
+  );
+
+  const outCount = storeItems.filter(x=>x.qty<=0).length;
+  const lowCount = storeItems.filter(x=>x.qty>0&&x.min_level>0&&x.qty<=x.min_level).length;
+
+  document.getElementById('main-body').innerHTML=`
+    <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:10px">
+        <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.8px">Store:</label>
+        <select onchange="currentStore=this.value;storeSearchTerm='';renderStoreInventory()"
+          style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:160px">
+          ${STORES.map(s=>`<option value="${s}" ${s===currentStore?'selected':''}>${s}</option>`).join('')}
+        </select>
+      </div>
+      <input class="search-input" placeholder="Search items…" value="${storeSearchTerm}"
+        oninput="storeSearchTerm=this.value;renderStoreInventory()" style="width:200px"/>
+      <button class="primary-btn" onclick="openImportStoreItemModal()" style="margin-left:auto">+ Import Item</button>
+    </div>
+
+    <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px">
+      <div class="stat-card"><div class="stat-val">${storeItems.length}</div><div class="stat-label">Total SKUs</div></div>
+      <div class="stat-card" style="border-top-color:#1a3266"><div class="stat-val" style="color:#1a3266">${mmItems.length}</div><div class="stat-label">MM Items</div></div>
+      <div class="stat-card" style="border-top-color:#6b3a1f"><div class="stat-val" style="color:#6b3a1f">${coffeeItems.length}</div><div class="stat-label">Coffee Items</div></div>
+      <div class="stat-card" style="border-top-color:#b01c1c"><div class="stat-val" style="color:#b01c1c">${outCount}</div><div class="stat-label">Out of Stock</div></div>
+    </div>
+
+    ${filtered.length===0?`
+      <div class="card" style="text-align:center;padding:30px;color:#7080a0">
+        <div style="font-size:16px;margin-bottom:8px">No items at ${currentStore}</div>
+        <div style="font-size:12px">Click "+ Import Item" to add warehouse items to this store.</div>
+      </div>`:`
+    <div style="background:#fff;border:1px solid #d8dde8;border-radius:9px;overflow:hidden">
+      <div style="overflow-x:auto">
+      <table>
+        <thead><tr>
+          <th style="padding-left:12px;min-width:200px">ITEM NAME</th>
+          <th>SOURCE</th>
+          <th>QTY</th><th>MIN</th><th>MAX</th>
+          <th>STATUS</th><th>ACTIONS</th>
+        </tr></thead>
+        <tbody>
+        ${filtered.map(item=>renderStoreRow(item)).join('')}
+        </tbody>
+      </table>
+      </div>
+    </div>`}
+  `;
+}
+
+function renderStoreRow(item){
+  const isEditing = storeEditingId === item.id;
+  const sourceBadge = item.product_source==='coffee'
+    ? '<span style="background:#f3e8ff;color:#6b2fa0;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">COFFEE</span>'
+    : '<span style="background:#e8edf8;color:#0d1f4e;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">MM</span>';
+
+  if(isEditing){
+    return `<tr class="editing-row" id="store-row-${item.id}">
+      <td style="padding-left:12px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:220px">${item.product_name}</td>
+      <td>${sourceBadge}</td>
+      <td><input class="edit-input" id="si-qty" type="number" value="${item.qty}" style="width:60px"/></td>
+      <td><input class="edit-input" id="si-min" type="number" value="${item.min_level}" style="width:50px"/></td>
+      <td><input class="edit-input" id="si-max" type="number" value="${item.max_level}" style="width:50px"/></td>
+      <td>${badge(item.qty, item.min_level)}</td>
+      <td><div style="display:flex;gap:4px">
+        <button class="action-btn" style="color:#fff;background:#1a7a45;border-color:#1a7a45;font-weight:700" onclick="saveStoreRowEdit(${item.id})">💾 Save</button>
+        <button class="action-btn" style="color:#7080a0;border-color:#d0d5e0" onclick="storeEditingId=null;renderStoreInventory()">✕</button>
+      </div></td>
+    </tr>`;
+  }
+
+  return `<tr id="store-row-${item.id}">
+    <td style="padding-left:12px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:220px">${item.product_name}</td>
+    <td>${sourceBadge}</td>
+    <td style="font-weight:700;color:${item.qty<=0?'#b01c1c':item.min_level>0&&item.qty<=item.min_level?'#b35a00':'#1a7a45'}">${item.qty}</td>
+    <td>${item.min_level}</td>
+    <td style="color:#7080a0">${item.max_level}</td>
+    <td>${badge(item.qty, item.min_level)}</td>
+    <td><div style="display:flex;gap:4px">
+      <button class="action-btn" style="color:#1a5296;border-color:#b0c8e8" onclick="storeEditingId=${item.id};renderStoreInventory()">Edit</button>
+      <button class="action-btn" style="color:#b01c1c;border-color:#f0b8b8" onclick="removeStoreItem(${item.id})">Remove</button>
+    </div></td>
+  </tr>`;
+}
+
+async function saveStoreRowEdit(id){
+  const item = storeInventory.find(x=>x.id===id);
+  if(!item) return;
+  item.qty = parseFloat(document.getElementById('si-qty')?.value)||0;
+  item.min_level = parseFloat(document.getElementById('si-min')?.value)||0;
+  item.max_level = parseFloat(document.getElementById('si-max')?.value)||0;
+  storeEditingId = null;
+  renderStoreInventory();
+  await saveStoreItem(item);
+  showToast('Store item updated');
+}
+
+async function removeStoreItem(id){
+  if(!confirm('Remove this item from the store? It will remain in the warehouse.')) return;
+  const item = storeInventory.find(x=>x.id===id);
+  if(!item) return;
+  // Also remove this store from the warehouse product's stores array
+  if(item.product_source==='mm'){
+    const p = products.find(x=>x.id===item.product_id);
+    if(p){
+      p.stores = (p.stores||[]).filter(s=>s!==item.store_name);
+      await saveProduct(p);
+    }
+  } else {
+    const p = coffeeProducts.find(x=>x.id===item.product_id);
+    if(p){
+      p.stores = (p.stores||[]).filter(s=>s!==item.store_name);
+      await saveCoffeeProduct(p);
+    }
+  }
+  await deleteStoreItem(id);
+  renderStoreInventory();
+  showToast('Item removed from store');
+}
+
+// ── Import Item modal ──
+function openImportStoreItemModal(){
+  // Combine all active warehouse items not already at this store
+  const storeItemIds = storeInventory
+    .filter(x=>x.store_name===currentStore)
+    .map(x=>`${x.product_source}_${x.product_id}`);
+
+  const mmAvailable = products.filter(p=>p.active && !storeItemIds.includes(`mm_${p.id}`));
+  const coffeeAvailable = coffeeProducts.filter(p=>p.active && !storeItemIds.includes(`coffee_${p.id}`));
+  const allAvailable = [
+    ...mmAvailable.map(p=>({...p, _source:'mm', _label:`[MM] ${p.name}`, _cat:p.cat1})),
+    ...coffeeAvailable.map(p=>({...p, _source:'coffee', _label:`[COFFEE] ${p.name}`, _cat:p.cat1}))
+  ].sort((a,b)=>a._label.localeCompare(b._label));
+
+  if(allAvailable.length===0){
+    showToast('All active warehouse items are already at this store!');
+    return;
+  }
+
+  document.getElementById('modal-container').innerHTML=`
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="width:520px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div class="modal-title">Import Item to ${currentStore}</div>
+          <button onclick="closeModal()" style="background:none;border:none;color:#7080a0;cursor:pointer;font-size:20px">✕</button>
+        </div>
+        <div style="font-size:11px;color:#5060a0;margin-bottom:10px">Select one or more items from either warehouse to add to ${currentStore}. Starting qty will be 0.</div>
+        <input class="search-input" style="width:100%;margin-bottom:10px" placeholder="Search items…"
+          oninput="filterImportList(this.value)" id="import-search"/>
+        <div id="import-item-list" style="max-height:320px;overflow-y:auto;border:1px solid #e8ecf4;border-radius:7px">
+          ${allAvailable.map(p=>`
+            <label style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid #f0f2f8;cursor:pointer;font-size:12px" class="import-item-row">
+              <input type="checkbox" value="${p._source}_${p.id}" data-name="${p._label}" style="accent-color:#0d1f4e;width:15px;height:15px;flex-shrink:0"/>
+              <div>
+                <div style="font-weight:600;color:#0d1f4e">${p.name}</div>
+                <div style="font-size:10px;color:#7080a0">${p._source==='coffee'?'☕ Coffee':'🏪 MM'} · ${p._cat||'—'}</div>
+              </div>
+            </label>`).join('')}
+        </div>
+        <div style="display:flex;gap:10px;margin-top:14px">
+          <button class="primary-btn" onclick="confirmImportStoreItems()">+ Add Selected Items</button>
+          <button class="secondary-btn" onclick="closeModal()">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function filterImportList(term){
+  document.querySelectorAll('.import-item-row').forEach(row=>{
+    const name = row.querySelector('input')?.dataset.name||'';
+    row.style.display = name.toLowerCase().includes(term.toLowerCase()) ? '' : 'none';
+  });
+}
+
+async function confirmImportStoreItems(){
+  const checked = Array.from(document.querySelectorAll('#import-item-list input:checked'));
+  if(checked.length===0){ showToast('Select at least one item'); return; }
+
+  let added = 0;
+  for(const cb of checked){
+    const [source, idStr] = cb.value.split('_');
+    const productId = parseInt(idStr);
+    const warehouseArr = source==='coffee' ? coffeeProducts : products;
+    const p = warehouseArr.find(x=>x.id===productId);
+    if(!p) continue;
+
+    const newItem = {
+      id: Date.now() + Math.floor(Math.random()*100000),
+      store_name: currentStore,
+      product_id: productId,
+      product_source: source,
+      product_name: p.name,
+      qty: 0, min_level: 0, max_level: 0, active: true
+    };
+    storeInventory.push(newItem);
+    await saveStoreItem(newItem);
+
+    // Update warehouse product's stores array
+    p.stores = [...new Set([...(p.stores||[]), currentStore])];
+    if(source==='coffee') await saveCoffeeProduct(p);
+    else await saveProduct(p);
+    added++;
+  }
+
+  closeModal();
+  renderStoreInventory();
+  showToast(`${added} item${added!==1?'s':''} added to ${currentStore}`);
+}
+
+// ── Stores multiselect column in warehouse rows ──
+function storeMultiSelect(productId, source, currentStoresList){
+  const selected = currentStoresList||[];
+  return `<select multiple id="stores-sel-${productId}"
+    style="width:110px;height:62px;background:#fff;border:1.5px solid #d0d5e0;border-radius:5px;font-size:10px;color:#1a2340;outline:none;padding:2px"
+    onchange="handleStoreSelectionChange(${productId},'${source}',this)">
+    ${STORES.map(s=>`<option value="${s}" ${selected.includes(s)?'selected':''}>${s}</option>`).join('')}
+  </select>`;
+}
+
+async function handleStoreSelectionChange(productId, source, selectEl){
+  const newStores = Array.from(selectEl.options).filter(o=>o.selected).map(o=>o.value);
+  const warehouseArr = source==='coffee' ? coffeeProducts : products;
+  const p = warehouseArr.find(x=>x.id===productId);
+  if(!p) return;
+  const oldStores = p.stores||[];
+  p.stores = newStores;
+  if(source==='coffee') await saveCoffeeProduct(p);
+  else await saveProduct(p);
+  await syncStoreAssignment(productId, source, p.name, newStores, oldStores);
+  showToast(`Stores updated for ${p.name}`);
 }
 
 // ═══════════════════════════════════════════════════
