@@ -423,6 +423,27 @@ const VENDOR_COLORS = {
   "Vistar Merchant Mart": {bg:"#2e7d32",color:"#fff"}
 };
 
+
+const STORE_COLORS = {
+  'SM Toyota':       {bg:'#003087',color:'#fff'},
+  'Safran':          {bg:'#006a4e',color:'#fff'},
+  'Exodus':          {bg:'#7b1fa2',color:'#fff'},
+  'Elevated Brandz': {bg:'#c62828',color:'#fff'},
+  'SR Honda':        {bg:'#e65100',color:'#fff'}
+};
+const STORE_ABBR = {
+  'SM Toyota':'SMT', 'Safran':'SAF', 'Exodus':'EXO',
+  'Elevated Brandz':'ELB', 'SR Honda':'SRH'
+};
+function storeAbbr(s){ return STORE_ABBR[s]||s.substring(0,3).toUpperCase(); }
+function storeTiles(storesList){
+  if(!storesList||storesList.length===0) return '<span style="color:#b0b8cc;font-size:11px">—</span>';
+  return storesList.map(s=>{
+    const sc=STORE_COLORS[s]||{bg:'#e8edf8',color:'#0d1f4e'};
+    return `<span class="vendor-tag" style="background:${sc.bg};color:${sc.color}" title="${s}">${storeAbbr(s)}</span>`;
+  }).join('');
+}
+
 function vendorAbbr(v){ return VENDOR_ABBR[v] || v.split(' ')[0].substring(0,4).toUpperCase(); }
 const LS_PRODUCTS='vs_brewbox_products';
 const LS_RESTOCK='vs_brewbox_restock';
@@ -649,6 +670,25 @@ let aiOpen = false;
 let aiMessages = [];
 let aiLoading = false;
 
+
+// ── PST timestamp helper ──
+function toPST(dateStr){
+  if(!dateStr) return '—';
+  const d = new Date(dateStr);
+  if(isNaN(d)) return dateStr;
+  return d.toLocaleString('en-US',{
+    timeZone:'America/Los_Angeles',
+    month:'short', day:'numeric', year:'numeric',
+    hour:'numeric', minute:'2-digit', hour12:true
+  });
+}
+function dateToPST(dateStr){
+  if(!dateStr) return '—';
+  const d = new Date(dateStr+'T00:00:00');
+  if(isNaN(d)) return dateStr;
+  return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+}
+
 // ═══════════════════════════════════════════════════
 //  SETUP SCREEN
 // ═══════════════════════════════════════════════════
@@ -779,7 +819,8 @@ function rowToRestock(row){
     product: row.product_name,
     qty: row.qty_added,
     by: row.team_member||'',
-    date: row.restock_date||row.created_at?.slice(0,10)||''
+    date: row.restock_date||row.created_at?.slice(0,10)||'',
+    created_at: row.created_at||''
   };
 }
 
@@ -875,7 +916,8 @@ async function saveRestock(entry){
           product_name: entry.product,
           qty_added: entry.qty,
           team_member: entry.by,
-          restock_date: entry.date
+          restock_date: entry.date,
+          created_at: new Date().toISOString()
         }])
       });
     }catch(e){ showToast('⚠ Restock not saved to database'); }
@@ -1194,7 +1236,7 @@ function renderRestock(){
       <tbody>
         ${filtered.map(r=>`<tr>
           <td>${activityTypeBadge(r.by)}</td>
-          <td style="color:#7080a0">${r.date}</td>
+          <td style="color:#7080a0;font-size:11px;white-space:nowrap">${toPST(r.created_at||r.date)}</td>
           <td style="font-weight:600;white-space:normal;max-width:220px">${r.product}</td>
           <td style="font-weight:700;color:${parseFloat(r.qty)>=0?'#1a7a45':'#b01c1c'}">${parseFloat(r.qty)>=0?'+':''}${r.qty}</td>
           <td style="color:#7080a0;font-size:11px">${r.by||'—'}</td>
@@ -1300,9 +1342,7 @@ function renderInventoryRow(p){
       <td style="min-width:120px">${storeMultiSelect(p.id,'mm',p.stores||[])}</td>
       <td>${badge(p.qty,p.minLevel)}</td>
       <td style="min-width:110px">${toggleSwitch(p.active,`toggleActive(${p.id})`)}</td>
-      <td style="min-width:110px">
-        <span style="font-size:10px;color:#c9a84c;font-weight:700">✎ EDITING</span>
-      </td>
+      <td></td>
     </tr>`;
   }
 
@@ -1320,13 +1360,13 @@ function renderInventoryRow(p){
     <td style="font-size:11px;color:#5060a0">${p.cat1||'—'}</td>
     <td style="font-size:11px;color:#5060a0">${p.cat2||'—'}</td>
     <td style="min-width:90px">${p.vendors&&p.vendors.length>0?p.vendors.map(v=>{const vc=VENDOR_COLORS[v]||{bg:'#e8edf8',color:'#0d1f4e'};return `<span class="vendor-tag" style="background:${vc.bg};color:${vc.color}" title="${v}">${vendorAbbr(v)}</span>`;}).join(''):'<span style="color:#b0b8cc;font-size:11px">—</span>'}</td>
-    <td style="min-width:120px">${storeMultiSelect(p.id,'mm',p.stores||[])}</td>
+    <td style="min-width:100px">${storeTiles(p.stores||[])}</td>
     <td>${badge(p.qty,p.minLevel)}</td>
     <td style="min-width:110px">${toggleSwitch(p.active,`toggleActive(${p.id})`)}</td>
     <td style="min-width:130px"><div style="display:flex;gap:4px">
       ${p.active&&!isEditing?`<button class="action-btn" style="color:#0d1f4e;border-color:#c0c8dc" onclick="openRestockModal(${p.id})">Restock</button>`:''}
-      ${!isEditing?`<button class="action-btn" style="color:#1a5296;border-color:#b0c8e8" onclick="startInlineEdit(${p.id})">Edit</button>`:`<button class="action-btn" style="color:#7080a0;border-color:#d0d5e0" onclick="cancelSingleEdit(${p.id})">✕</button>`}
-      <button class="action-btn" style="color:#b01c1c;border-color:#f0b8b8" onclick="deleteProduct(${p.id})">Del</button>
+      ${editingRows.size===0?`<button class="action-btn" style="color:#1a5296;border-color:#b0c8e8" onclick="startInlineEdit(${p.id})">Edit</button>`:``}
+      ${editingRows.size===0?`<button class="action-btn" style="color:#b01c1c;border-color:#f0b8b8" onclick="deleteProduct(${p.id})">Del</button>`:``}
     </div></td>
   </tr>`;
 }
@@ -1340,7 +1380,14 @@ function mmRecalcUC(id){
 function inlineRecalcUC(){ /* legacy - no-op */ }
 
 function startInlineEdit(id){
-  editingRows.add(id);
+  // Add ALL currently visible products to edit mode
+  let filtered = products.filter(p=>{
+    const ms=p.name.toLowerCase().includes(searchTerm.toLowerCase())||p.upc.includes(searchTerm);
+    const matchActive=showActiveOnly?p.active:true;
+    const matchCat=categoryFilters.size===0||categoryFilters.has(p.cat1);
+    return ms&&matchActive&&matchCat;
+  });
+  filtered.forEach(p=>editingRows.add(p.id));
   render();
   setTimeout(()=>{
     const row = document.getElementById('inv-row-' + id);
@@ -2216,13 +2263,13 @@ function renderCoffeeRow(p){
     <td style="font-size:11px;color:#5060a0">${p.cat1||'—'}</td>
     <td style="font-size:11px;color:#5060a0">${p.cat2||'—'}</td>
     <td style="min-width:90px">${p.vendors&&p.vendors.length>0?p.vendors.map(v=>{const vc=VENDOR_COLORS[v]||{bg:'#e8edf8',color:'#0d1f4e'};return `<span class="vendor-tag" style="background:${vc.bg};color:${vc.color}" title="${v}">${vendorAbbr(v)}</span>`;}).join(''):'<span style="color:#b0b8cc;font-size:11px">—</span>'}</td>
-    <td style="min-width:120px">${storeMultiSelect(p.id,'coffee',p.stores||[])}</td>
+    <td style="min-width:100px">${storeTiles(p.stores||[])}</td>
     <td>${badge(p.qty,p.minLevel)}</td>
     <td style="min-width:110px">${toggleSwitch(p.active,`toggleCoffeeActive(${p.id})`)}</td>
     <td style="min-width:130px"><div style="display:flex;gap:4px">
-      ${p.active&&!isLocked?`<button class="action-btn" style="color:#0d1f4e;border-color:#c0c8dc" onclick="openCoffeeRestockModal(${p.id})">Restock</button>`:''}
-      ${!isEditing?`<button class="action-btn" style="color:#1a5296;border-color:#b0c8e8" onclick="startCoffeeEdit(${p.id})">Edit</button>`:`<button class="action-btn" style="color:#7080a0;border-color:#d0d5e0" onclick="cancelCoffeeEdit(${p.id})">✕</button>`}
-      <button class="action-btn" style="color:#b01c1c;border-color:#f0b8b8" onclick="deleteCoffeeProduct(${p.id})">Del</button>
+      ${p.active&&!isEditing?`<button class="action-btn" style="color:#0d1f4e;border-color:#c0c8dc" onclick="openCoffeeRestockModal(${p.id})">Restock</button>`:''}
+      ${coffeeEditingRows.size===0?`<button class="action-btn" style="color:#1a5296;border-color:#b0c8e8" onclick="startCoffeeEdit(${p.id})">Edit</button>`:``}
+      ${coffeeEditingRows.size===0?`<button class="action-btn" style="color:#b01c1c;border-color:#f0b8b8" onclick="deleteCoffeeProduct(${p.id})">Del</button>`:``}
     </div></td>
   </tr>`;
 }
@@ -2236,7 +2283,14 @@ function ciRecalcUC(id){
 function coffeeRecalcUC(){ /* legacy */ }
 
 function startCoffeeEdit(id){
-  coffeeEditingRows.add(id); renderCoffeeInventory();
+  let filtered = coffeeProducts.filter(p=>{
+    const ms=p.name.toLowerCase().includes(coffeeSearchTerm.toLowerCase())||p.upc.includes(coffeeSearchTerm);
+    const matchActive=coffeeShowActiveOnly?p.active:true;
+    const matchCat=coffeeCategoryFilters.size===0||coffeeCategoryFilters.has(p.cat1);
+    return ms&&matchActive&&matchCat;
+  });
+  filtered.forEach(p=>coffeeEditingRows.add(p.id));
+  renderCoffeeInventory();
   setTimeout(()=>{
     const row=document.getElementById('coffee-row-'+id);
     if(row){row.scrollIntoView({behavior:'smooth',block:'nearest'});row.querySelector('.edit-input')?.focus();}
@@ -2567,8 +2621,8 @@ function renderStoreRow(item){
     <td style="color:#7080a0">${item.max_level}</td>
     <td>${badge(item.qty, item.min_level)}</td>
     <td><div style="display:flex;gap:4px">
-      ${!isEditing?`<button class="action-btn" style="color:#1a5296;border-color:#b0c8e8" onclick="storeEditingRows.add(${item.id});renderStoreInventory()">Edit</button>`:`<button class="action-btn" style="color:#7080a0;border-color:#d0d5e0" onclick="storeEditingRows.delete(${item.id});renderStoreInventory()">✕</button>`}
-      <button class="action-btn" style="color:#b01c1c;border-color:#f0b8b8" onclick="removeStoreItem(${item.id})">Remove</button>
+      ${storeEditingRows.size===0?`<button class="action-btn" style="color:#1a5296;border-color:#b0c8e8" onclick="storeInventory.filter(x=>x.store_name===currentStore).forEach(x=>storeEditingRows.add(x.id));renderStoreInventory()">Edit</button>`:``}
+      ${storeEditingRows.size===0?`<button class="action-btn" style="color:#b01c1c;border-color:#f0b8b8" onclick="removeStoreItem(${item.id})">Remove</button>`:``}
     </div></td>
   </tr>`;
 }
@@ -2966,8 +3020,8 @@ function renderOpenOrderRow(order){
 
 function renderClosedOrderRow(order){
   const isExpanded = expandedOrderIds.has(order.id);
-  const dateStr = new Date(order.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
-  const closedStr = order.closed_at ? new Date(order.closed_at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '';
+  const dateStr = toPST(order.created_at);
+  const closedStr = order.closed_at ? ' Rcvd '+toPST(order.closed_at) : '';
   const totalUnits = order.items.reduce((s,i)=>s+(i.order_qty||0),0);
 
   return `
@@ -3133,8 +3187,8 @@ function renderOrderActivity(){
 
 function renderActivityOrderRow(o){
   const isExpanded = expandedActivityOrderIds.has(o.id);
-  const dateStr = new Date(o.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
-  const rcvdStr = o.closed_at ? ' · Rcvd '+new Date(o.closed_at).toLocaleDateString('en-US',{month:'short',day:'numeric'}) : '';
+  const dateStr = toPST(o.created_at);
+  const rcvdStr = o.closed_at ? ' · Rcvd '+toPST(o.closed_at) : '';
   const totalUnits = o.items.reduce((s,i)=>s+(i.order_qty||0),0);
   const statusColor = o.status==='open' ? '#c9a84c' : '#1a7a45';
   const statusBg = o.status==='open' ? '#fffbf0' : '#f0fff4';
