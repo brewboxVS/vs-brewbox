@@ -256,6 +256,7 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
           <button class="nav-btn nav-sub" onclick="setView('inventory')">▦ &nbsp;<span>Warehouse MM Inventory</span></button>
           <button class="nav-btn nav-sub" onclick="setView('coffee')">☕ &nbsp;<span>Warehouse Coffee Inventory</span></button>
           <button class="nav-btn nav-sub" onclick="setView('count')">📋 &nbsp;<span>Warehouse Inventory Count</span></button>
+          <button class="nav-btn nav-sub" onclick="setView('wh-orders')">🛒 &nbsp;<span>Warehouse Orders</span></button>
         </div>
       </div>
       <div id="stores-nav">
@@ -269,7 +270,6 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
       <div id="import-nav">
         <button class="nav-btn" id="import-toggle" onclick="toggleImportMenu()">⬆ &nbsp;<span>Import</span><span class="nav-arrow" id="import-arrow">›</span></button>
         <div id="import-submenu" style="display:none">
-          <button class="nav-btn nav-sub" onclick="setView('orders')">📦 &nbsp;<span>Warehouse Orders</span></button>
         </div>
       </div>
       <div id="activity-nav">
@@ -943,6 +943,7 @@ async function initApp(){
   await loadCoffeeData();
   await loadStoreInventory();
   await loadStoreOrders();
+  await loadWhOrders();
   hideLoading();
   setView('dashboard');
 }
@@ -990,8 +991,9 @@ function updateSidebar(){
   if(currentView==='orders') document.querySelector('.nav-btn[onclick*="orders"]')?.classList.add('active');
   if(currentView==='restock') document.querySelector('.nav-btn[onclick*="restock"]')?.classList.add('active');
   if(currentView==='count') document.querySelector('.nav-btn[onclick*="count"]')?.classList.add('active');
+  if(currentView==='wh-orders') document.querySelector('.nav-btn[onclick*="wh-orders"]')?.classList.add('active');
   // Auto-open warehouse submenu when on warehouse views
-  if(currentView==='inventory'||currentView==='coffee'||currentView==='count') openWarehouseMenu();
+  if(currentView==='inventory'||currentView==='coffee'||currentView==='count'||currentView==='wh-orders') openWarehouseMenu();
   if(currentView==='store-inventory'||currentView==='store-orders'||currentView==='store-count') openStoresMenu();
   // Auto-open import submenu when on import views
   if(currentView==='orders') openImportMenu();
@@ -1059,7 +1061,7 @@ function openStoresMenu(){
 
 function setView(v){
   currentView=v;
-  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log',orders:'Warehouse Orders',count:'Inventory Count',restock:'Activity Log'};
+  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log'};
   if(v==='count' && Object.keys(countState).length===0) initCountState();
   if(v==='store-count' && Object.keys(storeCountState).length===0) initStoreCountState();
   document.getElementById('page-title').textContent=titles[v]||v;
@@ -1088,6 +1090,7 @@ function render(){
   else if(currentView==='order-activity') renderOrderActivity();
   else if(currentView==='orders') renderOrders();
   else if(currentView==='count') renderCount();
+  else if(currentView==='wh-orders') renderWhOrders();
   else renderRestock();
 }
 
@@ -1410,15 +1413,59 @@ function cancelAllEdits(){
 }
 
 async function saveAllEdits(){
+  // Step 1: Read ALL data from DOM before any async operations
   const ids = [...editingRows];
-  let saved=0;
+  const edits = {};
+  let saved = 0;
   for(const id of ids){
-    if(!document.getElementById('ei-name-'+id)) continue;
-    await saveInlineEdit(id, true);
+    const g = eid => document.getElementById('ei-'+eid+'-'+id);
+    if(!g('name')) continue; // not in DOM (filtered out) — skip
+    const cpb=parseFloat(g('cpb')?.value)||0;
+    const ppb=parseFloat(g('ppb')?.value)||1;
+    const sv=Array.from(document.querySelectorAll('#ei-vendors-'+id+' option:checked')).map(o=>o.value);
+    edits[id] = {
+      name:g('name')?.value, upc:g('upc')?.value||'',
+      qty:parseFloat(g('qty')?.value)||0,
+      minLevel:parseFloat(g('min')?.value)||0,
+      maxLevel:parseFloat(g('max')?.value)||0,
+      unitCost:ppb>0?cpb/ppb:0,
+      salePrice:parseFloat(g('price')?.value)||0,
+      costPerBox:cpb, piecesPerBox:ppb,
+      cat1:g('cat1')?.value||'', cat2:g('cat2')?.value||'',
+      vendors:sv
+    };
     saved++;
   }
+
+  // Step 2: Clear edit mode and re-render IMMEDIATELY (before awaits)
   editingRows.clear();
   render(); updateSidebar();
+
+  // Step 3: Save to Supabase in background
+  for(const [idStr, edit] of Object.entries(edits)){
+    const id = parseInt(idStr);
+    const oldQty = products.find(p=>p.id===id)?.qty??0;
+    products = products.map(p=>p.id===id?{...p,...edit}:p);
+    const updated = products.find(p=>p.id===id);
+    await saveProduct(updated);
+    if(oldQty !== updated.qty){
+      const diff = updated.qty - oldQty;
+      const reason = diff<0?'Spoilage':'Manual Increase';
+      const entry = {id:Date.now()+Math.random(), date:new Date().toISOString().slice(0,10),
+        product:updated.name, qty:diff, by:`Manual Edit (${reason})`};
+      restockLog=[entry,...restockLog];
+      await saveRestock(entry);
+      if(useSupabase){
+        try{
+          await sbFetch('inventory_count_log',{method:'POST',prefer:'resolution=merge-duplicates,return=minimal',
+            body:JSON.stringify([{id:Date.now()+Math.floor(Math.random()*10000),product_id:updated.id,
+              product_name:updated.name,previous_qty:oldQty,new_qty:updated.qty,
+              difference:diff,reason,count_date:new Date().toISOString().slice(0,10),
+              created_at:new Date().toISOString()}])});
+        }catch(e){}
+      }
+    }
+  }
   showToast(`${saved} item${saved!==1?'s':''} saved`);
 }
 
@@ -2301,14 +2348,38 @@ function cancelCoffeeEdit(id){ if(id) coffeeEditingRows.delete(id); else coffeeE
 
 async function saveAllCoffeeEdits(){
   const ids=[...coffeeEditingRows];
+  const edits={};
   let saved=0;
   for(const id of ids){
-    if(!document.getElementById('ci-name-'+id)) continue;
-    await saveCoffeeEdit(id, true);
+    const g=eid=>document.getElementById('ci-'+eid+'-'+id);
+    if(!g('name')) continue;
+    const cpb=parseFloat(g('cpb')?.value)||0;
+    const ppb=parseFloat(g('ppb')?.value)||1;
+    const sv=Array.from(document.querySelectorAll('#ci-vendors-'+id+' option:checked')).map(o=>o.value);
+    edits[id]={name:g('name')?.value,upc:g('upc')?.value||'',
+      qty:parseFloat(g('qty')?.value)||0,minLevel:parseFloat(g('min')?.value)||0,
+      maxLevel:parseFloat(g('max')?.value)||0,unitCost:ppb>0?cpb/ppb:0,
+      salePrice:parseFloat(g('price')?.value)||0,costPerBox:cpb,piecesPerBox:ppb,
+      cat1:g('cat1')?.value||'',cat2:g('cat2')?.value||'',vendors:sv};
     saved++;
   }
   coffeeEditingRows.clear();
   renderCoffeeInventory();
+  for(const [idStr,edit] of Object.entries(edits)){
+    const id=parseInt(idStr);
+    const oldQty=coffeeProducts.find(p=>p.id===id)?.qty??0;
+    coffeeProducts=coffeeProducts.map(p=>p.id===id?{...p,...edit}:p);
+    const updated=coffeeProducts.find(p=>p.id===id);
+    await saveCoffeeProduct(updated);
+    if(oldQty!==updated.qty){
+      const diff=updated.qty-oldQty;
+      const reason=diff<0?'Spoilage':'Manual Increase';
+      const entry={id:Date.now()+Math.random(),date:new Date().toISOString().slice(0,10),
+        product:updated.name,qty:diff,by:`Coffee Manual Edit (${reason})`};
+      restockLog=[entry,...restockLog];
+      await saveRestock(entry);
+    }
+  }
   showToast(`${saved} coffee item${saved!==1?'s':''} saved`);
 }
 
@@ -2629,14 +2700,27 @@ function renderStoreRow(item){
 
 async function saveAllStoreEdits(){
   const ids=[...storeEditingRows];
+  const edits={};
   let saved=0;
   for(const id of ids){
-    if(!document.getElementById('si-qty-'+id)) continue;
-    await saveStoreRowEdit(id, true);
+    const qEl=document.getElementById('si-qty-'+id);
+    if(!qEl) continue;
+    edits[id]={
+      qty:parseFloat(qEl.value)||0,
+      min_level:parseFloat(document.getElementById('si-min-'+id)?.value)||0,
+      max_level:parseFloat(document.getElementById('si-max-'+id)?.value)||0
+    };
     saved++;
   }
   storeEditingRows.clear();
   renderStoreInventory();
+  for(const [idStr,edit] of Object.entries(edits)){
+    const id=parseInt(idStr);
+    const item=storeInventory.find(x=>x.id===id);
+    if(!item) continue;
+    item.qty=edit.qty; item.min_level=edit.min_level; item.max_level=edit.max_level;
+    await saveStoreItem(item);
+  }
   showToast(`${saved} store item${saved!==1?'s':''} saved`);
 }
 
@@ -3592,6 +3676,636 @@ function renderStoreCountResult(){
         </div>`:''}
       <button onclick="initStoreCountState();storeCountSubmitResult=null;renderStoreCount()" style="margin-top:4px;background:#0d1f4e;color:#fff;border:none;border-radius:6px;padding:8px 16px;font-size:11px;font-weight:700;cursor:pointer">🔄 Start New Count</button>
     </div>`;
+}
+
+
+// ═══════════════════════════════════════════════════
+//  WAREHOUSE ORDERS (Google Sheets integrated)
+// ═══════════════════════════════════════════════════
+const VENDOR_PRIORITY = ["Costco Business Center","Costco Wholesale","Sam's Club","Wal-mart","Vistar Merchant Mart"];
+const WH_ORDERS_FOLDER = 'BrewBox Orders';
+const WH_ORDERS_ARCHIVE = 'BrewBox Orders/Archive';
+
+let whOrders = [];          // open/received warehouse orders in Supabase
+let whOrdersLoaded = false;
+const LS_WH_ORDERS = 'vs_brewbox_wh_orders';
+
+// ── Google Sheets API helpers ──
+let gAccessToken = null;
+
+async function getGoogleToken(){
+  // Use Gmail MCP connection — extract token from an authenticated request
+  // We'll use the Anthropic API to call Google Sheets via the connected Gmail OAuth
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 100,
+        mcp_servers: [{ type:'url', url:'https://gmail.mcp.claude.com/mcp', name:'gmail-mcp' }],
+        messages: [{ role:'user', content: 'Reply with just the word CONNECTED' }]
+      })
+    });
+    return res.ok ? true : false;
+  } catch(e){ return false; }
+}
+
+// ── Supabase for warehouse order records ──
+async function loadWhOrders(){
+  if(useSupabase){
+    try{
+      const rows = await sbFetch('warehouse_orders?order=id.desc&limit=100',{method:'GET',prefer:'return=representation'});
+      whOrders = rows.map(r=>({
+        id: r.id,
+        status: r.status,
+        created_at: r.created_at,
+        received_at: r.received_at||null,
+        sheet_id: r.sheet_id||'',
+        sheet_url: r.sheet_url||'',
+        items: (() => { try{ return Array.isArray(r.items)?r.items:JSON.parse(r.items||'[]'); }catch(e){ return []; } })()
+      }));
+    }catch(e){
+      try{ whOrders=JSON.parse(localStorage.getItem(LS_WH_ORDERS)||'[]'); }catch(e2){ whOrders=[]; }
+    }
+  } else {
+    try{ whOrders=JSON.parse(localStorage.getItem(LS_WH_ORDERS)||'[]'); }catch(e){ whOrders=[]; }
+  }
+  whOrdersLoaded = true;
+}
+
+async function saveWhOrder(order){
+  if(useSupabase){
+    try{
+      await sbFetch('warehouse_orders',{
+        method:'POST',
+        prefer:'resolution=merge-duplicates,return=minimal',
+        body:JSON.stringify([{
+          id:order.id, status:order.status,
+          created_at:order.created_at, received_at:order.received_at||null,
+          sheet_id:order.sheet_id||'', sheet_url:order.sheet_url||'',
+          items:order.items
+        }])
+      });
+    }catch(e){ showToast('⚠ Could not save warehouse order'); }
+  }
+  localStorage.setItem(LS_WH_ORDERS, JSON.stringify(whOrders));
+}
+
+// ── Calculate recommended order items ──
+function calcWhOrderItems(){
+  const lowItems = products.filter(p=> p.active && p.minLevel > 0 && p.qty <= p.minLevel);
+  const orderItems = lowItems.map(p => {
+    // Pick vendor by priority
+    const assignedVendors = (p.vendors||[]);
+    let vendor = '';
+    for(const vp of VENDOR_PRIORITY){
+      if(assignedVendors.includes(vp)){ vendor = vp; break; }
+    }
+    if(!vendor && assignedVendors.length>0) vendor = assignedVendors[0];
+    if(!vendor) vendor = 'Unassigned';
+
+    // Rec cases = ceil((max - currentQty) / piecesPerBox)
+    const ppb = p.piecesPerBox || 1;
+    const needed = Math.max(0, p.maxLevel - p.qty);
+    const recCases = Math.ceil(needed / ppb);
+
+    return {
+      product_id: p.id,
+      product_name: p.name,
+      cat1: p.cat1||'',
+      vendor,
+      current_qty: p.qty,
+      min_level: p.minLevel,
+      max_level: p.maxLevel,
+      pieces_per_box: ppb,
+      rec_cases: recCases,
+      bought_rec: false,     // checkbox
+      actual_cases: '',       // override
+      notes: ''
+    };
+  });
+
+  // Sort by vendor priority then by category
+  orderItems.sort((a,b) => {
+    const ai = VENDOR_PRIORITY.indexOf(a.vendor);
+    const bi = VENDOR_PRIORITY.indexOf(b.vendor);
+    const av = ai===-1?99:ai, bv = bi===-1?99:bi;
+    if(av !== bv) return av - bv;
+    return (a.cat1||'').localeCompare(b.cat1||'');
+  });
+
+  return orderItems;
+}
+
+// ── Build Google Sheet data for the order ──
+function buildSheetData(order){
+  const headers = ['Item Name','Category','Vendor','Current Qty','Min Level','Max Level','Pieces/Case','Rec. Cases','✓ Bought Rec.','Actual Cases','Notes'];
+  const rows = [headers];
+  for(const item of order.items){
+    rows.push([
+      item.product_name,
+      item.cat1||'',
+      item.vendor||'',
+      item.current_qty,
+      item.min_level,
+      item.max_level,
+      item.pieces_per_box,
+      item.rec_cases,
+      item.bought_rec ? 'YES' : '',
+      item.actual_cases||'',
+      item.notes||''
+    ]);
+  }
+  return rows;
+}
+
+// ── Parse synced sheet data back ──
+function parseSheetData(rows, order){
+  // rows[0] is header, rows[1...] are items
+  const updated = [...order.items];
+  for(let i=1; i<rows.length; i++){
+    const row = rows[i];
+    if(!row || !row[0]) continue;
+    const name = String(row[0]).trim();
+    const item = updated.find(x=>x.product_name===name);
+    if(!item) continue;
+    const boughtRec = String(row[8]||'').trim().toUpperCase();
+    item.bought_rec = boughtRec==='YES'||boughtRec==='TRUE'||boughtRec==='1'||boughtRec==='☑'||boughtRec==='✓';
+    item.actual_cases = row[9]!==undefined&&row[9]!==''? parseFloat(row[9])||0 : '';
+    item.notes = String(row[10]||'').trim();
+  }
+  return updated;
+}
+
+// ── Create Google Sheet via Sheets API through AI ──
+async function createGoogleSheet(order){
+  showToast('Creating Google Sheet...');
+  const sheetData = buildSheetData(order);
+  const orderDate = new Date(order.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+  const sheetTitle = `BrewBox Warehouse Order ${orderDate} #${order.id.toString().slice(-6)}`;
+
+  try{
+    const res = await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model:'claude-sonnet-4-20250514',
+        max_tokens:1000,
+        mcp_servers:[{type:'url',url:'https://gmail.mcp.claude.com/mcp',name:'gmail-mcp'}],
+        system:'You are a Google Sheets assistant. Respond ONLY with valid JSON containing sheet_id and sheet_url fields.',
+        messages:[{role:'user',content:`Create a new Google Sheet titled "${sheetTitle}" in a folder called "${WH_ORDERS_FOLDER}". 
+Populate it with this data (first row is headers):
+${JSON.stringify(sheetData)}
+
+Format the sheet:
+- Bold the header row
+- Freeze the header row  
+- Column I (Bought Rec) should be wide enough to check
+- Columns A (Item Name) should be 200px wide
+
+Return JSON: {"sheet_id":"<id>","sheet_url":"<url>","success":true}`}]
+      })
+    });
+    const data = await res.json();
+    const text = data.content?.find(b=>b.type==='text')?.text||'';
+    const clean = text.replace(/```json|```/g,'').trim();
+    try{
+      const result = JSON.parse(clean);
+      if(result.sheet_id){
+        return {sheet_id: result.sheet_id, sheet_url: result.sheet_url||''};
+      }
+    }catch(e){}
+    // Fallback: store sheet data locally if Sheets API failed
+    return null;
+  }catch(e){
+    return null;
+  }
+}
+
+// ── Sync from Google Sheet ──
+async function syncFromGoogleSheet(order){
+  if(!order.sheet_id){ showToast('No Google Sheet linked to this order'); return; }
+  showToast('Syncing from Google Drive...');
+  try{
+    const res = await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model:'claude-sonnet-4-20250514',
+        max_tokens:4000,
+        mcp_servers:[{type:'url',url:'https://gmail.mcp.claude.com/mcp',name:'gmail-mcp'}],
+        system:'You are a Google Sheets reader. Respond ONLY with valid JSON.',
+        messages:[{role:'user',content:`Read all data from Google Sheet with ID: ${order.sheet_id}. Return ONLY a JSON array of arrays representing all rows including headers. Format: {"rows":[[...],[...]]}`}]
+      })
+    });
+    const data = await res.json();
+    const text = data.content?.find(b=>b.type==='text')?.text||'';
+    const clean = text.replace(/```json|```/g,'').trim();
+    const result = JSON.parse(clean);
+    if(result.rows && Array.isArray(result.rows)){
+      order.items = parseSheetData(result.rows, order);
+      await saveWhOrder(order);
+      renderWhOrders();
+      showToast('Synced successfully — review and confirm below');
+    }
+  }catch(e){
+    showToast('⚠ Could not sync from Google Drive — check connection');
+  }
+}
+
+// ── Archive sheet after receiving ──
+async function archiveGoogleSheet(order){
+  if(!order.sheet_id) return;
+  try{
+    await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model:'claude-sonnet-4-20250514',
+        max_tokens:200,
+        mcp_servers:[{type:'url',url:'https://gmail.mcp.claude.com/mcp',name:'gmail-mcp'}],
+        messages:[{role:'user',content:`Move Google Sheet ID "${order.sheet_id}" to a folder called "${WH_ORDERS_ARCHIVE}". Create the folder if it doesn't exist. Reply "done".`}]
+      })
+    });
+  }catch(e){} // silent fail — not critical
+}
+
+// ── Render Warehouse Orders page ──
+let whExpandedIds = new Set();
+
+function renderWhOrders(){
+  if(!whOrdersLoaded){ loadWhOrders().then(()=>renderWhOrders()); return; }
+
+  const openOrders = whOrders.filter(o=>o.status==='open');
+  const receivedOrders = whOrders.filter(o=>o.status==='received').slice(0,5);
+  const lowItems = products.filter(p=>p.active&&p.minLevel>0&&p.qty<=p.minLevel);
+
+  document.getElementById('main-body').innerHTML=`
+    <!-- Stats -->
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">
+      <div class="stat-card">
+        <div class="stat-val" style="color:#b01c1c">${lowItems.length}</div>
+        <div class="stat-label">Items at/below min</div>
+        <div class="stat-sub">need reordering</div>
+      </div>
+      <div class="stat-card" style="border-top-color:#c9a84c">
+        <div class="stat-val" style="color:#b35a00">${openOrders.length}</div>
+        <div class="stat-label">Open Orders</div>
+        <div class="stat-sub">awaiting receipt</div>
+      </div>
+      <div class="stat-card" style="border-top-color:#1a7a45">
+        <div class="stat-val" style="color:#1a7a45">${whOrders.filter(o=>o.status==='received').length}</div>
+        <div class="stat-label">Received Orders</div>
+        <div class="stat-sub">all time</div>
+      </div>
+    </div>
+
+    <!-- Create new order -->
+    <div class="card" style="margin-bottom:14px;border-top:3px solid #0d1f4e">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div>
+          <div class="card-title" style="margin-bottom:2px">Create New Warehouse Order</div>
+          <div style="font-size:11px;color:#7080a0">${lowItems.length} item${lowItems.length!==1?'s':''} at or below min level · sorted by vendor priority</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button onclick="previewNewWhOrder()" class="primary-btn" style="padding:9px 18px"
+            ${lowItems.length===0?'disabled style="opacity:0.5;cursor:not-allowed"':''}>
+            📋 Preview Order
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Open orders -->
+    ${openOrders.length>0?`
+    <div style="font-size:10px;font-weight:700;color:#b35a00;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px">Open Orders</div>
+    ${openOrders.map(o=>renderWhOrderRow(o)).join('')}`:''}
+
+    <!-- Recent received -->
+    ${receivedOrders.length>0?`
+    <div style="font-size:10px;font-weight:700;color:#1a7a45;letter-spacing:1.5px;text-transform:uppercase;margin:14px 0 8px">Recently Received</div>
+    ${receivedOrders.map(o=>renderWhOrderRow(o)).join('')}`:''}
+
+    ${openOrders.length===0&&whOrders.length===0?`
+    <div class="card" style="text-align:center;padding:30px;color:#7080a0">
+      No warehouse orders yet. Click "Preview Order" above to get started.
+    </div>`:''}
+  `;
+}
+
+function renderWhOrderRow(order){
+  const isExpanded = whExpandedIds.has(order.id);
+  const dateStr = toPST(order.created_at);
+  const rcvdStr = order.received_at ? ' · Received '+toPST(order.received_at) : '';
+  const isOpen = order.status==='open';
+  const totalItems = order.items.length;
+  const checkedItems = order.items.filter(x=>x.bought_rec||(x.actual_cases!==''&&x.actual_cases>0)).length;
+
+  return `
+    <div style="border:1px solid #e8ecf4;border-radius:8px;margin-bottom:10px;overflow:hidden">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:${isOpen?'#fffbf0':'#f0fff4'};cursor:pointer"
+           onclick="toggleWhOrderExpand(${order.id})">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="font-size:13px;font-weight:700;color:#0d1f4e">WH Order #${order.id.toString().slice(-6)}</span>
+          <span style="background:${isOpen?'#c9a84c':'#1a7a45'};color:${isOpen?'#0d1f4e':'#fff'};border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700">${isOpen?'OPEN':'RECEIVED'}</span>
+          <span style="font-size:11px;color:#7080a0">${dateStr}${rcvdStr}</span>
+          <span style="font-size:11px;color:#5060a0">${totalItems} items${isOpen?' · '+checkedItems+' confirmed':''}</span>
+          ${order.sheet_url?`<a href="${order.sheet_url}" target="_blank" onclick="event.stopPropagation()" style="font-size:10px;color:#1a5296;text-decoration:none;background:#e8edf8;padding:2px 7px;border-radius:4px">📊 Open Sheet</a>`:''}
+        </div>
+        <div style="display:flex;align-items:center;gap:8px" onclick="event.stopPropagation()">
+          ${isOpen?`
+            <button onclick="syncWhOrderFromSheet(${order.id})"
+              style="background:#f4f6fa;color:#0d1f4e;border:1.5px solid #0d1f4e;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer">
+              🔄 Sync Sheet
+            </button>
+            <button id="wh-recv-btn-${order.id}" onclick="receiveWhOrder(${order.id})"
+              style="background:#1a7a45;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:11px;font-weight:700;cursor:pointer">
+              ✓ Receive Order
+            </button>`:''}
+          <span style="font-size:14px;color:#8090b0">${isExpanded?'▲':'▼'}</span>
+        </div>
+      </div>
+      ${isExpanded?renderWhOrderDetail(order):''}
+    </div>`;
+}
+
+function renderWhOrderDetail(order){
+  // Group by vendor
+  const byVendor = {};
+  for(const item of order.items){
+    if(!byVendor[item.vendor]) byVendor[item.vendor] = [];
+    byVendor[item.vendor].push(item);
+  }
+  const isOpen = order.status==='open';
+
+  return `
+    <div style="padding:12px 14px;background:#fff;border-top:1px solid #e8ecf4;overflow-x:auto">
+      ${Object.entries(byVendor).map(([vendor, items])=>`
+        <div style="margin-bottom:14px">
+          <div style="font-size:10px;font-weight:700;color:#5060a0;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;padding:4px 0;border-bottom:1px solid #e8ecf4">${vendor}</div>
+          <table style="width:100%">
+            <thead><tr>
+              <th style="padding-left:4px;min-width:180px">ITEM</th>
+              <th>CAT</th>
+              <th>CURR QTY</th>
+              <th>MAX</th>
+              <th>PCS/CASE</th>
+              <th>REC. CASES</th>
+              <th style="min-width:110px">✓ BOUGHT REC.</th>
+              <th style="min-width:90px">ACTUAL CASES</th>
+              <th>QTY TO ADD</th>
+              <th>NOTES</th>
+            </tr></thead>
+            <tbody>
+            ${items.map((item,idx)=>{
+              const globalIdx = order.items.indexOf(item);
+              const casesUsed = item.bought_rec ? item.rec_cases : (item.actual_cases!==''?parseFloat(item.actual_cases)||0:0);
+              const qtyAdd = casesUsed * item.pieces_per_box;
+              const confirmed = item.bought_rec || (item.actual_cases!==''&&item.actual_cases>0);
+              return `<tr style="background:${confirmed?'#f0fff4':''}">
+                <td style="padding-left:4px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:200px;line-height:1.3">${item.product_name}</td>
+                <td style="font-size:10px;color:#5060a0">${item.cat1||'—'}</td>
+                <td style="font-weight:700;color:${item.current_qty<=item.min_level?'#b01c1c':'#0d1f4e'}">${item.current_qty}</td>
+                <td style="color:#7080a0">${item.max_level}</td>
+                <td style="color:#5060a0">${item.pieces_per_box}</td>
+                <td style="font-weight:700;color:#0d1f4e">${item.rec_cases}</td>
+                <td>
+                  ${isOpen?`<label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+                    <input type="checkbox" ${item.bought_rec?'checked':''} 
+                      onchange="updateWhItemBoughtRec(${order.id},${globalIdx},this.checked)"
+                      style="width:16px;height:16px;accent-color:#1a7a45;cursor:pointer"/>
+                    <span style="font-size:11px;color:${item.bought_rec?'#1a7a45':'#7080a0'}">${item.bought_rec?'✓ Yes':''}</span>
+                  </label>`:`<span style="font-size:11px;color:${item.bought_rec?'#1a7a45':'#7080a0'}">${item.bought_rec?'✓ Yes':'—'}</span>`}
+                </td>
+                <td>
+                  ${isOpen?`<input type="number" value="${item.actual_cases||''}" placeholder="—" min="0"
+                    style="width:70px;background:#f4f6fa;border:1.5px solid ${!item.bought_rec&&item.actual_cases!==''?'#c9a84c':'#d0d5e0'};border-radius:5px;padding:3px 7px;font-size:12px;color:#1a2340;outline:none"
+                    oninput="updateWhItemActualCases(${order.id},${globalIdx},this.value)"
+                    ${item.bought_rec?'disabled style="opacity:0.4"':''}
+                  />`:`<span style="color:#5060a0;font-weight:600">${item.actual_cases||'—'}</span>`}
+                </td>
+                <td style="font-weight:700;color:${qtyAdd>0?'#1a7a45':'#d0d5e0'}">${qtyAdd>0?'+'+qtyAdd:'—'}</td>
+                <td style="font-size:11px;color:#7080a0;max-width:120px;white-space:normal">${item.notes||''}</td>
+              </tr>`;
+            }).join('')}
+            </tbody>
+          </table>
+        </div>`).join('')}
+    </div>`;
+}
+
+function toggleWhOrderExpand(id){
+  if(whExpandedIds.has(id)) whExpandedIds.delete(id);
+  else whExpandedIds.add(id);
+  renderWhOrders();
+}
+
+function updateWhItemBoughtRec(orderId, idx, checked){
+  const order = whOrders.find(o=>o.id===orderId);
+  if(!order) return;
+  order.items[idx].bought_rec = checked;
+  if(checked) order.items[idx].actual_cases = ''; // clear override if checking rec
+  // Update the row UI directly without full re-render
+  const actualInput = document.querySelectorAll(`[oninput*="updateWhItemActualCases(${orderId},${idx}"]`)[0];
+  if(actualInput){ actualInput.disabled=checked; actualInput.style.opacity=checked?'0.4':'1'; }
+  const checkLabel = document.querySelectorAll(`[onchange*="updateWhItemBoughtRec(${orderId},${idx}"]`)[0]?.closest('label')?.querySelector('span');
+  if(checkLabel){ checkLabel.textContent = checked?'✓ Yes':''; checkLabel.style.color=checked?'#1a7a45':'#7080a0'; }
+  // Update qty to add cell
+  const qtyCell = document.querySelectorAll(`tr`)[idx+1]?.querySelectorAll('td')[8];
+  saveWhOrderDebounced(order);
+}
+
+function updateWhItemActualCases(orderId, idx, val){
+  const order = whOrders.find(o=>o.id===orderId);
+  if(!order) return;
+  order.items[idx].actual_cases = val;
+  saveWhOrderDebounced(order);
+}
+
+let whSaveTimer = null;
+function saveWhOrderDebounced(order){
+  clearTimeout(whSaveTimer);
+  whSaveTimer = setTimeout(()=>saveWhOrder(order), 1500);
+}
+
+// ── Preview new order modal ──
+function previewNewWhOrder(){
+  const items = calcWhOrderItems();
+  if(items.length===0){ showToast('No items at or below min level'); return; }
+
+  const byVendor = {};
+  for(const item of items){
+    if(!byVendor[item.vendor]) byVendor[item.vendor]=[];
+    byVendor[item.vendor].push(item);
+  }
+
+  document.getElementById('modal-container').innerHTML=`
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="width:720px;max-height:85vh">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div>
+            <div class="modal-title" style="margin-bottom:2px">New Warehouse Order Preview</div>
+            <div style="font-size:11px;color:#7080a0">${items.length} items · sorted by vendor priority</div>
+          </div>
+          <button onclick="closeModal()" style="background:none;border:none;color:#7080a0;cursor:pointer;font-size:20px">✕</button>
+        </div>
+
+        <div style="max-height:55vh;overflow-y:auto;margin-bottom:14px">
+          ${Object.entries(byVendor).map(([vendor,vitems])=>`
+            <div style="margin-bottom:12px">
+              <div style="font-size:10px;font-weight:700;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase;padding:5px 0;border-bottom:2px solid #e8ecf4;margin-bottom:6px">${vendor} (${vitems.length} items)</div>
+              <table style="width:100%">
+                <thead><tr>
+                  <th style="padding-left:4px;min-width:180px">ITEM</th>
+                  <th>CURR QTY</th><th>MIN</th><th>MAX</th><th>PCS/CASE</th><th>REC. CASES</th><th>QTY TO ADD</th>
+                </tr></thead>
+                <tbody>
+                ${vitems.map(item=>`<tr>
+                  <td style="padding-left:4px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:200px">${item.product_name}</td>
+                  <td style="color:#b01c1c;font-weight:700">${item.current_qty}</td>
+                  <td>${item.min_level}</td>
+                  <td style="color:#1a7a45">${item.max_level}</td>
+                  <td>${item.pieces_per_box}</td>
+                  <td style="font-weight:700;color:#0d1f4e">${item.rec_cases}</td>
+                  <td style="color:#1a7a45;font-weight:700">+${item.rec_cases*item.pieces_per_box}</td>
+                </tr>`).join('')}
+                </tbody>
+              </table>
+            </div>`).join('')}
+        </div>
+
+        <div style="background:#f4f6fa;border-radius:7px;padding:10px 12px;margin-bottom:14px;font-size:11px;color:#5060a0;line-height:1.8">
+          <strong style="color:#0d1f4e">What happens next:</strong><br>
+          1. A Google Sheet is created in your <strong>BrewBox Orders</strong> Drive folder<br>
+          2. While shopping: check ✓ if you bought the rec. qty, or type actual cases if different<br>
+          3. Back home: click <strong>Sync Sheet</strong> to pull your updates, then <strong>Receive Order</strong> to update warehouse
+        </div>
+
+        <div style="display:flex;gap:10px">
+          <button id="create-wh-order-btn" class="primary-btn" onclick="createWhOrder()" style="padding:10px 20px">
+            📊 Create Order & Google Sheet
+          </button>
+          <button onclick="createWhOrderNoSheet()" style="background:#f4f6fa;color:#0d1f4e;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 16px;font-size:12px;font-weight:700;cursor:pointer">
+            Create Order Only (no sheet)
+          </button>
+          <button onclick="closeModal()" class="secondary-btn">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function createWhOrder(withSheet=true){
+  const btn = document.getElementById('create-wh-order-btn');
+  if(btn){ btn.disabled=true; btn.textContent='Creating…'; btn.style.opacity='0.6'; }
+
+  const items = calcWhOrderItems();
+  const order = {
+    id: Date.now(),
+    status: 'open',
+    created_at: new Date().toISOString(),
+    received_at: null,
+    sheet_id: '',
+    sheet_url: '',
+    items
+  };
+
+  // Try Google Sheets
+  if(withSheet){
+    const sheetResult = await createGoogleSheet(order);
+    if(sheetResult){
+      order.sheet_id = sheetResult.sheet_id;
+      order.sheet_url = sheetResult.sheet_url;
+    }
+  }
+
+  whOrders.unshift(order);
+  await saveWhOrder(order);
+  closeModal();
+  whExpandedIds.add(order.id);
+  renderWhOrders();
+
+  if(order.sheet_url){
+    showToast('Order created & sheet uploaded to Google Drive!');
+  } else {
+    showToast('Order created — Google Sheet not available, use app to track');
+  }
+}
+
+async function createWhOrderNoSheet(){ await createWhOrder(false); }
+
+async function syncWhOrderFromSheet(orderId){
+  const order = whOrders.find(o=>o.id===orderId);
+  if(!order) return;
+  if(!order.sheet_id){
+    showToast('No Google Sheet linked — sync not available');
+    return;
+  }
+  await syncFromGoogleSheet(order);
+}
+
+async function receiveWhOrder(orderId){
+  const btn = document.getElementById(`wh-recv-btn-${orderId}`);
+  if(btn){ btn.disabled=true; btn.textContent='Processing…'; btn.style.opacity='0.6'; }
+
+  const order = whOrders.find(o=>o.id===orderId);
+  if(!order) return;
+
+  let updated = 0;
+  const logLines = [];
+
+  for(const item of order.items){
+    const casesUsed = item.bought_rec ? item.rec_cases : (item.actual_cases!==''?parseFloat(item.actual_cases)||0:0);
+    if(casesUsed <= 0) continue;
+
+    const qtyAdd = casesUsed * item.pieces_per_box;
+    const p = products.find(x=>x.id===item.product_id);
+    if(!p) continue;
+
+    p.qty += qtyAdd;
+    products = products.map(x=>x.id===p.id?{...x,qty:p.qty}:x);
+    await saveProduct(products.find(x=>x.id===p.id));
+
+    // Log to restock
+    const entry = {
+      id: Date.now()+Math.random(),
+      date: new Date().toISOString().slice(0,10),
+      product: p.name,
+      qty: qtyAdd,
+      by: `Warehouse Order #${orderId.toString().slice(-6)} — ${item.vendor}`
+    };
+    restockLog = [entry,...restockLog];
+    await saveRestock(entry);
+    logLines.push(item.product_name);
+    updated++;
+  }
+
+  // Mark received
+  order.status = 'received';
+  order.received_at = new Date().toISOString();
+  await saveWhOrder(order);
+
+  // Archive Google Sheet
+  if(order.sheet_id) await archiveGoogleSheet(order);
+
+  // Log summary to activity
+  const summaryEntry = {
+    id: Date.now()+Math.random(),
+    date: new Date().toISOString().slice(0,10),
+    product: `Warehouse Order #${orderId.toString().slice(-6)} — ${updated} items received`,
+    qty: order.items.reduce((s,x)=>{
+      const c=x.bought_rec?x.rec_cases:(x.actual_cases!==''?parseFloat(x.actual_cases)||0:0);
+      return s+c*x.pieces_per_box;
+    },0),
+    by: `Warehouse Order Received`
+  };
+  restockLog=[summaryEntry,...restockLog];
+  await saveRestock(summaryEntry);
+
+  whExpandedIds.delete(orderId);
+  updateSidebar();
+  renderWhOrders();
+  showToast(`Warehouse order received — ${updated} items updated`);
 }
 
 // ═══════════════════════════════════════════════════
