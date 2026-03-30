@@ -3961,19 +3961,29 @@ function renderWhOrders(){
       </div>
     </div>
 
-    <!-- Create new order -->
-    <div class="card" style="margin-bottom:14px;border-top:3px solid #0d1f4e">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-        <div>
-          <div class="card-title" style="margin-bottom:2px">Create New Warehouse Order</div>
-          <div style="font-size:11px;color:#7080a0">${lowItems.length} item${lowItems.length!==1?'s':''} at or below min level · sorted by vendor priority</div>
+    <!-- Create new order — two options -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+      <!-- Option A: Planned order -->
+      <div class="card" style="border-top:3px solid #0d1f4e;margin-bottom:0">
+        <div class="card-title" style="margin-bottom:4px">📋 Planned Order</div>
+        <div style="font-size:11px;color:#7080a0;margin-bottom:12px;line-height:1.5">
+          Calculate recommended quantities for all items at/below min level. Creates a Google Sheet for shopping.
+          <br><span style="color:${lowItems.length>0?'#b01c1c':'#1a7a45'};font-weight:600">${lowItems.length} item${lowItems.length!==1?'s':''} need reordering</span>
         </div>
-        <div style="display:flex;gap:8px">
-          <button onclick="previewNewWhOrder()" class="primary-btn" style="padding:9px 18px"
-            ${lowItems.length===0?'disabled style="opacity:0.5;cursor:not-allowed"':''}>
-            📋 Preview Order
-          </button>
+        <button onclick="previewNewWhOrder()" class="primary-btn" style="width:100%;padding:9px"
+          ${lowItems.length===0?'disabled style="opacity:0.5;cursor:not-allowed"':''}>
+          📋 Preview & Create Order
+        </button>
+      </div>
+      <!-- Option B: Quick capture -->
+      <div class="card" style="border-top:3px solid #6b2fa0;margin-bottom:0">
+        <div class="card-title" style="margin-bottom:4px;color:#6b2fa0">⚡ Quick Capture</div>
+        <div style="font-size:11px;color:#7080a0;margin-bottom:12px;line-height:1.5">
+          Upload a receipt photo or type what you bought. AI reads it, matches items to warehouse inventory, and creates an order.
         </div>
+        <button onclick="openQuickCapture()" style="width:100%;padding:9px;background:#6b2fa0;color:#fff;border:none;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer">
+          📸 Upload Receipt / Type Items
+        </button>
       </div>
     </div>
 
@@ -4306,6 +4316,356 @@ async function receiveWhOrder(orderId){
   updateSidebar();
   renderWhOrders();
   showToast(`Warehouse order received — ${updated} items updated`);
+}
+
+
+
+// ═══════════════════════════════════════════════════
+//  QUICK CAPTURE — Receipt photo / text parse
+// ═══════════════════════════════════════════════════
+let qcParsedItems = [];   // [{product_id, product_name, vendor, cat1, pieces_per_box, rec_cases, parsed_cases, current_qty, min_level, max_level, confirmed}]
+let qcParsing = false;
+let qcSubmitted = false;
+
+function openQuickCapture(){
+  qcParsedItems = [];
+  qcParsing = false;
+  qcSubmitted = false;
+  document.getElementById('modal-container').innerHTML=`
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="width:640px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div>
+            <div class="modal-title" style="margin-bottom:2px">⚡ Quick Capture</div>
+            <div style="font-size:11px;color:#7080a0">Upload a receipt photo OR type what you bought</div>
+          </div>
+          <button onclick="closeModal()" style="background:none;border:none;color:#7080a0;cursor:pointer;font-size:20px">✕</button>
+        </div>
+
+        <!-- Input area: image OR text -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+          <!-- Image upload -->
+          <div>
+            <label style="font-size:10px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:6px">Receipt Photo</label>
+            <label id="qc-img-label" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;border:2px dashed #d0d5e0;border-radius:8px;padding:20px;cursor:pointer;background:#f4f6fa;min-height:100px;transition:border-color .2s"
+              onmouseover="this.style.borderColor='#6b2fa0'" onmouseout="this.style.borderColor='#d0d5e0'">
+              <span style="font-size:24px">📸</span>
+              <span style="font-size:11px;color:#7080a0;text-align:center">Click to upload receipt<br>JPG, PNG, HEIC</span>
+              <input type="file" id="qc-img-input" accept="image/*" style="display:none" onchange="qcHandleImage(this)"/>
+            </label>
+            <div id="qc-img-preview" style="margin-top:6px;display:none">
+              <img id="qc-img-thumb" style="width:100%;border-radius:6px;max-height:120px;object-fit:cover"/>
+              <div style="font-size:10px;color:#1a7a45;margin-top:4px;font-weight:600">✓ Image ready</div>
+            </div>
+          </div>
+          <!-- Text input -->
+          <div>
+            <label style="font-size:10px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:6px">Or Type / Paste</label>
+            <textarea id="qc-text-input" placeholder='Examples:&#10;coke 4, water 6, doritos 3&#10;&#10;or paste a receipt text&#10;&#10;or: "bought 3 cases Celsius, 2 cases Monster, 1 case Red Bull"'
+              style="width:100%;height:130px;background:#f4f6fa;border:1.5px solid #d0d5e0;border-radius:8px;padding:10px;font-size:11px;color:#1a2340;outline:none;resize:none;line-height:1.5"
+              onfocus="this.style.borderColor='#6b2fa0'" onblur="this.style.borderColor='#d0d5e0'"></textarea>
+          </div>
+        </div>
+
+        <div id="qc-parse-section">
+          <button id="qc-parse-btn" onclick="runQuickCaptureParse()"
+            style="width:100%;background:#6b2fa0;color:#fff;border:none;border-radius:7px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;margin-bottom:6px">
+            ✨ Parse with AI
+          </button>
+          <div style="font-size:10px;color:#8090b0;text-align:center">AI will match items to your warehouse inventory and fill in case quantities</div>
+        </div>
+
+        <div id="qc-results"></div>
+      </div>
+    </div>`;
+}
+
+function qcHandleImage(input){
+  const file = input.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    document.getElementById('qc-img-thumb').src = e.target.result;
+    document.getElementById('qc-img-preview').style.display = 'block';
+    document.getElementById('qc-img-label').style.display = 'none';
+  };
+  reader.readAsDataURL(file);
+}
+
+async function runQuickCaptureParse(){
+  const btn = document.getElementById('qc-parse-btn');
+  const textInput = document.getElementById('qc-text-input')?.value?.trim();
+  const imgInput = document.getElementById('qc-img-input');
+  const hasImage = imgInput?.files?.length > 0;
+  const hasText = textInput && textInput.length > 0;
+
+  if(!hasImage && !hasText){
+    showToast('Please upload a receipt image or type what you bought');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = '✨ Parsing...';
+  btn.style.opacity = '0.7';
+
+  // Build inventory context for AI
+  const invContext = products.filter(p=>p.active).map(p=>({
+    id:p.id, name:p.name, cat1:p.cat1, vendor: (()=>{
+      for(const vp of VENDOR_PRIORITY){ if((p.vendors||[]).includes(vp)) return vp; }
+      return p.vendors?.[0]||'';
+    })(),
+    ppb:p.piecesPerBox, qty:p.qty, min:p.minLevel, max:p.maxLevel
+  }));
+
+  const systemPrompt = `You are a warehouse inventory assistant for a vending/micromarket business. 
+The user will provide either a receipt image or text describing items they purchased.
+You must match each purchased item to the warehouse inventory list provided and return ONLY a JSON array.
+
+Warehouse inventory (${invContext.length} items):
+${JSON.stringify(invContext)}
+
+Rules:
+- Match by product name (fuzzy ok — "coke" matches "Coke", "celsius kiwi" matches "Celsius Sparkling Kiwi Guava")
+- Extract the NUMBER OF CASES purchased (not individual units)
+- If the input mentions units/pieces instead of cases, divide by pieces_per_box to get cases (round up)
+- Only include items you can confidently match
+- Return ONLY valid JSON array, no other text
+
+Return format:
+[{"product_id": 123, "product_name": "...", "cases_purchased": 4}, ...]`;
+
+  try{
+    let messages;
+    if(hasImage){
+      // Convert image to base64
+      const file = imgInput.files[0];
+      const base64 = await new Promise((res,rej)=>{
+        const r = new FileReader();
+        r.onload=()=>res(r.result.split(',')[1]);
+        r.onerror=rej;
+        r.readAsDataURL(file);
+      });
+      const mediaType = file.type || 'image/jpeg';
+      messages = [{
+        role:'user',
+        content:[
+          {type:'image', source:{type:'base64', media_type:mediaType, data:base64}},
+          {type:'text', text: hasText
+            ? `Receipt image above AND additional notes: ${textInput}
+
+Match all purchased items to the warehouse inventory and return JSON.`
+            : 'This is a receipt/shopping photo. Extract all items and quantities purchased. Match to warehouse inventory and return JSON.'}
+        ]
+      }];
+    } else {
+      messages = [{role:'user', content: `Items purchased: ${textInput}
+
+Match to warehouse inventory and return JSON array.`}];
+    }
+
+    const res = await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model:'claude-sonnet-4-20250514',
+        max_tokens:2000,
+        system: systemPrompt,
+        messages
+      })
+    });
+    const data = await res.json();
+    const text = data.content?.find(b=>b.type==='text')?.text||'';
+    const clean = text.replace(/```json|```/g,'').trim();
+    const parsed = JSON.parse(clean);
+
+    if(!Array.isArray(parsed) || parsed.length===0){
+      throw new Error('No items matched');
+    }
+
+    // Build qcParsedItems from parsed results
+    qcParsedItems = parsed.map(r=>{
+      const p = products.find(x=>x.id===r.product_id);
+      if(!p) return null;
+      const vendor = (()=>{
+        for(const vp of VENDOR_PRIORITY){ if((p.vendors||[]).includes(vp)) return vp; }
+        return p.vendors?.[0]||'Unassigned';
+      })();
+      return {
+        product_id: p.id,
+        product_name: p.name,
+        vendor,
+        cat1: p.cat1||'',
+        pieces_per_box: p.piecesPerBox||1,
+        current_qty: p.qty,
+        min_level: p.minLevel,
+        max_level: p.maxLevel,
+        parsed_cases: r.cases_purchased||0,
+        confirmed: true
+      };
+    }).filter(Boolean);
+
+    renderQcResults();
+
+  }catch(e){
+    btn.disabled = false;
+    btn.textContent = '✨ Parse with AI';
+    btn.style.opacity = '1';
+    document.getElementById('qc-results').innerHTML=`
+      <div style="background:#fde8e8;border-radius:7px;padding:10px 12px;margin-top:10px;font-size:12px;color:#b01c1c">
+        ⚠ Could not parse: ${e.message}. Try rephrasing or check your input.
+      </div>`;
+  }
+}
+
+function renderQcResults(){
+  if(qcParsedItems.length===0){
+    document.getElementById('qc-results').innerHTML=`
+      <div style="background:#fff8e6;border-radius:7px;padding:10px 12px;margin-top:10px;font-size:12px;color:#b35a00">
+        No items could be matched to your warehouse inventory. Try again with clearer text.
+      </div>`;
+    return;
+  }
+
+  const totalUnits = qcParsedItems.reduce((s,x)=>s+(x.parsed_cases*x.pieces_per_box),0);
+
+  document.getElementById('qc-results').innerHTML=`
+    <div style="border-top:1px solid #e8ecf4;margin-top:14px;padding-top:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:#0d1f4e">${qcParsedItems.length} items matched · ${totalUnits} total units</div>
+          <div style="font-size:11px;color:#7080a0">Review quantities below — adjust any that are incorrect</div>
+        </div>
+      </div>
+      <div style="max-height:280px;overflow-y:auto;border:1px solid #e8ecf4;border-radius:8px;margin-bottom:14px">
+        <table style="width:100%">
+          <thead><tr>
+            <th style="padding-left:8px;min-width:180px">ITEM</th>
+            <th>VENDOR</th>
+            <th>CURR QTY</th>
+            <th>PCS/CASE</th>
+            <th style="min-width:100px">CASES BOUGHT</th>
+            <th>QTY TO ADD</th>
+          </tr></thead>
+          <tbody>
+          ${qcParsedItems.map((item,idx)=>`
+            <tr>
+              <td style="padding-left:8px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:200px;line-height:1.3">${item.product_name}</td>
+              <td style="font-size:10px;color:#5060a0">${item.vendor||'—'}</td>
+              <td style="font-weight:700;color:${item.current_qty<=item.min_level?'#b01c1c':'#0d1f4e'}">${item.current_qty}</td>
+              <td style="color:#5060a0">${item.pieces_per_box}</td>
+              <td>
+                <input type="number" value="${item.parsed_cases}" min="0" id="qc-cases-${idx}"
+                  style="width:70px;background:#f4f6fa;border:1.5px solid #c9a84c;border-radius:5px;padding:4px 7px;font-size:12px;font-weight:700;color:#0d1f4e;outline:none"
+                  oninput="updateQcCases(${idx},this.value)"/>
+              </td>
+              <td id="qc-units-${idx}" style="font-weight:700;color:#1a7a45">+${item.parsed_cases*item.pieces_per_box}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <button id="qc-save-btn" onclick="saveQuickCaptureOrder()"
+        style="width:100%;background:#0d1f4e;color:#fff;border:none;border-radius:7px;padding:11px;font-size:13px;font-weight:700;cursor:pointer">
+        💾 Save as Warehouse Order & Update Inventory
+      </button>
+    </div>`;
+
+  // Hide parse button now that we have results
+  const parseSection = document.getElementById('qc-parse-section');
+  if(parseSection) parseSection.style.display='none';
+}
+
+function updateQcCases(idx, val){
+  qcParsedItems[idx].parsed_cases = parseFloat(val)||0;
+  const unitsEl = document.getElementById('qc-units-'+idx);
+  if(unitsEl) unitsEl.textContent='+'+qcParsedItems[idx].parsed_cases*qcParsedItems[idx].pieces_per_box;
+}
+
+async function saveQuickCaptureOrder(){
+  if(qcSubmitted) return;
+  const btn = document.getElementById('qc-save-btn');
+  if(btn){ btn.disabled=true; btn.textContent='💾 Saving…'; btn.style.opacity='0.6'; }
+  qcSubmitted = true;
+
+  // Re-read all case quantities from DOM before saving
+  qcParsedItems.forEach((item,idx)=>{
+    const el = document.getElementById('qc-cases-'+idx);
+    if(el) item.parsed_cases = parseFloat(el.value)||0;
+  });
+
+  // Build order items in same format as planned orders
+  const orderItems = qcParsedItems.filter(x=>x.parsed_cases>0).map(item=>({
+    product_id: item.product_id,
+    product_name: item.product_name,
+    cat1: item.cat1,
+    vendor: item.vendor,
+    current_qty: item.current_qty,
+    min_level: item.min_level,
+    max_level: item.max_level,
+    pieces_per_box: item.pieces_per_box,
+    rec_cases: item.parsed_cases,   // for display purposes
+    bought_rec: true,               // all items treated as confirmed
+    actual_cases: '',
+    notes: 'Quick Capture'
+  }));
+
+  if(orderItems.length===0){ showToast('No items to save'); return; }
+
+  const order = {
+    id: Date.now(),
+    status: 'open',
+    created_at: new Date().toISOString(),
+    received_at: null,
+    sheet_id: '',
+    sheet_url: '',
+    items: orderItems
+  };
+
+  whOrders.unshift(order);
+  await saveWhOrder(order);
+
+  // Immediately receive the order — update warehouse quantities
+  let updated = 0;
+  for(const item of orderItems){
+    const qtyAdd = item.rec_cases * item.pieces_per_box;
+    if(qtyAdd <= 0) continue;
+    const p = products.find(x=>x.id===item.product_id);
+    if(!p) continue;
+
+    products = products.map(x=>x.id===p.id?{...x,qty:x.qty+qtyAdd}:x);
+    await saveProduct(products.find(x=>x.id===p.id));
+
+    const entry = {
+      id: Date.now()+Math.random(),
+      date: new Date().toISOString().slice(0,10),
+      product: p.name,
+      qty: qtyAdd,
+      by: `Quick Capture Order #${order.id.toString().slice(-6)}`
+    };
+    restockLog = [entry,...restockLog];
+    await saveRestock(entry);
+    updated++;
+  }
+
+  // Mark order as received immediately
+  order.status = 'received';
+  order.received_at = new Date().toISOString();
+  await saveWhOrder(order);
+
+  // Log summary
+  const summaryEntry = {
+    id: Date.now()+Math.random(),
+    date: new Date().toISOString().slice(0,10),
+    product: `Quick Capture Order #${order.id.toString().slice(-6)} — ${updated} items`,
+    qty: orderItems.reduce((s,x)=>s+x.rec_cases*x.pieces_per_box,0),
+    by: 'Warehouse Order Received (Quick Capture)'
+  };
+  restockLog=[summaryEntry,...restockLog];
+  await saveRestock(summaryEntry);
+
+  closeModal();
+  updateSidebar();
+  renderWhOrders();
+  showToast(`✓ ${updated} items updated in warehouse inventory`);
 }
 
 // ═══════════════════════════════════════════════════
@@ -4712,3 +5072,6 @@ if('serviceWorker' in navigator){
 </script>
 </body>
 </html>
+<script>
+// Marker - will be removed
+</script>
