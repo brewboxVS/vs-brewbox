@@ -671,6 +671,19 @@ let aiMessages = [];
 let aiLoading = false;
 
 
+
+// ── Search input focus preservation ──
+function renderWithSearchFocus(renderFn, inputId){
+  const el = document.getElementById(inputId);
+  const val = el ? el.value : null;
+  const pos = el ? el.selectionStart : null;
+  renderFn();
+  if(val !== null){
+    const newEl = document.getElementById(inputId);
+    if(newEl){ newEl.focus(); try{ newEl.setSelectionRange(pos,pos); }catch(e){} }
+  }
+}
+
 // ── PST timestamp helper ──
 function toPST(dateStr){
   if(!dateStr) return '—';
@@ -1156,7 +1169,7 @@ function renderInventory(){
       ${CATEGORIES.map(c=>`<button class="cat-btn cat-${c.replace(' ','-')}${categoryFilters.has(c)?' active':''}" onclick="(function(){if(categoryFilters.has('${c}')){categoryFilters.delete('${c}')}else{categoryFilters.add('${c}')};render()})()">${c}</button>`).join('')}
     </div>
     <div class="filter-row" style="margin-bottom:10px">
-      <input class="search-input" placeholder="Search by name or UPC…" value="${searchTerm}" oninput="searchTerm=this.value;render()"/>
+      <input class="search-input" id="mm-search-input" placeholder="Search by name or UPC…" value="${searchTerm}" oninput="searchTerm=this.value;renderWithSearchFocus(render,'mm-search-input')"/>
       <div class="filter-toggle${showActiveOnly?' active-filter':''}" onclick="showActiveOnly=!showActiveOnly;render()">
         <div class="filter-toggle-track${showActiveOnly?' on':''}"><div class="filter-toggle-thumb"></div></div>
         <span>Active items only</span>
@@ -2229,7 +2242,7 @@ function renderCoffeeInventory(){
       }).join('')}
     </div>
     <div class="filter-row" style="margin-bottom:10px">
-      <input class="search-input" placeholder="Search by name or UPC…" value="${coffeeSearchTerm}" oninput="coffeeSearchTerm=this.value;renderCoffeeInventory()"/>
+      <input class="search-input" id="coffee-search-input" placeholder="Search by name or UPC…" value="${coffeeSearchTerm}" oninput="coffeeSearchTerm=this.value;renderWithSearchFocus(renderCoffeeInventory,'coffee-search-input')"/>
       <div class="filter-toggle${coffeeShowActiveOnly?' active-filter':''}" onclick="coffeeShowActiveOnly=!coffeeShowActiveOnly;renderCoffeeInventory()">
         <div class="filter-toggle-track${coffeeShowActiveOnly?' on':''}"><div class="filter-toggle-thumb"></div></div>
         <span>Active items only</span>
@@ -2623,8 +2636,8 @@ function renderStoreInventory(){
           ${STORES.map(s=>`<option value="${s}" ${s===currentStore?'selected':''}>${s}</option>`).join('')}
         </select>
       </div>
-      <input class="search-input" placeholder="Search items…" value="${storeSearchTerm}"
-        oninput="storeSearchTerm=this.value;renderStoreInventory()" style="width:200px"/>
+      <input class="search-input" id="store-search-input" placeholder="Search items…" value="${storeSearchTerm}"
+        oninput="storeSearchTerm=this.value;renderWithSearchFocus(renderStoreInventory,'store-search-input')" style="width:200px"/>
       <button class="primary-btn" onclick="openImportStoreItemModal()" style="margin-left:auto">+ Import Item</button>
     </div>
 
