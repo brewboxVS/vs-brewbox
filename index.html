@@ -1426,17 +1426,17 @@ function cancelAllEdits(){
 }
 
 async function saveAllEdits(){
-  // Step 1: Read ALL data from DOM before any async operations
+  // Step 1: Read DOM values AND update products[] in memory immediately
   const ids = [...editingRows];
-  const edits = {};
+  const toSave = []; // [{id, oldQty, updated}]
   let saved = 0;
   for(const id of ids){
     const g = eid => document.getElementById('ei-'+eid+'-'+id);
-    if(!g('name')) continue; // not in DOM (filtered out) — skip
+    if(!g('name')) continue;
     const cpb=parseFloat(g('cpb')?.value)||0;
     const ppb=parseFloat(g('ppb')?.value)||1;
     const sv=Array.from(document.querySelectorAll('#ei-vendors-'+id+' option:checked')).map(o=>o.value);
-    edits[id] = {
+    const edit = {
       name:g('name')?.value, upc:g('upc')?.value||'',
       qty:parseFloat(g('qty')?.value)||0,
       minLevel:parseFloat(g('min')?.value)||0,
@@ -1447,19 +1447,19 @@ async function saveAllEdits(){
       cat1:g('cat1')?.value||'', cat2:g('cat2')?.value||'',
       vendors:sv
     };
-    saved++;
-  }
-
-  // Step 2: Clear edit mode and re-render IMMEDIATELY (before awaits)
-  editingRows.clear();
-  render(); updateSidebar();
-
-  // Step 3: Save to Supabase in background
-  for(const [idStr, edit] of Object.entries(edits)){
-    const id = parseInt(idStr);
     const oldQty = products.find(p=>p.id===id)?.qty??0;
     products = products.map(p=>p.id===id?{...p,...edit}:p);
     const updated = products.find(p=>p.id===id);
+    toSave.push({id, oldQty, updated});
+    saved++;
+  }
+
+  // Step 2: Clear edit mode and re-render with already-updated products[]
+  editingRows.clear();
+  render(); updateSidebar();
+
+  // Step 3: Save to Supabase in background and show success toast when done
+  for(const {id, oldQty, updated} of toSave){
     await saveProduct(updated);
     if(oldQty !== updated.qty){
       const diff = updated.qty - oldQty;
@@ -1479,7 +1479,7 @@ async function saveAllEdits(){
       }
     }
   }
-  showToast(`${saved} item${saved!==1?'s':''} saved`);
+  showToast(`✓ ${saved} item${saved!==1?'s':''} saved to database`);
 }
 
 async function saveInlineEdit(id, silent=false){
@@ -2361,7 +2361,7 @@ function cancelCoffeeEdit(id){ if(id) coffeeEditingRows.delete(id); else coffeeE
 
 async function saveAllCoffeeEdits(){
   const ids=[...coffeeEditingRows];
-  const edits={};
+  const toSave=[];
   let saved=0;
   for(const id of ids){
     const g=eid=>document.getElementById('ci-'+eid+'-'+id);
@@ -2369,20 +2369,20 @@ async function saveAllCoffeeEdits(){
     const cpb=parseFloat(g('cpb')?.value)||0;
     const ppb=parseFloat(g('ppb')?.value)||1;
     const sv=Array.from(document.querySelectorAll('#ci-vendors-'+id+' option:checked')).map(o=>o.value);
-    edits[id]={name:g('name')?.value,upc:g('upc')?.value||'',
+    const edit={name:g('name')?.value,upc:g('upc')?.value||'',
       qty:parseFloat(g('qty')?.value)||0,minLevel:parseFloat(g('min')?.value)||0,
       maxLevel:parseFloat(g('max')?.value)||0,unitCost:ppb>0?cpb/ppb:0,
       salePrice:parseFloat(g('price')?.value)||0,costPerBox:cpb,piecesPerBox:ppb,
       cat1:g('cat1')?.value||'',cat2:g('cat2')?.value||'',vendors:sv};
+    const oldQty=coffeeProducts.find(p=>p.id===id)?.qty??0;
+    coffeeProducts=coffeeProducts.map(p=>p.id===id?{...p,...edit}:p);
+    const updated=coffeeProducts.find(p=>p.id===id);
+    toSave.push({id,oldQty,updated});
     saved++;
   }
   coffeeEditingRows.clear();
   renderCoffeeInventory();
-  for(const [idStr,edit] of Object.entries(edits)){
-    const id=parseInt(idStr);
-    const oldQty=coffeeProducts.find(p=>p.id===id)?.qty??0;
-    coffeeProducts=coffeeProducts.map(p=>p.id===id?{...p,...edit}:p);
-    const updated=coffeeProducts.find(p=>p.id===id);
+  for(const {id,oldQty,updated} of toSave){
     await saveCoffeeProduct(updated);
     if(oldQty!==updated.qty){
       const diff=updated.qty-oldQty;
@@ -2393,7 +2393,7 @@ async function saveAllCoffeeEdits(){
       await saveRestock(entry);
     }
   }
-  showToast(`${saved} coffee item${saved!==1?'s':''} saved`);
+  showToast(`✓ ${saved} coffee item${saved!==1?'s':''} saved to database`);
 }
 
 async function saveCoffeeEdit(id, silent=false){
@@ -2713,28 +2713,26 @@ function renderStoreRow(item){
 
 async function saveAllStoreEdits(){
   const ids=[...storeEditingRows];
-  const edits={};
+  const toSave=[];
   let saved=0;
   for(const id of ids){
     const qEl=document.getElementById('si-qty-'+id);
     if(!qEl) continue;
-    edits[id]={
-      qty:parseFloat(qEl.value)||0,
-      min_level:parseFloat(document.getElementById('si-min-'+id)?.value)||0,
-      max_level:parseFloat(document.getElementById('si-max-'+id)?.value)||0
-    };
+    const item=storeInventory.find(x=>x.id===id);
+    if(!item) continue;
+    // Update in memory immediately
+    item.qty=parseFloat(qEl.value)||0;
+    item.min_level=parseFloat(document.getElementById('si-min-'+id)?.value)||0;
+    item.max_level=parseFloat(document.getElementById('si-max-'+id)?.value)||0;
+    toSave.push(item);
     saved++;
   }
   storeEditingRows.clear();
   renderStoreInventory();
-  for(const [idStr,edit] of Object.entries(edits)){
-    const id=parseInt(idStr);
-    const item=storeInventory.find(x=>x.id===id);
-    if(!item) continue;
-    item.qty=edit.qty; item.min_level=edit.min_level; item.max_level=edit.max_level;
+  for(const item of toSave){
     await saveStoreItem(item);
   }
-  showToast(`${saved} store item${saved!==1?'s':''} saved`);
+  showToast(`✓ ${saved} store item${saved!==1?'s':''} saved to database`);
 }
 
 async function saveStoreRowEdit(id, silent=false){
