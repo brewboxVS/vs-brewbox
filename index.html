@@ -3095,6 +3095,10 @@ function renderOpenOrderRow(order){
             style="background:#1a7a45;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:11px;font-weight:700;cursor:pointer">
             ✓ Receive Order
           </button>
+          <button onclick="event.stopPropagation();cancelStoreOrder(${order.id})"
+            style="background:transparent;color:#b01c1c;border:1.5px solid #b01c1c;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer">
+            ✕ Cancel
+          </button>
           <span style="font-size:14px;color:#8090b0">${isExpanded?'▲':'▼'}</span>
         </div>
       </div>
@@ -4032,6 +4036,10 @@ function renderWhOrderRow(order){
             <button id="wh-recv-btn-${order.id}" onclick="receiveWhOrder(${order.id})"
               style="background:#1a7a45;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:11px;font-weight:700;cursor:pointer">
               ✓ Receive Order
+            </button>
+            <button onclick="cancelWhOrder(${order.id})"
+              style="background:transparent;color:#b01c1c;border:1.5px solid #b01c1c;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer">
+              ✕ Cancel
             </button>`:''}
           <span style="font-size:14px;color:#8090b0">${isExpanded?'▲':'▼'}</span>
         </div>
@@ -4666,6 +4674,32 @@ async function saveQuickCaptureOrder(){
   updateSidebar();
   renderWhOrders();
   showToast(`✓ ${updated} items updated in warehouse inventory`);
+}
+
+
+
+async function cancelStoreOrder(orderId){
+  if(!confirm('Cancel this store order? It will be removed from open orders.')) return;
+  storeOrders = storeOrders.filter(o=>o.id!==orderId);
+  if(useSupabase){
+    try{ await sbFetch(`store_orders?id=eq.${orderId}`,{method:'DELETE',prefer:''}); }catch(e){}
+  }
+  localStorage.setItem(LS_STORE_ORDERS, JSON.stringify(storeOrders));
+  expandedOrderIds.delete(orderId);
+  renderStoreOrders();
+  showToast('Store order cancelled');
+}
+
+async function cancelWhOrder(orderId){
+  if(!confirm('Cancel this warehouse order? It will be removed from open orders.')) return;
+  whOrders = whOrders.filter(o=>o.id!==orderId);
+  if(useSupabase){
+    try{ await sbFetch(`warehouse_orders?id=eq.${orderId}`,{method:'DELETE',prefer:''}); }catch(e){}
+  }
+  localStorage.setItem(LS_WH_ORDERS, JSON.stringify(whOrders));
+  whExpandedIds.delete(orderId);
+  renderWhOrders();
+  showToast('Warehouse order cancelled');
 }
 
 // ═══════════════════════════════════════════════════
