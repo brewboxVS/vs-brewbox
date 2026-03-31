@@ -674,12 +674,28 @@ let aiLoading = false;
 
 
 
+
+// ── After any render, sync th top offset to sticky-controls height ──
+function syncStickyHeaders(){
+  requestAnimationFrame(()=>{
+    const ctrl = document.querySelector('.sticky-controls');
+    if(!ctrl){ 
+      // No sticky controls on this page - reset th to 0
+      document.querySelectorAll('th').forEach(th => { th.style.top = '0px'; });
+      return; 
+    }
+    const h = ctrl.offsetHeight;
+    document.querySelectorAll('th').forEach(th => { th.style.top = h + 'px'; });
+  });
+}
+
 // ── Search input focus preservation ──
 function renderWithSearchFocus(renderFn, inputId){
   const el = document.getElementById(inputId);
   const val = el ? el.value : null;
   const pos = el ? el.selectionStart : null;
   renderFn();
+  syncStickyHeaders();
   if(val !== null){
     const newEl = document.getElementById(inputId);
     if(newEl){ newEl.focus(); try{ newEl.setSelectionRange(pos,pos); }catch(e){} }
@@ -1107,6 +1123,7 @@ function render(){
   else if(currentView==='count') renderCount();
   else if(currentView==='wh-orders') renderWhOrders();
   else renderRestock();
+  setTimeout(syncStickyHeaders, 0);
 }
 
 // ═══════════════════════════════════════════════════
@@ -1458,7 +1475,7 @@ async function saveAllEdits(){
 
   // Step 2: Clear edit mode and re-render with already-updated products[]
   editingRows.clear();
-  render(); updateSidebar();
+  render(); updateSidebar(); syncStickyHeaders();
 
   // Step 3: Save to Supabase in background and show success toast when done
   for(const {id, oldQty, updated} of toSave){
@@ -2224,6 +2241,7 @@ async function toggleCoffeeActive(id){
 }
 
 function renderCoffeeInventory(){
+  // syncStickyHeaders called by render() or directly below
   let filtered = coffeeProducts.filter(p=>{
     const ms = p.name.toLowerCase().includes(coffeeSearchTerm.toLowerCase())||p.upc.includes(coffeeSearchTerm);
     const matchActive = coffeeShowActiveOnly ? p.active : true;
