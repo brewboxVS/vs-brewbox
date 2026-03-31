@@ -58,7 +58,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;font-size:13px;background:#f0f2
 
 /* ── Table ── */
 table{width:100%;border-collapse:collapse}
-th{text-align:left;padding:6px 8px;font-size:10px;color:#7080a0;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;border-bottom:2px solid #e8ecf4;white-space:nowrap;background:#fafbfd;position:sticky;top:0;z-index:2;box-shadow:0 1px 0 #e8ecf4}
+th{text-align:left;padding:6px 8px;font-size:10px;color:#7080a0;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;border-bottom:2px solid #e8ecf4;white-space:nowrap;background:#fafbfd}
 td{padding:6px 8px;font-size:12px;color:#2a3455;border-bottom:1px solid #f0f2f8;vertical-align:middle;white-space:nowrap}
 tr:hover td{background:#f7f9ff}
 .badge{padding:2px 7px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:0.5px}
@@ -68,8 +68,7 @@ tr:hover td{background:#f7f9ff}
 
 /* ── Filters / Buttons ── */
 .filter-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
-.sticky-controls{position:sticky;top:0;z-index:10;background:#f0f2f8;padding-bottom:8px;margin-bottom:4px;border-bottom:1.5px solid #e0e4ef}
-.table-scroll{overflow-y:auto;overflow-x:auto;border:1px solid #d8dde8;border-radius:9px}
+.inv-table-wrap{background:#fff;border:1px solid #d8dde8;border-radius:9px;overflow:hidden}
 .search-input{background:#f4f6fa;border:1px solid #d0d5e0;border-radius:7px;padding:7px 12px;color:#1a2340;font-size:12px;width:240px;outline:none}
 .search-input:focus{border-color:#0d1f4e;background:#fff}
 .primary-btn{background:#0d1f4e;color:#fff;border:none;border-radius:7px;padding:8px 14px;font-weight:700;font-size:12px;cursor:pointer;transition:all .15s}
@@ -675,19 +674,7 @@ let aiLoading = false;
 
 
 
-// ── After any render, sync th top offset to sticky-controls height ──
-function syncStickyHeaders(){
-  requestAnimationFrame(()=>{
-    const ctrl = document.querySelector('.sticky-controls');
-    if(!ctrl){ 
-      // No sticky controls on this page - reset th to 0
-      document.querySelectorAll('th').forEach(th => { th.style.top = '0px'; });
-      return; 
-    }
-    const h = ctrl.offsetHeight;
-    document.querySelectorAll('th').forEach(th => { th.style.top = h + 'px'; });
-  });
-}
+
 
 // ── Search input focus preservation ──
 function renderWithSearchFocus(renderFn, inputId){
@@ -695,7 +682,6 @@ function renderWithSearchFocus(renderFn, inputId){
   const val = el ? el.value : null;
   const pos = el ? el.selectionStart : null;
   renderFn();
-  syncStickyHeaders();
   if(val !== null){
     const newEl = document.getElementById(inputId);
     if(newEl){ newEl.focus(); try{ newEl.setSelectionRange(pos,pos); }catch(e){} }
@@ -1123,7 +1109,6 @@ function render(){
   else if(currentView==='count') renderCount();
   else if(currentView==='wh-orders') renderWhOrders();
   else renderRestock();
-  setTimeout(syncStickyHeaders, 0);
 }
 
 // ═══════════════════════════════════════════════════
@@ -1169,6 +1154,7 @@ function renderDashboard(){
       ${restockLog.length===0?'<div style="color:#7080a0;font-size:12px;padding:8px 0">No restocks logged yet.</div>':
       `<table><thead><tr><th>DATE</th><th>PRODUCT</th><th>QTY ADDED</th><th>BY</th></tr></thead><tbody>
       ${restockLog.slice(0,6).map(r=>`<tr><td>${r.date}</td><td style="font-weight:600">${r.product}</td><td style="color:#1a7a45;font-weight:700">+${r.qty}</td><td style="color:#7080a0">${r.by}</td></tr>`).join('')}</tbody></table>`}
+      </div>
     </div>`;
 }
 
@@ -1183,12 +1169,11 @@ function renderInventory(){
   const activeCount=products.filter(p=>p.active).length;
   const inactiveCount=products.filter(p=>!p.active).length;
   document.getElementById('main-body').innerHTML=`
-    <div class="sticky-controls">
-    <div class="cat-filters" style="margin-bottom:8px">
+    <div class="cat-filters">
       <button class="cat-btn${categoryFilters.size===0?' active':''}" onclick="categoryFilters.clear();render()">ALL</button>
       ${CATEGORIES.map(c=>`<button class="cat-btn cat-${c.replace(' ','-')}${categoryFilters.has(c)?' active':''}" onclick="(function(){if(categoryFilters.has('${c}')){categoryFilters.delete('${c}')}else{categoryFilters.add('${c}')};render()})()">${c}</button>`).join('')}
     </div>
-    <div class="filter-row" style="margin-bottom:0">
+    <div class="filter-row" style="margin-bottom:10px">
       <input class="search-input" id="mm-search-input" placeholder="Search by name or UPC…" value="${searchTerm}" oninput="searchTerm=this.value;renderWithSearchFocus(render,'mm-search-input')"/>
       <div class="filter-toggle${showActiveOnly?' active-filter':''}" onclick="showActiveOnly=!showActiveOnly;render()">
         <div class="filter-toggle-track${showActiveOnly?' on':''}"><div class="filter-toggle-thumb"></div></div>
@@ -1196,7 +1181,6 @@ function renderInventory(){
       </div>
       <span style="font-size:11px;color:#7080a0;margin-left:2px">${filtered.length} shown · ${activeCount} active · ${inactiveCount} inactive</span>
     </div>
-    </div><!-- end sticky-controls -->
     ${editingRows.size>0?`
     <div style="display:flex;justify-content:space-between;align-items:center;background:#fffbf0;border:1.5px solid #c9a84c;border-radius:8px;padding:9px 14px;margin-bottom:10px">
       <span style="font-size:12px;font-weight:600;color:#0d1f4e">${editingRows.size} row${editingRows.size>1?'s':''} in edit mode</span>
@@ -1205,8 +1189,7 @@ function renderInventory(){
         <button onclick="cancelAllEdits()" style="background:transparent;color:#b01c1c;border:1.5px solid #b01c1c;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer">✕ Cancel</button>
       </div>
     </div>`:''}
-    <div class="table-scroll">
-      <table>
+    <div class="inv-table-wrap"><div style="overflow-x:auto"><table>
         <thead><tr>
           <th style="padding-left:12px;min-width:200px">NAME</th>
           <th>UPC</th><th>QTY</th><th>MIN</th><th>MAX</th>
@@ -1219,7 +1202,7 @@ function renderInventory(){
         </tbody>
       </table>
       ${filtered.length===0?'<div style="text-align:center;padding:30px;color:#7080a0">No items match your search.</div>':''}
-    </div>`;
+    </div></div></div>`;
 }
 
 let activityFilter = 'all'; // 'all' | 'orders' | 'restock' | 'count' | 'edit'
@@ -1475,7 +1458,7 @@ async function saveAllEdits(){
 
   // Step 2: Clear edit mode and re-render with already-updated products[]
   editingRows.clear();
-  render(); updateSidebar(); syncStickyHeaders();
+  render(); updateSidebar();
 
   // Step 3: Save to Supabase in background and show success toast when done
   for(const {id, oldQty, updated} of toSave){
@@ -2241,7 +2224,6 @@ async function toggleCoffeeActive(id){
 }
 
 function renderCoffeeInventory(){
-  // syncStickyHeaders called by render() or directly below
   let filtered = coffeeProducts.filter(p=>{
     const ms = p.name.toLowerCase().includes(coffeeSearchTerm.toLowerCase())||p.upc.includes(coffeeSearchTerm);
     const matchActive = coffeeShowActiveOnly ? p.active : true;
@@ -2252,8 +2234,7 @@ function renderCoffeeInventory(){
   const inactiveCount = coffeeProducts.filter(p=>!p.active).length;
 
   document.getElementById('main-body').innerHTML=`
-    <div class="sticky-controls">
-    <div class="cat-filters" style="margin-bottom:8px">
+    <div class="cat-filters">
       <button class="cat-btn${coffeeCategoryFilters.size===0?' active':''}" onclick="coffeeCategoryFilters.clear();renderCoffeeInventory()">ALL</button>
       ${COFFEE_CATS.map(c=>{
         const col = COFFEE_CAT_COLORS[c]?.btn||'#5060a0';
@@ -2262,7 +2243,7 @@ function renderCoffeeInventory(){
           onclick="(function(){if(coffeeCategoryFilters.has('${c}')){coffeeCategoryFilters.delete('${c}')}else{coffeeCategoryFilters.add('${c}')};renderCoffeeInventory()})()">${c}</button>`;
       }).join('')}
     </div>
-    <div class="filter-row" style="margin-bottom:0">
+    <div class="filter-row" style="margin-bottom:10px">
       <input class="search-input" id="coffee-search-input" placeholder="Search by name or UPC…" value="${coffeeSearchTerm}" oninput="coffeeSearchTerm=this.value;renderWithSearchFocus(renderCoffeeInventory,'coffee-search-input')"/>
       <div class="filter-toggle${coffeeShowActiveOnly?' active-filter':''}" onclick="coffeeShowActiveOnly=!coffeeShowActiveOnly;renderCoffeeInventory()">
         <div class="filter-toggle-track${coffeeShowActiveOnly?' on':''}"><div class="filter-toggle-thumb"></div></div>
@@ -2270,7 +2251,6 @@ function renderCoffeeInventory(){
       </div>
       <span style="font-size:11px;color:#7080a0;margin-left:2px">${filtered.length} shown · ${activeCount} active · ${inactiveCount} inactive</span>
     </div>
-    </div><!-- end sticky-controls coffee -->
     ${coffeeEditingRows.size>0?`
     <div style="display:flex;justify-content:space-between;align-items:center;background:#fffbf0;border:1.5px solid #c9a84c;border-radius:8px;padding:9px 14px;margin-bottom:10px">
       <span style="font-size:12px;font-weight:600;color:#0d1f4e">${coffeeEditingRows.size} row${coffeeEditingRows.size>1?'s':''} in edit mode</span>
@@ -2279,8 +2259,7 @@ function renderCoffeeInventory(){
         <button onclick="coffeeEditingRows.clear();renderCoffeeInventory()" style="background:transparent;color:#b01c1c;border:1.5px solid #b01c1c;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer">✕ Cancel</button>
       </div>
     </div>`:''}
-    <div class="table-scroll">
-      <table>
+    <div class="inv-table-wrap"><div style="overflow-x:auto"><table>
         <thead><tr>
           <th style="padding-left:12px;min-width:200px">NAME</th>
           <th>UPC</th><th>QTY</th><th>MIN</th><th>MAX</th>
@@ -2293,7 +2272,7 @@ function renderCoffeeInventory(){
           :filtered.map(p=>renderCoffeeRow(p)).join('')}
         </tbody>
       </table>
-    </div>`;
+    </div></div></div>`;
 }
 
 function renderCoffeeRow(p){
@@ -2648,8 +2627,7 @@ function renderStoreInventory(){
   const lowCount = storeItems.filter(x=>x.qty>0&&x.min_level>0&&x.qty<=x.min_level).length;
 
   document.getElementById('main-body').innerHTML=`
-    <div class="sticky-controls">
-    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+    <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
       <div style="display:flex;align-items:center;gap:10px">
         <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.8px">Store:</label>
         <select onchange="currentStore=this.value;storeSearchTerm='';renderStoreInventory()"
@@ -2661,7 +2639,6 @@ function renderStoreInventory(){
         oninput="storeSearchTerm=this.value;renderWithSearchFocus(renderStoreInventory,'store-search-input')" style="width:200px"/>
       <button class="primary-btn" onclick="openImportStoreItemModal()" style="margin-left:auto">+ Import Item</button>
     </div>
-    </div><!-- end sticky-controls store -->
 
     <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px">
       <div class="stat-card"><div class="stat-val">${storeItems.length}</div><div class="stat-label">Total SKUs</div></div>
@@ -2683,8 +2660,7 @@ function renderStoreInventory(){
         <button onclick="storeEditingRows.clear();renderStoreInventory()" style="background:transparent;color:#b01c1c;border:1.5px solid #b01c1c;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer">✕ Cancel</button>
       </div>
     </div>`:''}
-    <div class="table-scroll">
-      <table>
+    <div class="inv-table-wrap"><div style="overflow-x:auto"><table>
         <thead><tr>
           <th style="padding-left:12px;min-width:200px">ITEM NAME</th>
           <th>SOURCE</th>
@@ -2695,7 +2671,7 @@ function renderStoreInventory(){
         ${filtered.map(item=>renderStoreRow(item)).join('')}
         </tbody>
       </table>
-    </div>`}
+    </div></div></div>`}
   `;
 }
 
