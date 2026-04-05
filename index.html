@@ -92,6 +92,14 @@ tr:hover td{background:#f7f9ff}
 
 /* ── Modals ── */
 .modal-overlay{position:fixed;inset:0;background:rgba(10,20,60,0.5);display:flex;align-items:center;justify-content:center;z-index:100}
+.count-progress-overlay{position:fixed;inset:0;background:rgba(10,20,60,0.7);display:flex;align-items:center;justify-content:center;z-index:200;backdrop-filter:blur(2px)}
+.count-progress-box{background:#fff;border-radius:12px;padding:28px 32px;width:380px;box-shadow:0 12px 48px rgba(10,20,60,.35);text-align:center}
+.count-progress-title{font-size:15px;font-weight:800;color:#0d1f4e;margin-bottom:4px}
+.count-progress-sub{font-size:12px;color:#5060a0;margin-bottom:16px}
+.count-progress-track{width:100%;height:10px;background:#e8ecf4;border-radius:5px;overflow:hidden;margin-bottom:10px}
+.count-progress-fill{height:100%;background:linear-gradient(90deg,#0d1f4e,#1a7a45);border-radius:5px;transition:width 0.25s ease;width:0%}
+.count-progress-pct{font-size:20px;font-weight:800;color:#0d1f4e;margin-bottom:2px}
+.count-progress-detail{font-size:11px;color:#7080a0}
 .modal{background:#fff;border-radius:10px;padding:22px;width:580px;max-height:90vh;overflow-y:auto;box-shadow:0 8px 40px rgba(10,20,60,.2)}
 .modal-title{font-size:14px;font-weight:700;color:#0d1f4e;margin-bottom:14px}
 .form-label{font-size:10px;color:#7080a0;display:block;margin-bottom:3px;letter-spacing:0.8px;text-transform:uppercase;font-weight:600}
@@ -3950,6 +3958,38 @@ function confirmSubmitStoreCount(){
     </div>`;
 }
 
+// ── Count submit progress overlay ──
+function showCountProgress(title, total){
+  let el = document.getElementById('count-progress-el');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'count-progress-el';
+    document.body.appendChild(el);
+  }
+  el.innerHTML = `<div class="count-progress-overlay">
+    <div class="count-progress-box">
+      <div class="count-progress-title">${title}</div>
+      <div class="count-progress-sub">Please wait — do not close or navigate away</div>
+      <div class="count-progress-pct" id="cp-pct">0%</div>
+      <div class="count-progress-track"><div class="count-progress-fill" id="cp-fill"></div></div>
+      <div class="count-progress-detail" id="cp-detail">Preparing… 0 / ${total}</div>
+    </div>
+  </div>`;
+}
+function updateCountProgress(current, total, itemName){
+  const pct = total > 0 ? Math.round((current / total) * 100) : 100;
+  const pctEl = document.getElementById('cp-pct');
+  const fillEl = document.getElementById('cp-fill');
+  const detailEl = document.getElementById('cp-detail');
+  if(pctEl) pctEl.textContent = pct + '%';
+  if(fillEl) fillEl.style.width = pct + '%';
+  if(detailEl) detailEl.textContent = `Saving ${current} / ${total}` + (itemName ? ` — ${itemName}` : '');
+}
+function hideCountProgress(){
+  const el = document.getElementById('count-progress-el');
+  if(el) el.innerHTML = '';
+}
+
 async function submitStoreCount(){
   const btn=document.getElementById('confirm-sc-btn');
   if(btn){btn.disabled=true;btn.textContent='⏳ Saving…';btn.style.opacity='0.6';}
@@ -3966,17 +4006,20 @@ async function submitStoreCount(){
     return aq!==null&&aq!==item.qty&&s.reason;
   });
 
+  showCountProgress(`Submitting Store Count — ${storeCountStore}`, toUpdate.length);
+  let processed = 0;
+
   for(const item of toUpdate){
+    processed++;
+    updateCountProgress(processed, toUpdate.length, item.product_name);
     const s=storeCountState[item.id];
     const newQty=parseFloat(s.actualQty);
     const diff=newQty-item.qty;
     const reason=s.reason;
     try{
-      // Update store qty
       item.qty=newQty;
       await saveStoreItem(item);
 
-      // If "Return to Warehouse" — increase warehouse qty
       if(reason==='Return to Warehouse'){
         const absReturn=Math.abs(diff);
         if(item.product_source==='coffee'){
@@ -3988,7 +4031,6 @@ async function submitStoreCount(){
         }
       }
 
-      // Log to activity
       const entry={
         id:Date.now()+Math.random(),
         date:countDate,
@@ -3999,7 +4041,6 @@ async function submitStoreCount(){
       restockLog=[entry,...restockLog];
       await saveRestock(entry);
 
-      // Log to inventory_count_log
       if(useSupabase){
         try{
           await sbFetch('inventory_count_log',{
@@ -4025,6 +4066,7 @@ async function submitStoreCount(){
     }
   }
 
+  hideCountProgress();
   storeCountState={};
   storeCountSkippedCats=new Set();
   updateSidebar();
@@ -6255,10 +6297,15 @@ async function submitCount(){
     return aq !== null && s.reason;
   });
 
+  showCountProgress('Submitting Warehouse Inventory Count', toUpdate.length);
+  let processed = 0;
+
   for(const p of toUpdate){
+    processed++;
+    updateCountProgress(processed, toUpdate.length, p.name);
     const s = countState[p.id];
     const newQty = parseFloat(s.actualQty);
-    const prevQty = p.qty; // capture BEFORE updating
+    const prevQty = p.qty;
     const diff = newQty - prevQty;
     const reason = s.reason;
 
@@ -6266,7 +6313,6 @@ async function submitCount(){
 
     try{
       await saveProduct(products.find(x=>x.id===p.id));
-      // Save to inventory_count_log table
       if(useSupabase){
         await sbFetch('inventory_count_log', {
           method:'POST',
@@ -6284,7 +6330,6 @@ async function submitCount(){
           }])
         });
       }
-      // Also log to restock log
       const entry = {id:Date.now()+Math.random(), date:countDate, product:p.name, qty:diff, by:`Inventory Count (${reason})`};
       restockLog = [entry,...restockLog];
       await saveRestock(entry);
@@ -6295,8 +6340,8 @@ async function submitCount(){
     }
   }
 
+  hideCountProgress();
   updateSidebar();
-  // Clear the count state so the forms disappear — result screen shows instead
   countState = {};
   countSkippedCats = new Set();
   render();
