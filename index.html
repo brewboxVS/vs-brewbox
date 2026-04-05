@@ -1477,7 +1477,7 @@ function renderInventory(){
     const matchActive=showActiveOnly?p.active:true;
     const matchCat=categoryFilters.size===0||categoryFilters.has(p.cat1);
     return ms&&matchActive&&matchCat;
-  });
+  }).sort((a,b)=>a.name.localeCompare(b.name));
   const activeCount=products.filter(p=>p.active).length;
   const inactiveCount=products.filter(p=>!p.active).length;
   document.getElementById('main-body').innerHTML=`
@@ -2541,7 +2541,7 @@ function renderCoffeeInventory(){
     const matchActive = coffeeShowActiveOnly ? p.active : true;
     const matchCat = coffeeCategoryFilters.size===0 || coffeeCategoryFilters.has(p.cat1);
     return ms && matchActive && matchCat;
-  });
+  }).sort((a,b)=>a.name.localeCompare(b.name));
   const activeCount = coffeeProducts.filter(p=>p.active).length;
   const inactiveCount = coffeeProducts.filter(p=>!p.active).length;
 
@@ -2856,6 +2856,17 @@ let storeInventory = []; // all store_inventory rows loaded
 let currentStore = 'SM Toyota';
 let storeSearchTerm = '';
 let storeEditingRows = new Set();
+let storeCategoryFilters = new Set();
+
+// Helper: get cat1 for a store inventory item, with fallback to warehouse product
+function getStoreItemCat1(item){
+  if(item.cat1) return item.cat1;
+  // Fallback: look up from warehouse product
+  const warehouseArr = item.product_source==='coffee' ? coffeeProducts : products;
+  const wp = warehouseArr.find(x=>x.id===item.product_id);
+  return wp?.cat1 || '';
+}
+const STORE_CATEGORIES = ['DRINKS','SNACKS','CHIPS','CANDY','PASTRY','COLD FOOD','FROZEN FOOD'];
 const LS_STORE_INV = 'vs_brewbox_store_inventory';
 
 // ── Supabase helpers for store_inventory ──
@@ -2901,12 +2912,16 @@ async function syncStoreAssignment(productId, source, productName, newStores, ol
   for(const store of added){
     const existing = storeInventory.find(x=>x.product_id===productId && x.store_name===store);
     if(!existing){
+      // Look up cat1 from warehouse product
+      const warehouseArr = source==='coffee' ? coffeeProducts : products;
+      const wp = warehouseArr.find(x=>x.id===productId);
       const newItem = {
         id: Date.now() + Math.floor(Math.random()*10000),
         store_name: store,
         product_id: productId,
         product_source: source,
         product_name: productName,
+        cat1: wp?.cat1 || '',
         qty: 0,
         min_level: 0,
         max_level: 0,
@@ -2931,25 +2946,41 @@ function renderStoreInventory(){
   const mmItems = storeItems.filter(x=>x.product_source==='mm');
   const coffeeItems = storeItems.filter(x=>x.product_source==='coffee');
 
-  const filtered = storeItems.filter(x=>
-    x.product_name.toLowerCase().includes(storeSearchTerm.toLowerCase())
-  );
+  // Apply search + category filter
+  const filtered = storeItems.filter(x=>{
+    const ms = x.product_name.toLowerCase().includes(storeSearchTerm.toLowerCase());
+    const cat = getStoreItemCat1(x);
+    const matchCat = storeCategoryFilters.size===0 || storeCategoryFilters.has(cat);
+    return ms && matchCat;
+  }).sort((a,b)=>a.product_name.localeCompare(b.product_name));
 
   const outCount = storeItems.filter(x=>x.qty<=0).length;
   const lowCount = storeItems.filter(x=>x.qty>0&&x.min_level>0&&x.qty<=x.min_level).length;
 
+  // Build unique categories present at this store
+  const storeCats = [...new Set(storeItems.map(x=>getStoreItemCat1(x)).filter(Boolean))].sort();
+
   document.getElementById('main-body').innerHTML=`
-    <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+    <div style="display:flex;gap:12px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
       <div style="display:flex;align-items:center;gap:10px">
         <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.8px">Store:</label>
-        <select onchange="currentStore=this.value;storeSearchTerm='';renderStoreInventory()"
+        <select onchange="currentStore=this.value;storeSearchTerm='';storeCategoryFilters.clear();renderStoreInventory()"
           style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:160px">
           ${STORES.map(s=>`<option value="${s}" ${s===currentStore?'selected':''}>${s}</option>`).join('')}
         </select>
       </div>
-      <input class="search-input" id="store-search-input" placeholder="Search items…" value="${storeSearchTerm}"
-        oninput="storeSearchTerm=this.value;renderWithSearchFocus(renderStoreInventory,'store-search-input')" style="width:200px"/>
       <button class="primary-btn" onclick="openImportStoreItemModal()" style="margin-left:auto">+ Import Item</button>
+    </div>
+
+    <div class="cat-filters" style="margin-bottom:8px">
+      <button class="cat-btn${storeCategoryFilters.size===0?' active':''}" onclick="storeCategoryFilters.clear();renderStoreInventory()">ALL</button>
+      ${STORE_CATEGORIES.filter(c=>storeCats.includes(c)).map(c=>`<button class="cat-btn cat-${c.replace(' ','-')}${storeCategoryFilters.has(c)?' active':''}" onclick="(function(){if(storeCategoryFilters.has('${c}')){storeCategoryFilters.delete('${c}')}else{storeCategoryFilters.add('${c}')};renderStoreInventory()})()">${c}</button>`).join('')}
+    </div>
+
+    <div class="filter-row" style="margin-bottom:10px">
+      <input class="search-input" id="store-search-input" placeholder="Search items…" value="${storeSearchTerm}"
+        oninput="storeSearchTerm=this.value;renderWithSearchFocus(renderStoreInventory,'store-search-input')" style="width:240px"/>
+      <span style="font-size:11px;color:#7080a0;margin-left:2px">${filtered.length} shown · ${storeItems.length} total SKUs</span>
     </div>
 
     <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px">
@@ -2975,6 +3006,7 @@ function renderStoreInventory(){
     <div class="inv-table-wrap"><div style="overflow-x:auto"><table>
         <thead><tr>
           <th style="padding-left:12px;min-width:200px">ITEM NAME</th>
+          <th>CATEGORY</th>
           <th>SOURCE</th>
           <th>QTY</th><th>MIN</th><th>MAX</th>
           <th>STATUS</th><th>ACTIONS</th>
@@ -2989,6 +3021,7 @@ function renderStoreInventory(){
 
 function renderStoreRow(item){
   const isEditing = storeEditingRows.has(item.id);
+  const cat1 = getStoreItemCat1(item);
   const sourceBadge = item.product_source==='coffee'
     ? '<span style="background:#f3e8ff;color:#6b2fa0;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">COFFEE</span>'
     : '<span style="background:#e8edf8;color:#0d1f4e;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">MM</span>';
@@ -2996,6 +3029,10 @@ function renderStoreRow(item){
   if(isEditing){
     return `<tr class="editing-row" id="store-row-${item.id}">
       <td style="padding-left:12px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:220px">${item.product_name}</td>
+      <td><select id="si-cat1-${item.id}" style="background:#f4f6fa;border:1px solid #d0d5e0;border-radius:5px;padding:3px 6px;font-size:10px;outline:none">
+        <option value="">—</option>
+        ${STORE_CATEGORIES.map(c=>`<option value="${c}" ${cat1===c?'selected':''}>${c}</option>`).join('')}
+      </select></td>
       <td>${sourceBadge}</td>
       <td><input class="edit-input" id="si-qty-${item.id}" type="number" value="${item.qty}" style="width:60px"/></td>
       <td><input class="edit-input" id="si-min-${item.id}" type="number" value="${item.min_level}" style="width:50px"/></td>
@@ -3007,6 +3044,7 @@ function renderStoreRow(item){
 
   return `<tr id="store-row-${item.id}">
     <td style="padding-left:12px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:220px">${item.product_name}</td>
+    <td><span style="font-size:10px;color:#5060a0">${cat1||'—'}</span></td>
     <td>${sourceBadge}</td>
     <td style="font-weight:700;color:${item.qty<=0?'#b01c1c':item.min_level>0&&item.qty<=item.min_level?'#b35a00':'#1a7a45'}">${item.qty}</td>
     <td>${item.min_level}</td>
@@ -3032,6 +3070,8 @@ async function saveAllStoreEdits(){
     item.qty=parseFloat(qEl.value)||0;
     item.min_level=parseFloat(document.getElementById('si-min-'+id)?.value)||0;
     item.max_level=parseFloat(document.getElementById('si-max-'+id)?.value)||0;
+    const cat1El=document.getElementById('si-cat1-'+id);
+    if(cat1El) item.cat1=cat1El.value||'';
     toSave.push(item);
     saved++;
   }
@@ -3049,6 +3089,8 @@ async function saveStoreRowEdit(id, silent=false){
   item.qty = parseFloat(document.getElementById('si-qty-'+id)?.value)||0;
   item.min_level = parseFloat(document.getElementById('si-min-'+id)?.value)||0;
   item.max_level = parseFloat(document.getElementById('si-max-'+id)?.value)||0;
+  const cat1El = document.getElementById('si-cat1-'+id);
+  if(cat1El) item.cat1 = cat1El.value||'';
   if(!silent){ storeEditingRows.delete(id); renderStoreInventory(); }
   await saveStoreItem(item);
   if(!silent) showToast('Store item updated');
@@ -3131,14 +3173,25 @@ function filterImportList(term){
   });
 }
 
+let _importingStoreItems = false;
 async function confirmImportStoreItems(){
+  if(_importingStoreItems) return;
   const checked = Array.from(document.querySelectorAll('#import-item-list input:checked'));
   if(checked.length===0){ showToast('Select at least one item'); return; }
+
+  _importingStoreItems = true;
+  const btn = document.querySelector('#import-item-list')?.closest('.modal')?.querySelector('.primary-btn');
+  if(btn){ btn.disabled=true; btn.textContent='Adding…'; btn.style.opacity='0.6'; }
 
   let added = 0;
   for(const cb of checked){
     const [source, idStr] = cb.value.split('_');
     const productId = parseInt(idStr);
+
+    // Dedup guard — skip if this product already exists at this store
+    const alreadyExists = storeInventory.some(x=>x.store_name===currentStore && x.product_id===productId && x.product_source===source);
+    if(alreadyExists) continue;
+
     const warehouseArr = source==='coffee' ? coffeeProducts : products;
     const p = warehouseArr.find(x=>x.id===productId);
     if(!p) continue;
@@ -3149,6 +3202,7 @@ async function confirmImportStoreItems(){
       product_id: productId,
       product_source: source,
       product_name: p.name,
+      cat1: p.cat1 || '',
       qty: 0, min_level: 0, max_level: 0, active: true
     };
     storeInventory.push(newItem);
@@ -3161,6 +3215,7 @@ async function confirmImportStoreItems(){
     added++;
   }
 
+  _importingStoreItems = false;
   closeModal();
   renderStoreInventory();
   showToast(`${added} item${added!==1?'s':''} added to ${currentStore}`);
@@ -3290,41 +3345,30 @@ function renderStoreOrders(){
         </div>
       </div>
       ${storeItems.length===0?`<div style="text-align:center;padding:20px;color:#7080a0">No items in store inventory. Add items via Store Inventory first.</div>`:`
-      <div style="overflow-x:auto">
-      <table>
-        <thead><tr>
-          <th style="padding-left:8px;min-width:200px">ITEM</th>
-          <th>SOURCE</th>
-          <th>QTY ON HAND</th>
-          <th>MIN</th>
-          <th>MAX</th>
-          <th>WAREHOUSE QTY</th>
-          <th style="min-width:100px">ORDER QTY</th>
-        </tr></thead>
-        <tbody>
-        ${storeItems.map(item=>{
-          const wh = item.product_source==='coffee'
-            ? coffeeProducts.find(p=>p.id===item.product_id)
-            : products.find(p=>p.id===item.product_id);
-          const whQty = wh ? wh.qty : 0;
-          const srcBadge = item.product_source==='coffee'
-            ? '<span style="background:#f3e8ff;color:#6b2fa0;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700">COFFEE</span>'
-            : '<span style="background:#e8edf8;color:#0d1f4e;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700">MM</span>';
-          return `<tr>
-            <td style="padding-left:8px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:220px">${item.product_name}</td>
-            <td>${srcBadge}</td>
-            <td style="font-weight:700;color:${item.qty<=0?'#b01c1c':item.min_level>0&&item.qty<=item.min_level?'#b35a00':'#1a7a45'}">${item.qty}</td>
-            <td>${item.min_level}</td>
-            <td style="color:#7080a0">${item.max_level}</td>
-            <td style="color:#5060a0">${whQty}</td>
-            <td><input type="number" id="oq-${item.id}" min="0" placeholder="—"
-              style="width:75px;background:#f4f6fa;border:1.5px solid #d0d5e0;border-radius:5px;padding:4px 7px;font-size:12px;font-weight:700;color:#0d1f4e;outline:none"
-              /></td>
-          </tr>`;
-        }).join('')}
-        </tbody>
-      </table>
-      </div>`}
+      ${(function(){
+        // Group by category, sort alphabetically within each
+        const catGroups = {};
+        for(const item of storeItems){
+          const cat = getStoreItemCat1(item) || 'UNCATEGORIZED';
+          if(!catGroups[cat]) catGroups[cat] = [];
+          catGroups[cat].push(item);
+        }
+        const catOrder = [...STORE_CATEGORIES, 'UNCATEGORIZED'].filter(c=>catGroups[c]);
+        for(const c of catOrder) catGroups[c].sort((a,b)=>a.product_name.localeCompare(b.product_name));
+        return catOrder.map(cat=>{
+          const items = catGroups[cat];
+          return '<div style="margin-bottom:16px"><div style="font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:#5060a0;padding:6px 8px;background:#f4f6fa;border-radius:5px;margin-bottom:4px">'+cat+' ('+items.length+')</div><div style="overflow-x:auto"><table><thead><tr><th style="padding-left:8px;min-width:200px">ITEM</th><th>SOURCE</th><th>QTY ON HAND</th><th>MIN</th><th>MAX</th><th>WAREHOUSE QTY</th><th style="min-width:100px">ORDER QTY</th></tr></thead><tbody>'+items.map(item=>{
+            const wh = item.product_source==='coffee'
+              ? coffeeProducts.find(p=>p.id===item.product_id)
+              : products.find(p=>p.id===item.product_id);
+            const whQty = wh ? wh.qty : 0;
+            const srcBadge = item.product_source==='coffee'
+              ? '<span style="background:#f3e8ff;color:#6b2fa0;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700">COFFEE</span>'
+              : '<span style="background:#e8edf8;color:#0d1f4e;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700">MM</span>';
+            return '<tr><td style="padding-left:8px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:220px">'+item.product_name+'</td><td>'+srcBadge+'</td><td style="font-weight:700;color:'+(item.qty<=0?'#b01c1c':item.min_level>0&&item.qty<=item.min_level?'#b35a00':'#1a7a45')+'">'+item.qty+'</td><td>'+item.min_level+'</td><td style="color:#7080a0">'+item.max_level+'</td><td style="color:#5060a0">'+whQty+'</td><td><input type="number" id="oq-'+item.id+'" min="0" placeholder="—" style="width:75px;background:#f4f6fa;border:1.5px solid #d0d5e0;border-radius:5px;padding:4px 7px;font-size:12px;font-weight:700;color:#0d1f4e;outline:none"/></td></tr>';
+          }).join('')+'</tbody></table></div></div>';
+        }).join('');
+      })()}`}
     </div>`;
 }
 
@@ -3647,7 +3691,7 @@ function toggleActivityOrder(id){
 // ═══════════════════════════════════════════════════
 let storeCountState = {};      // {storeItemId: {verified, actualQty, reason}}
 let storeCountStore = 'SM Toyota';
-let storeCountSkippedSources = new Set(); // 'mm' or 'coffee' sections skipped
+let storeCountSkippedCats = new Set(); // category sections skipped
 let storeCountSubmitted = false;
 let storeCountSubmitResult = null;
 
@@ -3656,7 +3700,7 @@ const STORE_COUNT_POS_REASONS = ['Manual Increase','Restock'];
 
 function initStoreCountState(){
   storeCountState = {};
-  storeCountSkippedSources = new Set();
+  storeCountSkippedCats = new Set();
   storeCountSubmitted = false;
   storeCountSubmitResult = null;
   const items = storeInventory.filter(x=>x.store_name===storeCountStore);
@@ -3667,11 +3711,19 @@ function initStoreCountState(){
 
 function renderStoreCount(){
   const items = storeInventory.filter(x=>x.store_name===storeCountStore);
-  const mmItems = items.filter(x=>x.product_source==='mm');
-  const coffeeItems = items.filter(x=>x.product_source==='coffee');
   const total = items.length;
   const verified = Object.values(storeCountState).filter(s=>s.verified||(s.actualQty!==''&&s.reason!=='')).length;
   const pending = Math.max(0, total - verified);
+
+  // Group by category
+  const catGroups = {};
+  for(const item of items){
+    const cat = getStoreItemCat1(item) || 'UNCATEGORIZED';
+    if(!catGroups[cat]) catGroups[cat] = [];
+    catGroups[cat].push(item);
+  }
+  const catOrder = [...STORE_CATEGORIES, 'UNCATEGORIZED'].filter(c=>catGroups[c]);
+  for(const c of catOrder) catGroups[c].sort((a,b)=>a.product_name.localeCompare(b.product_name));
 
   document.getElementById('main-body').innerHTML=`
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
@@ -3697,20 +3749,18 @@ function renderStoreCount(){
 
     ${storeCountSubmitResult ? renderStoreCountResult() : ''}
 
-    ${storeCountSubmitResult ? '' : [
-      {label:'MM Items', source:'mm', items:mmItems},
-      {label:'Coffee Items', source:'coffee', items:coffeeItems}
-    ].filter(g=>g.items.length>0).map(group=>{
-      const skipped = storeCountSkippedSources.has(group.source);
-      const catVerified = group.items.filter(x=>storeCountState[x.id]&&(storeCountState[x.id].verified||(storeCountState[x.id].actualQty!==''&&storeCountState[x.id].reason!==''))).length;
+    ${storeCountSubmitResult ? '' : catOrder.map(cat=>{
+      const groupItems = catGroups[cat];
+      const skipped = storeCountSkippedCats.has(cat);
+      const catVerified = groupItems.filter(x=>storeCountState[x.id]&&(storeCountState[x.id].verified||(storeCountState[x.id].actualQty!==''&&storeCountState[x.id].reason!==''))).length;
       return `
         <div class="card" style="margin-bottom:12px;${skipped?'opacity:0.5':''}">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${skipped?'0':'10px'}">
             <div style="display:flex;align-items:center;gap:10px">
-              <div class="card-title" style="margin-bottom:0">${group.label}</div>
-              ${!skipped?`<span style="font-size:10px;color:#7080a0">${catVerified}/${group.items.length} verified</span>`:''}
+              <div class="card-title" style="margin-bottom:0">${cat}</div>
+              ${!skipped?`<span style="font-size:10px;color:#7080a0">${catVerified}/${groupItems.length} verified</span>`:''}
             </div>
-            <button onclick="toggleStoreCountSkip('${group.source}')"
+            <button onclick="toggleStoreCountSkip('${cat}')"
               style="background:${skipped?'#e8edf8':'#f4f6fa'};color:${skipped?'#0d1f4e':'#7080a0'};border:1.5px solid ${skipped?'#0d1f4e':'#d0d5e0'};border-radius:6px;padding:4px 12px;font-size:10px;font-weight:700;cursor:pointer">
               ${skipped?'↩ Include Section':'⏭ Skip Section'}
             </button>
@@ -3728,7 +3778,7 @@ function renderStoreCount(){
               <th>VERIFIED QTY</th>
             </tr></thead>
             <tbody>
-            ${group.items.map(item=>renderStoreCountRow(item)).join('')}
+            ${groupItems.map(item=>renderStoreCountRow(item)).join('')}
             </tbody>
           </table>`:''}
         </div>`;
@@ -3835,8 +3885,8 @@ function updateStoreCountReason(id, val){
 }
 
 function toggleStoreCountSkip(source){
-  if(storeCountSkippedSources.has(source)) storeCountSkippedSources.delete(source);
-  else storeCountSkippedSources.add(source);
+  if(storeCountSkippedCats.has(source)) storeCountSkippedCats.delete(source);
+  else storeCountSkippedCats.add(source);
   renderStoreCount();
 }
 
@@ -3850,7 +3900,7 @@ function confirmSubmitStoreCount(){
   const items = storeInventory.filter(x=>x.store_name===storeCountStore);
   const missing = items.filter(item=>{
     const s = storeCountState[item.id];
-    if(!s||s.verified||storeCountSkippedSources.has(item.product_source)) return false;
+    if(!s||s.verified||storeCountSkippedCats.has(getStoreItemCat1(item)||'UNCATEGORIZED')) return false;
     const aq = s.actualQty!==''?parseFloat(s.actualQty):null;
     return aq!==null && aq!==item.qty && !s.reason;
   });
@@ -3861,13 +3911,13 @@ function confirmSubmitStoreCount(){
 
   const toUpdate = items.filter(item=>{
     const s = storeCountState[item.id];
-    if(!s||s.verified||storeCountSkippedSources.has(item.product_source)) return false;
+    if(!s||s.verified||storeCountSkippedCats.has(getStoreItemCat1(item)||'UNCATEGORIZED')) return false;
     const aq = s.actualQty!==''?parseFloat(s.actualQty):null;
     return aq!==null && aq!==item.qty && s.reason;
   });
   const unresolved = items.filter(item=>{
     const s = storeCountState[item.id];
-    if(!s||s.verified||storeCountSkippedSources.has(item.product_source)) return false;
+    if(!s||s.verified||storeCountSkippedCats.has(getStoreItemCat1(item)||'UNCATEGORIZED')) return false;
     const aq = s.actualQty!==''?parseFloat(s.actualQty):null;
     return aq===null;
   });
@@ -3911,7 +3961,7 @@ async function submitStoreCount(){
   const items=storeInventory.filter(x=>x.store_name===storeCountStore);
   const toUpdate=items.filter(item=>{
     const s=storeCountState[item.id];
-    if(!s||s.verified||storeCountSkippedSources.has(item.product_source)) return false;
+    if(!s||s.verified||storeCountSkippedCats.has(getStoreItemCat1(item)||'UNCATEGORIZED')) return false;
     const aq=s.actualQty!==''?parseFloat(s.actualQty):null;
     return aq!==null&&aq!==item.qty&&s.reason;
   });
@@ -3976,7 +4026,7 @@ async function submitStoreCount(){
   }
 
   storeCountState={};
-  storeCountSkippedSources=new Set();
+  storeCountSkippedCats=new Set();
   updateSidebar();
   renderStoreCount();
   showToast(`Store count submitted — ${storeCountSubmitResult.adjustments.length} adjustment${storeCountSubmitResult.adjustments.length!==1?'s':''} saved`);
@@ -4115,7 +4165,9 @@ function calcWhOrderItems(){
     const bi = VENDOR_PRIORITY.indexOf(b.vendor);
     const av = ai===-1?99:ai, bv = bi===-1?99:bi;
     if(av !== bv) return av - bv;
-    return (a.cat1||'').localeCompare(b.cat1||'');
+    const catCmp = (a.cat1||'').localeCompare(b.cat1||'');
+    if(catCmp !== 0) return catCmp;
+    return (a.product_name||'').localeCompare(b.product_name||'');
   });
 
   return orderItems;
@@ -5057,18 +5109,25 @@ document.addEventListener('click', e=>{
 function renderMobStoreCount(){
   updateMobTitle('Store Count');
   const items = storeInventory.filter(x=>x.store_name===storeCountStore);
-  const mmItems = items.filter(x=>x.product_source==='mm');
-  const coffeeItems = items.filter(x=>x.product_source==='coffee');
   const total = items.length;
   const verified = items.filter(item=>{
     const s = storeCountState[item.id];
     if(!s) return false;
     if(s.verified) return true;
     if(s.actualQty!=='' && s.reason) return true;
-    // stepper: if stepperVal set and no diff, counts as verified
     if(s.stepperVal!==undefined && s.stepperVal===item.qty) return true;
     return false;
   }).length;
+
+  // Group by category
+  const catGroups = {};
+  for(const item of items){
+    const cat = getStoreItemCat1(item) || 'UNCATEGORIZED';
+    if(!catGroups[cat]) catGroups[cat] = [];
+    catGroups[cat].push(item);
+  }
+  const catOrder = [...STORE_CATEGORIES, 'UNCATEGORIZED'].filter(c=>catGroups[c]);
+  for(const c of catOrder) catGroups[c].sort((a,b)=>a.product_name.localeCompare(b.product_name));
 
   document.getElementById('main-body').innerHTML=`
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
@@ -5080,18 +5139,18 @@ function renderMobStoreCount(){
     </div>
 
     <div class="mob-count-page-body">
-    ${[{label:'MM Items',source:'mm',items:mmItems},{label:'Coffee',source:'coffee',items:coffeeItems}]
-      .filter(g=>g.items.length>0).map(group=>{
-      const skipped = storeCountSkippedSources.has(group.source);
+    ${catOrder.map(cat=>{
+      const groupItems = catGroups[cat];
+      const skipped = storeCountSkippedCats.has(cat);
       return `
         <div class="mob-count-section-hdr">
-          <span>${group.label} (${group.items.length})</span>
-          <button class="skip-btn" onclick="toggleStoreCountSkip('${group.source}');renderMobStoreCount()">
+          <span>${cat} (${groupItems.length})</span>
+          <button class="skip-btn" onclick="toggleStoreCountSkip('${cat}');renderMobStoreCount()">
             ${skipped?'↩ Include':'⏭ Skip'}
           </button>
         </div>
-        ${skipped?`<div style="font-size:12px;color:#7080a0;margin-bottom:12px;padding:8px 12px;background:#f4f6fa;border-radius:8px">Section skipped</div>`
-        :group.items.map(item=>renderMobCountCard(item)).join('')}
+        ${skipped?'<div style="font-size:12px;color:#7080a0;margin-bottom:12px;padding:8px 12px;background:#f4f6fa;border-radius:8px">Section skipped</div>'
+        :groupItems.map(item=>renderMobCountCard(item)).join('')}
       `;
     }).join('')}
     </div>
@@ -5215,46 +5274,62 @@ let mobInvEditingIds = new Set();
 function renderMobStoreInventory(){
   updateMobTitle('Store Inventory');
   const storeItems = storeInventory.filter(x=>x.store_name===currentStore);
-  const mmItems = storeItems.filter(x=>x.product_source==='mm');
-  const coffeeItems = storeItems.filter(x=>x.product_source==='coffee');
+  const filtered = storeItems.filter(x=>{
+    const ms = x.product_name.toLowerCase().includes(storeSearchTerm.toLowerCase());
+    const cat = getStoreItemCat1(x);
+    const matchCat = storeCategoryFilters.size===0 || storeCategoryFilters.has(cat);
+    return ms && matchCat;
+  }).sort((a,b)=>a.product_name.localeCompare(b.product_name));
   const outCount = storeItems.filter(x=>x.qty<=0).length;
+  const storeCats = [...new Set(storeItems.map(x=>getStoreItemCat1(x)).filter(Boolean))].sort();
 
   document.getElementById('main-body').innerHTML=`
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
-      <select onchange="currentStore=this.value;storeSearchTerm='';mobInvEditingIds=new Set();renderStoreInventory()"
+      <select onchange="currentStore=this.value;storeSearchTerm='';storeCategoryFilters.clear();mobInvEditingIds=new Set();renderStoreInventory()"
         style="flex:1;padding:10px 12px;border:1.5px solid #0d1f4e;border-radius:8px;font-size:14px;font-weight:700;color:#0d1f4e;background:#fff;outline:none">
         ${STORES.map(s=>`<option value="${s}" ${s===currentStore?'selected':''}>${s}</option>`).join('')}
       </select>
       <button class="primary-btn" onclick="openImportStoreItemModal()" style="padding:10px 12px;white-space:nowrap">+ Add</button>
     </div>
 
+    <input class="search-input" id="store-search-input" placeholder="Search items…" value="${storeSearchTerm}"
+      oninput="storeSearchTerm=this.value;renderWithSearchFocus(renderStoreInventory,'store-search-input')"
+      style="width:100%;margin-bottom:8px;padding:10px 12px;font-size:14px"/>
+
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;overflow-x:auto">
+      <button class="cat-btn${storeCategoryFilters.size===0?' active':''}" onclick="storeCategoryFilters.clear();renderStoreInventory()" style="font-size:11px;padding:5px 10px">ALL</button>
+      ${STORE_CATEGORIES.filter(c=>storeCats.includes(c)).map(c=>`<button class="cat-btn${storeCategoryFilters.has(c)?' active':''}" onclick="(function(){if(storeCategoryFilters.has('${c}')){storeCategoryFilters.delete('${c}')}else{storeCategoryFilters.add('${c}')};renderStoreInventory()})()" style="font-size:11px;padding:5px 10px">${c}</button>`).join('')}
+    </div>
+
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">
       <div class="stat-card" style="padding:8px 10px"><div class="stat-val" style="font-size:18px">${storeItems.length}</div><div class="stat-label">SKUs</div></div>
-      <div class="stat-card" style="padding:8px 10px;border-top-color:#1a3266"><div class="stat-val" style="font-size:18px;color:#1a3266">${mmItems.length}</div><div class="stat-label">MM</div></div>
+      <div class="stat-card" style="padding:8px 10px;border-top-color:#1a3266"><div class="stat-val" style="font-size:18px;color:#1a3266">${filtered.length}</div><div class="stat-label">Shown</div></div>
       <div class="stat-card" style="padding:8px 10px;border-top-color:#b01c1c"><div class="stat-val" style="font-size:18px;color:#b01c1c">${outCount}</div><div class="stat-label">Out</div></div>
     </div>
 
-    ${storeItems.length===0?`<div style="text-align:center;padding:40px 20px;color:#7080a0">
+    ${filtered.length===0?`<div style="text-align:center;padding:40px 20px;color:#7080a0">
       <div style="font-size:32px;margin-bottom:10px">📦</div>
       <div style="font-size:15px;font-weight:600;margin-bottom:6px">No items yet</div>
       <div style="font-size:13px">Tap "+ Add" to import warehouse items</div>
     </div>`
-    :storeItems.map(item=>renderMobInvCard(item)).join('')}
+    :filtered.map(item=>renderMobInvCard(item)).join('')}
   `;
 }
 
 function renderMobInvCard(item){
   const isEditing = mobInvEditingIds.has(item.id);
+  const cat1 = getStoreItemCat1(item);
   const srcBadge = item.product_source==='coffee'
     ? '<span style="background:#f3e8ff;color:#6b2fa0;border-radius:4px;padding:2px 7px;font-size:10px;font-weight:700">COFFEE</span>'
     : '<span style="background:#e8edf8;color:#0d1f4e;border-radius:4px;padding:2px 7px;font-size:10px;font-weight:700">MM</span>';
+  const catBadge = cat1 ? `<span style="background:#f0f2f8;color:#5060a0;border-radius:4px;padding:2px 7px;font-size:10px;font-weight:600">${cat1}</span>` : '';
   const qtyClass = item.qty<=0?'out':(item.min_level>0&&item.qty<=item.min_level?'low':'ok');
   const statusLabel = item.qty<=0?'OUT':(item.min_level>0&&item.qty<=item.min_level?'LOW':'OK');
   const statusColor = item.qty<=0?'#b01c1c':(item.min_level>0&&item.qty<=item.min_level?'#b35a00':'#1a7a45');
 
   if(isEditing){
     return `<div class="mob-inv-card editing" id="mic-${item.id}">
-      <div style="font-size:14px;font-weight:700;color:#0d1f4e;margin-bottom:10px;line-height:1.3">${item.product_name} ${srcBadge}</div>
+      <div style="font-size:14px;font-weight:700;color:#0d1f4e;margin-bottom:10px;line-height:1.3">${item.product_name} ${srcBadge} ${catBadge}</div>
       <div class="mob-inv-edit-row"><label>QTY</label><input type="number" id="mie-qty-${item.id}" value="${item.qty}" min="0" style="font-size:18px"/></div>
       <div class="mob-inv-edit-row"><label>MIN</label><input type="number" id="mie-min-${item.id}" value="${item.min_level}" min="0"/></div>
       <div class="mob-inv-edit-row"><label>MAX</label><input type="number" id="mie-max-${item.id}" value="${item.max_level}" min="0"/></div>
@@ -5268,7 +5343,7 @@ function renderMobInvCard(item){
   return `<div class="mob-inv-card" id="mic-${item.id}">
     <div class="mob-inv-card-top">
       <div class="mob-inv-card-name">${item.product_name}</div>
-      ${srcBadge}
+      <div style="display:flex;gap:4px;align-items:center">${catBadge} ${srcBadge}</div>
     </div>
     <div class="mob-inv-card-meta">
       <span>Qty: <span class="qty-val ${qtyClass}">${item.qty}</span></span>
@@ -5331,18 +5406,24 @@ function renderMobStoreOrders(){
         <button onclick="mobSetRecQtys()" style="font-size:10px;font-weight:700;color:#0d1f4e;background:#e8edf8;border:none;border-radius:5px;padding:5px 10px;cursor:pointer">⚡ Rec. Qty</button>
       </div>
       ${storeItems.length===0?`<div style="text-align:center;padding:30px;color:#7080a0;font-size:13px">No items in store inventory</div>`
-      :storeItems.map(item=>{
-        const wh = item.product_source==='coffee'
-          ? coffeeProducts.find(p=>p.id===item.product_id)
-          : products.find(p=>p.id===item.product_id);
-        return `<div class="mob-new-order-item">
-          <div class="item-info">
-            <div class="name">${item.product_name}</div>
-            <div class="meta">On hand: <strong>${item.qty}</strong> · WH: ${wh?.qty??'—'}</div>
-          </div>
-          <input type="number" class="item-qty-input" id="moq-${item.id}" min="0" placeholder="0"/>
-        </div>`;
-      }).join('')}
+      :(function(){
+        const catGroups = {};
+        for(const item of storeItems){
+          const cat = getStoreItemCat1(item) || 'UNCATEGORIZED';
+          if(!catGroups[cat]) catGroups[cat] = [];
+          catGroups[cat].push(item);
+        }
+        const catOrder = [...STORE_CATEGORIES, 'UNCATEGORIZED'].filter(c=>catGroups[c]);
+        for(const c of catOrder) catGroups[c].sort((a,b)=>a.product_name.localeCompare(b.product_name));
+        return catOrder.map(cat=>{
+          return '<div style="font-size:10px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:#5060a0;padding:8px 12px;background:#f4f6fa;border-radius:6px;margin-bottom:4px;margin-top:8px">'+cat+' ('+catGroups[cat].length+')</div>'+catGroups[cat].map(item=>{
+            const wh = item.product_source==='coffee'
+              ? coffeeProducts.find(p=>p.id===item.product_id)
+              : products.find(p=>p.id===item.product_id);
+            return '<div class="mob-new-order-item"><div class="item-info"><div class="name">'+item.product_name+'</div><div class="meta">On hand: <strong>'+item.qty+'</strong> · WH: '+(wh?.qty??'—')+'</div></div><input type="number" class="item-qty-input" id="moq-'+item.id+'" min="0" placeholder="0"/></div>';
+          }).join('');
+        }).join('');
+      })()}
       <div class="mob-order-actions">
         <button class="mob-order-save-btn" onclick="saveNewStoreOrder()">💾 Save as Open Order</button>
       </div>
@@ -5879,6 +5960,8 @@ function renderCount(){
     const cat = p.cat1 && COUNT_CAT_ORDER.includes(p.cat1) ? p.cat1 : 'SNACKS';
     byCategory[cat].push(p);
   }
+  // Sort each category alphabetically
+  for(const cat of COUNT_CAT_ORDER){ byCategory[cat].sort((a,b)=>a.name.localeCompare(b.name)); }
 
   // Summary stats
   const total = activeProducts.length;
@@ -6273,6 +6356,7 @@ function renderMobWhCount(){
   }
   const CAT_ORDER = ['DRINKS','CHIPS','SNACKS','CANDY','PASTRY','COLD FOOD','FROZEN FOOD'];
   const orderedCats = [...CAT_ORDER.filter(c=>groups[c]), ...Object.keys(groups).filter(c=>!CAT_ORDER.includes(c))];
+  for(const c of orderedCats){ if(groups[c]) groups[c].sort((a,b)=>a.name.localeCompare(b.name)); }
 
   document.getElementById('main-body').innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
