@@ -174,17 +174,313 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
 .edit-unit-cost{font-size:10px;color:#1a7a45;font-weight:700;white-space:nowrap}
 
 /* ── Mobile responsive ── */
-@media(max-width:700px){
-  #sidebar{width:56px}
-  .sb-logo-title,.sb-logo-sub,.sb-logo-tag,.nav-btn span,.ai-btn span,.sync-status span,.reset-btn span{display:none}
-  .nav-btn{justify-content:center;padding:10px}
-  .ai-btn{justify-content:center;padding:10px}
-  .sb-logo{padding:12px 8px}
-  .sb-logo-badge{margin:0 auto}
-  .stats-grid{grid-template-columns:repeat(2,1fr)}
-  .search-input{width:150px}
-  .reset-btn{padding:10px;text-align:center}
-}
+
+/* ═══════════════════════════════════════════════════
+   MOBILE LAYOUT — ≤768px
+   ═══════════════════════════════════════════════════ */
+@media(max-width:768px){
+
+  /* ── Core layout ── */
+  #app { flex-direction: column; }
+
+  /* Sidebar hidden off-screen by default */
+  #sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0;
+    width: 280px !important; z-index: 1000;
+    transform: translateX(-100%);
+    transition: transform .25s ease;
+    box-shadow: 4px 0 24px rgba(0,0,0,.35);
+  }
+  #sidebar.mob-open { transform: translateX(0); }
+
+  /* Sidebar overlay backdrop */
+  #mob-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,.45); z-index: 999;
+  }
+  #mob-overlay.visible { display: block; }
+
+  /* Mobile top bar */
+  #mob-topbar {
+    display: flex !important;
+    align-items: center; justify-content: space-between;
+    background: #0d1f4e; color: #fff;
+    padding: 0 14px; height: 52px; flex-shrink: 0;
+    position: sticky; top: 0; z-index: 100;
+    box-shadow: 0 2px 8px rgba(0,0,0,.25);
+  }
+  #mob-topbar .mob-logo {
+    display: flex; align-items: center; gap: 8px;
+  }
+  #mob-topbar .mob-logo-badge {
+    background: #c9a84c; color: #0d1f4e;
+    font-weight: 900; font-size: 13px;
+    width: 28px; height: 28px; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #mob-topbar .mob-title {
+    font-size: 14px; font-weight: 700; color: #fff;
+    max-width: 200px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+  }
+  #mob-hamburger {
+    background: none; border: none; color: #fff;
+    font-size: 22px; cursor: pointer; padding: 8px;
+    line-height: 1; border-radius: 6px;
+  }
+  #mob-hamburger:active { background: rgba(255,255,255,.15); }
+
+  /* Hide desktop topbar breadcrumb on mobile */
+  .top-bar { display: none !important; }
+
+  /* Main body fills all remaining space */
+  #main { flex: 1; overflow: hidden; }
+  .main-body {
+    padding: 10px 12px !important;
+    overflow-y: auto; overflow-x: hidden;
+  }
+
+  /* Show the mobile topbar (hidden on desktop) */
+  #mob-topbar { display: flex; }
+
+  /* Sidebar nav text visible when open */
+  #sidebar.mob-open .sb-logo-title,
+  #sidebar.mob-open .sb-logo-sub,
+  #sidebar.mob-open .sb-logo-tag,
+  #sidebar.mob-open .nav-btn span,
+  #sidebar.mob-open .ai-btn span,
+  #sidebar.mob-open .sync-status span,
+  #sidebar.mob-open .reset-btn span { display: inline !important; }
+  #sidebar.mob-open .nav-btn { justify-content: flex-start !important; padding: 10px 14px !important; }
+
+  /* ── Stats grid ── */
+  .stats-grid { grid-template-columns: repeat(2,1fr) !important; gap: 8px; }
+  .stat-card { padding: 10px 12px; }
+  .stat-val { font-size: 22px !important; }
+
+  /* ── Tables — horizontal scroll only ── */
+  table { font-size: 11px !important; }
+  td, th { padding: 5px 6px !important; white-space: nowrap; }
+
+  /* ── Buttons ── */
+  .primary-btn { padding: 10px 14px !important; font-size: 12px !important; }
+
+  /* ══════════════════════════════════════
+     STORE INVENTORY COUNT — card layout
+     ══════════════════════════════════════ */
+  .mob-count-card {
+    background: #fff; border: 1px solid #e8ecf4;
+    border-radius: 10px; padding: 12px 14px;
+    margin-bottom: 10px;
+  }
+  .mob-count-card.verified { background: #f0fff4; border-color: #a8dcc0; }
+  .mob-count-card.has-diff { background: #fff8f0; border-color: #f0c08a; }
+
+  .mob-count-name {
+    font-size: 14px; font-weight: 700; color: #0d1f4e;
+    margin-bottom: 6px; line-height: 1.3;
+    display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;
+  }
+  .mob-count-name .mob-correct-btn {
+    flex-shrink: 0;
+    background: #f4f6fa; border: 1.5px solid #d0d5e0;
+    border-radius: 20px; padding: 4px 10px;
+    font-size: 11px; font-weight: 700; color: #5060a0;
+    cursor: pointer; white-space: nowrap;
+  }
+  .mob-count-name .mob-correct-btn.active {
+    background: #1a7a45; border-color: #1a7a45; color: #fff;
+  }
+
+  .mob-count-current {
+    font-size: 12px; color: #7080a0; margin-bottom: 10px;
+  }
+  .mob-count-current strong { color: #0d1f4e; font-size: 15px; }
+
+  .mob-stepper {
+    display: flex; align-items: center; gap: 0;
+    background: #f4f6fa; border: 1.5px solid #d0d5e0;
+    border-radius: 10px; overflow: hidden;
+    margin-bottom: 10px;
+  }
+  .mob-stepper-btn {
+    width: 52px; height: 48px;
+    background: none; border: none;
+    font-size: 24px; font-weight: 300; color: #0d1f4e;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; -webkit-tap-highlight-color: transparent;
+  }
+  .mob-stepper-btn:active { background: #e0e4ef; }
+  .mob-stepper-btn.minus { color: #b01c1c; }
+  .mob-stepper-btn.plus { color: #1a7a45; }
+  .mob-stepper-val {
+    flex: 1; text-align: center;
+    font-size: 22px; font-weight: 800; color: #0d1f4e;
+    border-left: 1px solid #d0d5e0;
+    border-right: 1px solid #d0d5e0;
+    height: 48px; line-height: 48px;
+  }
+  .mob-stepper-val.changed { color: #c9a84c; }
+
+  .mob-count-diff {
+    font-size: 12px; color: #7080a0; margin-bottom: 8px;
+  }
+  .mob-count-diff .diff-val { font-weight: 700; }
+  .mob-count-diff .diff-val.neg { color: #b01c1c; }
+  .mob-count-diff .diff-val.pos { color: #1a7a45; }
+
+  .mob-count-reason select {
+    width: 100%; padding: 10px 12px;
+    background: #fff; border: 1.5px solid #e8943a;
+    border-radius: 8px; font-size: 13px; color: #1a2340;
+    outline: none; cursor: pointer;
+  }
+
+  .mob-count-submit {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    background: #fff; border-top: 1px solid #e8ecf4;
+    padding: 10px 14px 14px; z-index: 50;
+    display: flex; gap: 8px;
+  }
+  .mob-count-submit button { flex: 1; padding: 14px; font-size: 14px; font-weight: 700; border-radius: 8px; border: none; cursor: pointer; }
+  .mob-count-submit .submit-btn { background: #0d1f4e; color: #fff; }
+  .mob-count-submit .cancel-btn { background: #f4f6fa; color: #b01c1c; border: 1.5px solid #b01c1c; }
+
+  /* Extra bottom padding so last card isn't hidden behind fixed submit bar */
+  .mob-count-page-body { padding-bottom: 80px !important; }
+
+  /* Section header for MM/Coffee split */
+  .mob-count-section-hdr {
+    font-size: 10px; font-weight: 800; letter-spacing: 1.5px;
+    text-transform: uppercase; color: #8090b0;
+    margin: 14px 0 8px; display: flex;
+    justify-content: space-between; align-items: center;
+  }
+  .mob-count-section-hdr .skip-btn {
+    font-size: 10px; font-weight: 700; color: #5060a0;
+    background: #e8edf8; border: none; border-radius: 4px;
+    padding: 3px 9px; cursor: pointer;
+  }
+
+  /* ══════════════════════════════════════
+     STORE INVENTORY — card layout
+     ══════════════════════════════════════ */
+  .mob-inv-card {
+    background: #fff; border: 1px solid #e8ecf4;
+    border-radius: 10px; padding: 12px 14px;
+    margin-bottom: 8px;
+  }
+  .mob-inv-card-top {
+    display: flex; justify-content: space-between;
+    align-items: flex-start; gap: 8px; margin-bottom: 6px;
+  }
+  .mob-inv-card-name { font-size: 14px; font-weight: 700; color: #0d1f4e; line-height: 1.3; }
+  .mob-inv-card-meta {
+    font-size: 12px; color: #7080a0; margin-bottom: 8px;
+  }
+  .mob-inv-card-meta span { margin-right: 10px; }
+  .mob-inv-card-meta .qty-val { font-weight: 800; font-size: 15px; color: #0d1f4e; }
+  .mob-inv-card-meta .qty-val.out { color: #b01c1c; }
+  .mob-inv-card-meta .qty-val.low { color: #b35a00; }
+  .mob-inv-card-meta .qty-val.ok { color: #1a7a45; }
+  .mob-inv-card-actions { display: flex; gap: 8px; }
+  .mob-inv-card-actions button {
+    flex: 1; padding: 10px; border-radius: 8px;
+    font-size: 12px; font-weight: 700; cursor: pointer; border: 1.5px solid;
+  }
+  .mob-inv-edit-btn { background: #f4f6fa; color: #0d1f4e; border-color: #0d1f4e; }
+  .mob-inv-remove-btn { background: #fff; color: #b01c1c; border-color: #b01c1c; }
+
+  /* Edit mode card */
+  .mob-inv-card.editing { border-color: #c9a84c; background: #fffbf0; }
+  .mob-inv-edit-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+  .mob-inv-edit-row label { font-size: 10px; font-weight: 700; color: #5060a0; text-transform: uppercase; width: 35px; flex-shrink: 0; }
+  .mob-inv-edit-row input { flex: 1; padding: 10px; border: 1.5px solid #c9a84c; border-radius: 7px; font-size: 15px; font-weight: 700; color: #0d1f4e; background: #fff; outline: none; min-width: 0; }
+  .mob-inv-save-btn { width: 100%; padding: 12px; background: #1a7a45; color: #fff; border: none; border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer; }
+
+  /* ══════════════════════════════════════
+     STORE ORDERS — mobile layout
+     ══════════════════════════════════════ */
+  .mob-order-store-bar {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 12px; flex-wrap: wrap;
+  }
+  .mob-order-store-bar select {
+    flex: 1; padding: 10px 12px; border: 1.5px solid #0d1f4e;
+    border-radius: 8px; font-size: 14px; font-weight: 700;
+    color: #0d1f4e; background: #fff; outline: none;
+  }
+
+  .mob-open-order-card {
+    background: #fffbf0; border: 1.5px solid #c9a84c;
+    border-radius: 10px; padding: 12px 14px; margin-bottom: 10px;
+  }
+  .mob-open-order-hdr {
+    display: flex; justify-content: space-between;
+    align-items: center; margin-bottom: 8px;
+  }
+  .mob-open-order-hdr .order-id { font-size: 13px; font-weight: 700; color: #0d1f4e; }
+  .mob-open-order-hdr .order-date { font-size: 11px; color: #7080a0; }
+  .mob-open-order-items { margin-bottom: 10px; }
+  .mob-open-order-item {
+    display: flex; justify-content: space-between;
+    padding: 7px 0; border-bottom: 1px solid #f0e8cc;
+    font-size: 13px;
+  }
+  .mob-open-order-item:last-child { border-bottom: none; }
+  .mob-open-order-item .item-name { color: #0d1f4e; font-weight: 600; }
+  .mob-open-order-item .item-adj { display: flex; align-items: center; gap: 6px; }
+  .mob-open-order-item .item-adj input {
+    width: 56px; padding: 5px 8px; border: 1.5px solid #c9a84c;
+    border-radius: 6px; font-size: 13px; font-weight: 700; text-align: center;
+    color: #0d1f4e; background: #fff; outline: none;
+  }
+  .mob-order-recv-btn {
+    width: 100%; padding: 14px; background: #1a7a45; color: #fff;
+    border: none; border-radius: 8px; font-size: 15px; font-weight: 700; cursor: pointer;
+    margin-bottom: 6px;
+  }
+  .mob-order-cancel-btn {
+    width: 100%; padding: 10px; background: #fff; color: #b01c1c;
+    border: 1.5px solid #b01c1c; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer;
+  }
+
+  .mob-new-order-section { margin-top: 14px; }
+  .mob-new-order-hdr {
+    font-size: 10px; font-weight: 800; letter-spacing: 1.5px;
+    text-transform: uppercase; color: #8090b0; margin-bottom: 10px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .mob-new-order-item {
+    display: flex; align-items: center; gap: 10px;
+    background: #fff; border: 1px solid #e8ecf4;
+    border-radius: 8px; padding: 10px 12px; margin-bottom: 6px;
+  }
+  .mob-new-order-item .item-info { flex: 1; min-width: 0; }
+  .mob-new-order-item .item-info .name { font-size: 13px; font-weight: 700; color: #0d1f4e; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mob-new-order-item .item-info .meta { font-size: 11px; color: #7080a0; }
+  .mob-new-order-item .item-qty-input {
+    width: 64px; padding: 10px 6px; border: 1.5px solid #d0d5e0;
+    border-radius: 8px; font-size: 16px; font-weight: 700; text-align: center;
+    color: #0d1f4e; background: #f4f6fa; outline: none; flex-shrink: 0;
+  }
+  .mob-new-order-item .item-qty-input:focus { border-color: #c9a84c; background: #fff; }
+  .mob-order-actions {
+    position: sticky; bottom: 0;
+    background: #fff; border-top: 1px solid #e8ecf4;
+    padding: 10px 0 14px; margin-top: 10px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .mob-order-actions button { width: 100%; padding: 14px; border-radius: 8px; font-size: 14px; font-weight: 700; border: none; cursor: pointer; }
+  .mob-order-rec-btn { background: #f4f6fa; color: #0d1f4e; border: 1.5px solid #0d1f4e !important; }
+  .mob-order-save-btn { background: #0d1f4e; color: #fff; }
+
+} /* end @media mobile */
+
+/* Desktop: hide mobile-only elements */
+#mob-topbar { display: none; }
+#mob-overlay { display: none; }
+
 </style>
 </head>
 <body>
@@ -237,7 +533,16 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
 <div id="toast"></div>
 
 <!-- Main App -->
+<div id="mob-overlay" onclick="closeMobMenu()"></div>
 <div id="app">
+  <!-- Mobile top bar -->
+  <div id="mob-topbar">
+    <div class="mob-logo">
+      <div class="mob-logo-badge">VS</div>
+      <div class="mob-title" id="mob-page-title">BrewBox OS</div>
+    </div>
+    <button id="mob-hamburger" onclick="toggleMobMenu()">☰</button>
+  </div>
   <aside id="sidebar">
     <div class="sb-logo">
       <div style="display:flex;align-items:center;gap:9px;margin-bottom:5px">
@@ -4708,6 +5013,425 @@ async function cancelWhOrder(orderId){
   renderWhOrders();
   showToast('Warehouse order cancelled');
 }
+
+
+// ═══════════════════════════════════════════════════
+//  MOBILE UTILITIES
+// ═══════════════════════════════════════════════════
+const IS_MOBILE = () => window.innerWidth <= 768;
+
+function toggleMobMenu(){
+  document.getElementById('sidebar').classList.toggle('mob-open');
+  document.getElementById('mob-overlay').classList.toggle('visible');
+}
+function closeMobMenu(){
+  document.getElementById('sidebar').classList.remove('mob-open');
+  document.getElementById('mob-overlay').classList.remove('visible');
+}
+function updateMobTitle(title){
+  const el = document.getElementById('mob-page-title');
+  if(el) el.textContent = title;
+}
+
+// Hook nav buttons to close menu on mobile
+document.addEventListener('click', e=>{
+  const navBtn = e.target.closest('.nav-btn');
+  if(navBtn && IS_MOBILE()) closeMobMenu();
+});
+
+// ═══════════════════════════════════════════════════
+//  MOBILE STORE COUNT
+// ═══════════════════════════════════════════════════
+// State lives in storeCountState (shared with desktop)
+
+function renderMobStoreCount(){
+  updateMobTitle('Store Count');
+  const items = storeInventory.filter(x=>x.store_name===storeCountStore);
+  const mmItems = items.filter(x=>x.product_source==='mm');
+  const coffeeItems = items.filter(x=>x.product_source==='coffee');
+  const total = items.length;
+  const verified = items.filter(item=>{
+    const s = storeCountState[item.id];
+    if(!s) return false;
+    if(s.verified) return true;
+    if(s.actualQty!=='' && s.reason) return true;
+    // stepper: if stepperVal set and no diff, counts as verified
+    if(s.stepperVal!==undefined && s.stepperVal===item.qty) return true;
+    return false;
+  }).length;
+
+  document.getElementById('main-body').innerHTML=`
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+      <select onchange="storeCountStore=this.value;initStoreCountState();renderStoreCount()"
+        style="flex:1;padding:10px 12px;border:1.5px solid #0d1f4e;border-radius:8px;font-size:14px;font-weight:700;color:#0d1f4e;background:#fff;outline:none">
+        ${STORES.map(s=>`<option value="${s}" ${s===storeCountStore?'selected':''}>${s}</option>`).join('')}
+      </select>
+      <div style="font-size:12px;color:#5060a0;font-weight:600;white-space:nowrap">${verified}/${total} done</div>
+    </div>
+
+    <div class="mob-count-page-body">
+    ${[{label:'MM Items',source:'mm',items:mmItems},{label:'Coffee',source:'coffee',items:coffeeItems}]
+      .filter(g=>g.items.length>0).map(group=>{
+      const skipped = storeCountSkippedSources.has(group.source);
+      return `
+        <div class="mob-count-section-hdr">
+          <span>${group.label} (${group.items.length})</span>
+          <button class="skip-btn" onclick="toggleStoreCountSkip('${group.source}');renderStoreCount()">
+            ${skipped?'↩ Include':'⏭ Skip'}
+          </button>
+        </div>
+        ${skipped?`<div style="font-size:12px;color:#7080a0;margin-bottom:12px;padding:8px 12px;background:#f4f6fa;border-radius:8px">Section skipped</div>`
+        :group.items.map(item=>renderMobCountCard(item)).join('')}
+      `;
+    }).join('')}
+    </div>
+
+    <div class="mob-count-submit">
+      <button class="cancel-btn" onclick="cancelStoreCount();renderStoreCount()">✕ Cancel</button>
+      <button class="submit-btn" onclick="confirmSubmitStoreCount()" ${storeCountSubmitted?'disabled style="opacity:0.5"':''}>
+        ✓ Submit Count
+      </button>
+    </div>
+  `;
+}
+
+function renderMobCountCard(item){
+  const s = storeCountState[item.id] || {verified:false, actualQty:'', reason:'', stepperVal:undefined};
+  // stepperVal: current displayed value. Start at item.qty if not set.
+  if(s.stepperVal === undefined) s.stepperVal = item.qty;
+  const currentQty = item.qty;
+  const displayVal = s.verified ? currentQty : s.stepperVal;
+  const diff = s.verified ? 0 : displayVal - currentQty;
+  const isDiff = diff !== 0;
+  const reasons = isDiff ? (diff < 0 ? STORE_COUNT_NEG_REASONS : STORE_COUNT_POS_REASONS) : [];
+  const cardClass = s.verified ? 'verified' : (isDiff ? 'has-diff' : '');
+
+  return `<div class="mob-count-card ${cardClass}" id="mcc-${item.id}">
+    <div class="mob-count-name">
+      <span>${item.product_name}</span>
+      <button class="mob-correct-btn ${s.verified?'active':''}"
+        onclick="mobCountToggleVerified(${item.id})">
+        ${s.verified?'✓ Correct':'Mark OK'}
+      </button>
+    </div>
+    <div class="mob-count-current">Current stock: <strong>${currentQty}</strong></div>
+    ${!s.verified?`
+    <div class="mob-stepper">
+      <button class="mob-stepper-btn minus" onclick="mobCountStep(${item.id},-1)" ontouchstart="">−</button>
+      <div class="mob-stepper-val ${isDiff?'changed':''}">${displayVal}</div>
+      <button class="mob-stepper-btn plus" onclick="mobCountStep(${item.id},1)" ontouchstart="">+</button>
+    </div>
+    ${isDiff?`
+    <div class="mob-count-diff">
+      Difference: <span class="diff-val ${diff<0?'neg':'pos'}">${diff>0?'+':''}${diff}</span>
+    </div>
+    <div class="mob-count-reason">
+      <select onchange="mobCountSetReason(${item.id},this.value)"
+        style="width:100%;padding:10px 12px;background:#fff;border:1.5px solid ${s.reason?'#0d1f4e':'#e8943a'};border-radius:8px;font-size:13px;color:#1a2340;outline:none;cursor:pointer">
+        <option value="">-- Select reason --</option>
+        ${reasons.map(r=>`<option value="${r}" ${s.reason===r?'selected':''}>${r}</option>`).join('')}
+      </select>
+    </div>`:''}
+    `:`<div style="font-size:12px;color:#1a7a45;font-weight:600;margin-top:4px">✓ Quantity confirmed correct</div>`}
+  </div>`;
+}
+
+function mobCountStep(id, delta){
+  const item = storeInventory.find(x=>x.id===id);
+  if(!item) return;
+  if(!storeCountState[id]) storeCountState[id] = {verified:false, actualQty:'', reason:'', stepperVal:item.qty};
+  const s = storeCountState[id];
+  if(s.stepperVal === undefined) s.stepperVal = item.qty;
+  s.stepperVal = Math.max(0, s.stepperVal + delta);
+  s.actualQty = String(s.stepperVal);
+  s.verified = false;
+  // Reset reason if diff direction changed
+  const diff = s.stepperVal - item.qty;
+  if(s.reason){
+    const negReasons = STORE_COUNT_NEG_REASONS;
+    const posReasons = STORE_COUNT_POS_REASONS;
+    if(diff < 0 && posReasons.includes(s.reason)) s.reason = '';
+    if(diff > 0 && negReasons.includes(s.reason)) s.reason = '';
+    if(diff === 0) s.reason = '';
+  }
+  // DOM patch — avoid full re-render for snappy feel
+  const card = document.getElementById('mcc-'+id);
+  if(card){
+    const isDiff = diff !== 0;
+    card.className = 'mob-count-card' + (isDiff?' has-diff':'');
+    const valEl = card.querySelector('.mob-stepper-val');
+    if(valEl){ valEl.textContent = s.stepperVal; valEl.className='mob-stepper-val'+(isDiff?' changed':''); }
+    // Update diff line and reason dropdown via partial re-render of card inner
+    const diffSection = card.querySelector('.mob-count-diff');
+    const reasonSection = card.querySelector('.mob-count-reason');
+    const reasons = isDiff ? (diff<0 ? STORE_COUNT_NEG_REASONS : STORE_COUNT_POS_REASONS) : [];
+    if(isDiff){
+      if(!diffSection){
+        // Re-render card fully (first time diff appears)
+        card.outerHTML = renderMobCountCard(item);
+      } else {
+        diffSection.innerHTML = `Difference: <span class="diff-val ${diff<0?'neg':'pos'}">${diff>0?'+':''}${diff}</span>`;
+        if(reasonSection){
+          reasonSection.querySelector('select').style.borderColor = s.reason?'#0d1f4e':'#e8943a';
+        }
+      }
+    } else {
+      if(diffSection) card.outerHTML = renderMobCountCard(item);
+    }
+  }
+}
+
+function mobCountToggleVerified(id){
+  const item = storeInventory.find(x=>x.id===id);
+  if(!item) return;
+  if(!storeCountState[id]) storeCountState[id] = {verified:false, actualQty:'', reason:'', stepperVal:item.qty};
+  const s = storeCountState[id];
+  s.verified = !s.verified;
+  if(s.verified){ s.stepperVal = item.qty; s.actualQty = ''; s.reason = ''; }
+  const card = document.getElementById('mcc-'+id);
+  if(card) card.outerHTML = renderMobCountCard(item);
+}
+
+function mobCountSetReason(id, val){
+  if(!storeCountState[id]) return;
+  storeCountState[id].reason = val;
+}
+
+// ═══════════════════════════════════════════════════
+//  MOBILE STORE INVENTORY
+// ═══════════════════════════════════════════════════
+let mobInvEditingIds = new Set();
+
+function renderMobStoreInventory(){
+  updateMobTitle('Store Inventory');
+  const storeItems = storeInventory.filter(x=>x.store_name===currentStore);
+  const mmItems = storeItems.filter(x=>x.product_source==='mm');
+  const coffeeItems = storeItems.filter(x=>x.product_source==='coffee');
+  const outCount = storeItems.filter(x=>x.qty<=0).length;
+
+  document.getElementById('main-body').innerHTML=`
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+      <select onchange="currentStore=this.value;storeSearchTerm='';mobInvEditingIds=new Set();renderStoreInventory()"
+        style="flex:1;padding:10px 12px;border:1.5px solid #0d1f4e;border-radius:8px;font-size:14px;font-weight:700;color:#0d1f4e;background:#fff;outline:none">
+        ${STORES.map(s=>`<option value="${s}" ${s===currentStore?'selected':''}>${s}</option>`).join('')}
+      </select>
+      <button class="primary-btn" onclick="openImportStoreItemModal()" style="padding:10px 12px;white-space:nowrap">+ Add</button>
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">
+      <div class="stat-card" style="padding:8px 10px"><div class="stat-val" style="font-size:18px">${storeItems.length}</div><div class="stat-label">SKUs</div></div>
+      <div class="stat-card" style="padding:8px 10px;border-top-color:#1a3266"><div class="stat-val" style="font-size:18px;color:#1a3266">${mmItems.length}</div><div class="stat-label">MM</div></div>
+      <div class="stat-card" style="padding:8px 10px;border-top-color:#b01c1c"><div class="stat-val" style="font-size:18px;color:#b01c1c">${outCount}</div><div class="stat-label">Out</div></div>
+    </div>
+
+    ${storeItems.length===0?`<div style="text-align:center;padding:40px 20px;color:#7080a0">
+      <div style="font-size:32px;margin-bottom:10px">📦</div>
+      <div style="font-size:15px;font-weight:600;margin-bottom:6px">No items yet</div>
+      <div style="font-size:13px">Tap "+ Add" to import warehouse items</div>
+    </div>`
+    :storeItems.map(item=>renderMobInvCard(item)).join('')}
+  `;
+}
+
+function renderMobInvCard(item){
+  const isEditing = mobInvEditingIds.has(item.id);
+  const srcBadge = item.product_source==='coffee'
+    ? '<span style="background:#f3e8ff;color:#6b2fa0;border-radius:4px;padding:2px 7px;font-size:10px;font-weight:700">COFFEE</span>'
+    : '<span style="background:#e8edf8;color:#0d1f4e;border-radius:4px;padding:2px 7px;font-size:10px;font-weight:700">MM</span>';
+  const qtyClass = item.qty<=0?'out':(item.min_level>0&&item.qty<=item.min_level?'low':'ok');
+  const statusLabel = item.qty<=0?'OUT':(item.min_level>0&&item.qty<=item.min_level?'LOW':'OK');
+  const statusColor = item.qty<=0?'#b01c1c':(item.min_level>0&&item.qty<=item.min_level?'#b35a00':'#1a7a45');
+
+  if(isEditing){
+    return `<div class="mob-inv-card editing" id="mic-${item.id}">
+      <div style="font-size:14px;font-weight:700;color:#0d1f4e;margin-bottom:10px;line-height:1.3">${item.product_name} ${srcBadge}</div>
+      <div class="mob-inv-edit-row"><label>QTY</label><input type="number" id="mie-qty-${item.id}" value="${item.qty}" min="0" style="font-size:18px"/></div>
+      <div class="mob-inv-edit-row"><label>MIN</label><input type="number" id="mie-min-${item.id}" value="${item.min_level}" min="0"/></div>
+      <div class="mob-inv-edit-row"><label>MAX</label><input type="number" id="mie-max-${item.id}" value="${item.max_level}" min="0"/></div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button class="mob-inv-save-btn" style="flex:2" onclick="mobInvSave(${item.id})">💾 Save</button>
+        <button style="flex:1;padding:12px;background:#f4f6fa;color:#7080a0;border:1.5px solid #d0d5e0;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer" onclick="mobInvEditingIds.delete(${item.id});renderStoreInventory()">✕</button>
+      </div>
+    </div>`;
+  }
+
+  return `<div class="mob-inv-card" id="mic-${item.id}">
+    <div class="mob-inv-card-top">
+      <div class="mob-inv-card-name">${item.product_name}</div>
+      ${srcBadge}
+    </div>
+    <div class="mob-inv-card-meta">
+      <span>Qty: <span class="qty-val ${qtyClass}">${item.qty}</span></span>
+      <span>Min: ${item.min_level}</span>
+      <span>Max: ${item.max_level}</span>
+      <span style="color:${statusColor};font-weight:700;font-size:11px">${statusLabel}</span>
+    </div>
+    <div class="mob-inv-card-actions">
+      <button class="mob-inv-edit-btn" onclick="mobInvEdit(${item.id})">✎ Edit</button>
+      <button class="mob-inv-remove-btn" onclick="removeStoreItem(${item.id})">Remove</button>
+    </div>
+  </div>`;
+}
+
+function mobInvEdit(id){
+  mobInvEditingIds.add(id);
+  renderStoreInventory();
+  setTimeout(()=>{
+    document.getElementById('mie-qty-'+id)?.focus();
+  },100);
+}
+
+async function mobInvSave(id){
+  const item = storeInventory.find(x=>x.id===id);
+  if(!item) return;
+  item.qty = parseFloat(document.getElementById('mie-qty-'+id)?.value)||0;
+  item.min_level = parseFloat(document.getElementById('mie-min-'+id)?.value)||0;
+  item.max_level = parseFloat(document.getElementById('mie-max-'+id)?.value)||0;
+  mobInvEditingIds.delete(id);
+  renderStoreInventory();
+  await saveStoreItem(item);
+  showToast('✓ Item saved');
+}
+
+// ═══════════════════════════════════════════════════
+//  MOBILE STORE ORDERS
+// ═══════════════════════════════════════════════════
+function renderMobStoreOrders(){
+  updateMobTitle('Store Orders');
+  const openOrders = storeOrders.filter(o=>o.store_name===currentOrderStore && o.status==='open');
+  const storeItems = storeInventory.filter(x=>x.store_name===currentOrderStore);
+
+  document.getElementById('main-body').innerHTML=`
+    <div class="mob-order-store-bar">
+      <select onchange="currentOrderStore=this.value;renderStoreOrders()">
+        ${STORES.map(s=>`<option value="${s}" ${s===currentOrderStore?'selected':''}>${s}</option>`).join('')}
+      </select>
+    </div>
+
+    ${openOrders.length>0?`
+    <div style="font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:#b35a00;margin-bottom:8px">
+      Open Orders (${openOrders.length})
+    </div>
+    ${openOrders.map(o=>renderMobOpenOrder(o)).join('')}
+    <div style="height:12px"></div>`:''}
+
+    <div class="mob-new-order-section">
+      <div class="mob-new-order-hdr">
+        <span>New Order — ${currentOrderStore}</span>
+        <button onclick="mobSetRecQtys()" style="font-size:10px;font-weight:700;color:#0d1f4e;background:#e8edf8;border:none;border-radius:5px;padding:5px 10px;cursor:pointer">⚡ Rec. Qty</button>
+      </div>
+      ${storeItems.length===0?`<div style="text-align:center;padding:30px;color:#7080a0;font-size:13px">No items in store inventory</div>`
+      :storeItems.map(item=>{
+        const wh = item.product_source==='coffee'
+          ? coffeeProducts.find(p=>p.id===item.product_id)
+          : products.find(p=>p.id===item.product_id);
+        return `<div class="mob-new-order-item">
+          <div class="item-info">
+            <div class="name">${item.product_name}</div>
+            <div class="meta">On hand: <strong>${item.qty}</strong> · WH: ${wh?.qty??'—'}</div>
+          </div>
+          <input type="number" class="item-qty-input" id="moq-${item.id}" min="0" placeholder="0"/>
+        </div>`;
+      }).join('')}
+      <div class="mob-order-actions">
+        <button class="mob-order-save-btn" onclick="saveNewStoreOrder()">💾 Save as Open Order</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderMobOpenOrder(order){
+  const dateStr = toPST(order.created_at);
+  const isExpanded = expandedOrderIds.has(order.id);
+  return `<div class="mob-open-order-card">
+    <div class="mob-open-order-hdr" onclick="toggleOrderExpand(${order.id})" style="cursor:pointer">
+      <div>
+        <div class="order-id">Order #${order.id.toString().slice(-6)} <span style="font-size:11px;color:#7080a0">${order.items.length} items</span></div>
+        <div class="order-date">${dateStr}</div>
+      </div>
+      <span style="color:#8090b0;font-size:16px">${isExpanded?'▲':'▼'}</span>
+    </div>
+    ${isExpanded?`
+    <div class="mob-open-order-items" style="margin-top:8px">
+      ${order.items.map((item,idx)=>`
+        <div class="mob-open-order-item">
+          <span class="item-name">${item.product_name}</span>
+          <div class="item-adj">
+            <span style="font-size:11px;color:#7080a0">Qty:</span>
+            <input type="number" value="${item.order_qty}" min="0"
+              oninput="updateAdjQty(${order.id},${idx},this.value)"
+              style="width:56px;padding:6px 8px;border:1.5px solid #c9a84c;border-radius:6px;font-size:14px;font-weight:700;text-align:center;outline:none"/>
+          </div>
+        </div>`).join('')}
+    </div>
+    <button class="mob-order-recv-btn" id="recv-btn-${order.id}" onclick="receiveStoreOrder(${order.id})">✓ Receive Order</button>
+    <button class="mob-order-cancel-btn" onclick="cancelStoreOrder(${order.id})">✕ Cancel Order</button>
+    `:''}
+  </div>`;
+}
+
+function mobSetRecQtys(){
+  const storeItems = storeInventory.filter(x=>x.store_name===currentOrderStore);
+  for(const item of storeItems){
+    const el = document.getElementById('moq-'+item.id);
+    if(!el) continue;
+    const needed = Math.max(0, item.max_level - item.qty);
+    el.value = needed > 0 ? needed : '';
+  }
+  showToast('Recommended quantities set');
+}
+
+// ═══════════════════════════════════════════════════
+//  ROUTER OVERRIDE — detect mobile and use mobile renders
+// ═══════════════════════════════════════════════════
+const _origRender = render;
+function render(){
+  if(IS_MOBILE()){
+    if(currentView==='store-count'){ renderStoreCount(); return; }
+    if(currentView==='store-inventory'){ renderStoreInventory(); return; }
+    if(currentView==='store-orders'){ renderStoreOrders(); return; }
+  }
+  _origRender();
+  updateMobTitle(document.querySelector('.top-bar-title')?.textContent || 'BrewBox OS');
+}
+
+// Override specific render functions to switch on mobile
+const _origRenderStoreCount = renderStoreCount;
+function renderStoreCount(){
+  if(IS_MOBILE()){ renderMobStoreCount(); return; }
+  _origRenderStoreCount();
+}
+
+const _origRenderStoreInventory = renderStoreInventory;
+function renderStoreInventory(){
+  if(IS_MOBILE()){ renderMobStoreInventory(); return; }
+  _origRenderStoreInventory();
+}
+
+const _origRenderStoreOrders = renderStoreOrders;
+function renderStoreOrders(){
+  if(IS_MOBILE()){ renderMobStoreOrders(); return; }
+  _origRenderStoreOrders();
+}
+
+// Update mobile title when setView is called
+const _origSetView = setView;
+function setView(v){
+  _origSetView(v);
+  const titles = {'store-count':'Store Count','store-inventory':'Store Inventory','store-orders':'Store Orders','inventory':'MM Inventory','coffee':'Coffee Inventory','wh-orders':'WH Orders','count':'WH Count','dashboard':'Dashboard','restock':'Activity','order-activity':'Orders'};
+  updateMobTitle(titles[v]||'BrewBox OS');
+  if(IS_MOBILE()) closeMobMenu();
+}
+
+// Handle resize (switch between layouts)
+let _lastMobile = IS_MOBILE();
+window.addEventListener('resize', ()=>{
+  const nowMobile = IS_MOBILE();
+  if(nowMobile !== _lastMobile){
+    _lastMobile = nowMobile;
+    render();
+  }
+});
 
 // ═══════════════════════════════════════════════════
 //  BOOT — credentials baked in, go straight to app
