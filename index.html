@@ -5580,54 +5580,44 @@ function handleSalesFileUpload(input){
   const processRows = (rows) => {
     try{
       _salesRows = rows;
-      // Validate format: need Date, Item Name, UPC columns
       const headers = rows[0].map(h=>String(h).trim());
       const hasDate = headers.some(h=>h==='Date');
       const hasName = headers.some(h=>h==='Item Name');
       if(!hasDate || !hasName){
-        statusEl.textContent = '⚠ This looks like the wrong report. Need the "Item Sales" report with Date, Item Name, UPC columns.';
+        statusEl.textContent = '⚠ Wrong report type. Need the "Item Sales" report with Date, Item Name, UPC columns.';
         statusEl.style.background = '#fde8e8';
         statusEl.style.color = '#b01c1c';
         return;
       }
 
-      // Auto-detect store from file
+      // Detect ALL unique stores in the file
       const storeIdx = headers.findIndex(h=>h==='Store');
-      let detectedStore = null;
-      if(storeIdx !== -1 && rows.length > 1){
-        const rawStore = String(rows[1][storeIdx]||'').trim();
-        detectedStore = cantaloupeToStore(rawStore);
-        const sel = document.getElementById('si-store-select');
-        const noteEl = document.getElementById('si-store-note');
-        if(sel && detectedStore){
-          sel.value = detectedStore;
-          if(noteEl) noteEl.textContent = `Auto-detected from file: "${rawStore}"`;
-        } else if(noteEl){
-          noteEl.textContent = `Could not auto-detect store from "${rawStore}" — please select manually`;
-          noteEl.style.color = '#b35a00';
-        }
-      }
-
-      // Count new vs total
-      const store = document.getElementById('si-store-select')?.value || detectedStore || STORES[0];
-      const lastTs = getLastImportTs(store);
-      const dateIdx = headers.findIndex(h=>h==='Date');
-      let total=0, newCount=0;
+      const dateIdx  = headers.findIndex(h=>h==='Date');
+      const storesInFile = new Set();
+      let total = 0;
       for(let i=1;i<rows.length;i++){
-        const row=rows[i];
+        const row = rows[i];
         if(!row[dateIdx]) continue;
         const ts = parseCantaloupeDate(String(row[dateIdx]));
         if(!ts) continue;
         total++;
-        if(!lastTs || ts > new Date(lastTs)) newCount++;
+        if(storeIdx !== -1){
+          const mapped = cantaloupeToStore(String(row[storeIdx]||'').trim());
+          if(mapped) storesInFile.add(mapped);
+        }
       }
 
-      statusEl.textContent = `✓ ${file.name} — ${total} total transactions, ${newCount} new since last import`;
-      statusEl.style.background = newCount > 0 ? '#e6f4ee' : '#fff3e0';
-      statusEl.style.color = newCount > 0 ? '#1a7a45' : '#b35a00';
+      const storeList = [...storesInFile];
+      const storeLabel = storeList.length > 1
+        ? `${storeList.length} stores: ${storeList.join(', ')}`
+        : (storeList[0] || 'unknown store');
+
+      statusEl.textContent = `✓ ${file.name} — ${total} transactions across ${storeLabel}`;
+      statusEl.style.background = '#e6f4ee';
+      statusEl.style.color = '#1a7a45';
       parseBtn.disabled = false;
       parseBtn.style.opacity = '1';
-      parseBtn.textContent = newCount > 0 ? `🔍 Preview ${newCount} New Transactions` : '🔍 Preview (no new transactions)';
+      parseBtn.textContent = `🔍 Preview ${storeList.length > 1 ? 'All Stores' : storeList[0]||''}`;
 
     }catch(err){
       statusEl.textContent = '⚠ Error reading file: ' + err.message;
@@ -5637,18 +5627,14 @@ function handleSalesFileUpload(input){
   };
 
   if(isCSV){
-    reader.onload = e => {
-      const rows = parseCSVToRows(e.target.result);
-      processRows(rows);
-    };
+    reader.onload = e => { processRows(parseCSVToRows(e.target.result)); };
     reader.readAsText(file);
   } else {
     reader.onload = e => {
       const data = new Uint8Array(e.target.result);
       const wb = XLSX.read(data,{type:'array'});
       const sheet = wb.Sheets[wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(sheet,{header:1,defval:''});
-      processRows(rows);
+      processRows(XLSX.utils.sheet_to_json(sheet,{header:1,defval:''}));
     };
     reader.readAsArrayBuffer(file);
   }
@@ -5672,11 +5658,11 @@ function parseCSVToRows(text){
 function parseSalesFile(){
   if(!_salesRows || _salesRows.length < 2) return;
 
-  const store = document.getElementById('si-store-select')?.value;
   const headers = _salesRows[0].map(h=>String(h).trim());
   const dateIdx  = headers.findIndex(h=>h==='Date');
   const nameIdx  = headers.findIndex(h=>h==='Item Name');
   const upcIdx   = headers.findIndex(h=>h==='UPC');
+  const storeIdx = headers.findIndex(h=>h==='Store');
 
   // Build product lookup maps
   const upcMap = {}, nameMap = {};
@@ -5685,153 +5671,140 @@ function parseSalesFile(){
     nameMap[p.name.toLowerCase().trim()] = p;
   }
 
-  // Get last import timestamp for this store
-  const lastTs = getLastImportTs(store);
-  const lastTsDate = lastTs ? new Date(lastTs) : null;
-
-  // Parse and filter rows
-  const itemCounts = {}; // productId -> {product, unitsSold, storeItem}
-  const unmatchedCounts = {}; // itemName -> count
-  let newRowCount = 0, skippedCount = 0;
-  let minTs = null, maxTs = null;
-
+  // Detect all stores in file
+  const storesInFile = new Set();
   for(let i=1;i<_salesRows.length;i++){
-    const row = _salesRows[i];
-    const rawDate = String(row[dateIdx]||'').trim();
-    if(!rawDate) continue;
-
-    const ts = parseCantaloupeDate(rawDate);
-    if(!ts) continue;
-
-    // Skip rows already imported (timestamp <= last import)
-    if(lastTsDate && ts <= lastTsDate){ skippedCount++; continue; }
-
-    newRowCount++;
-    if(!minTs||ts<minTs) minTs=ts;
-    if(!maxTs||ts>maxTs) maxTs=ts;
-
-    const name = String(row[nameIdx]||'').trim();
-    const rawUPC = upcIdx!==-1 ? cleanUPC(row[upcIdx]) : '';
-
-    // Match product
-    let product = null;
-    const cleanU = rawUPC.replace(/\D/g,'');
-    if(cleanU && upcMap[cleanU]) product = upcMap[cleanU];
-    if(!product && nameMap[name.toLowerCase()]) product = nameMap[name.toLowerCase()];
-
-    if(product){
-      if(!itemCounts[product.id]){
-        const si = storeInventory.find(x=>x.store_name===store&&x.product_id===product.id&&x.product_source==='mm');
-        itemCounts[product.id] = {product, unitsSold:0, storeItem:si};
-      }
-      itemCounts[product.id].unitsSold++;
-    } else {
-      unmatchedCounts[name] = (unmatchedCounts[name]||0) + 1;
+    const row=_salesRows[i];
+    if(!row[dateIdx]) continue;
+    if(storeIdx !== -1){
+      const mapped = cantaloupeToStore(String(row[storeIdx]||'').trim());
+      if(mapped) storesInFile.add(mapped);
     }
   }
+  // If no Store column, fall back to dropdown
+  if(storesInFile.size === 0){
+    const sel = document.getElementById('si-store-select')?.value;
+    if(sel) storesInFile.add(sel);
+  }
 
-  const matched = Object.values(itemCounts).map(x=>({
-    ...x,
-    inStoreInventory: !!x.storeItem,
-    currentStoreQty: x.storeItem?.qty ?? null,
-    newStoreQty: x.storeItem ? Math.max(0, x.storeItem.qty - x.unitsSold) : null
-  }));
-  matched.sort((a,b)=>(b.inStoreInventory?1:0)-(a.inStoreInventory?1:0)||a.product.name.localeCompare(b.product.name));
+  // Parse per store
+  const storeResults = {};
+  for(const store of storesInFile){
+    const lastTs = getLastImportTs(store);
+    const lastTsDate = lastTs ? new Date(lastTs) : null;
+    const itemCounts = {}, unmatchedCounts = {};
+    let newRowCount=0, skippedCount=0;
+    let minTs=null, maxTs=null;
 
-  const unmatched = Object.entries(unmatchedCounts).map(([name,count])=>({csvName:name,unitsSold:count}));
-  const totalUnits = matched.reduce((s,x)=>s+x.unitsSold,0)+unmatched.reduce((s,x)=>s+x.unitsSold,0);
+    for(let i=1;i<_salesRows.length;i++){
+      const row=_salesRows[i];
+      if(!row[dateIdx]) continue;
+      const ts = parseCantaloupeDate(String(row[dateIdx]));
+      if(!ts) continue;
 
-  renderSalesPreview(matched, unmatched, store, minTs, maxTs, newRowCount, skippedCount, totalUnits, lastTsDate);
+      // Filter by store
+      if(storeIdx !== -1){
+        const mapped = cantaloupeToStore(String(row[storeIdx]||'').trim());
+        if(mapped !== store) continue;
+      }
+
+      if(lastTsDate && ts <= lastTsDate){ skippedCount++; continue; }
+      newRowCount++;
+      if(!minTs||ts<minTs) minTs=ts;
+      if(!maxTs||ts>maxTs) maxTs=ts;
+
+      const name = String(row[nameIdx]||'').trim();
+      const rawUPC = upcIdx !== -1 ? cleanUPC(row[upcIdx]) : '';
+      const cleanU = rawUPC.replace(/\D/g,'');
+      let product = null;
+      if(cleanU && upcMap[cleanU]) product = upcMap[cleanU];
+      if(!product && nameMap[name.toLowerCase()]) product = nameMap[name.toLowerCase()];
+
+      if(product){
+        if(!itemCounts[product.id]){
+          const si = storeInventory.find(x=>x.store_name===store&&x.product_id===product.id&&x.product_source==='mm');
+          itemCounts[product.id] = {product, unitsSold:0, storeItem:si};
+        }
+        itemCounts[product.id].unitsSold++;
+      } else {
+        unmatchedCounts[name] = (unmatchedCounts[name]||0)+1;
+      }
+    }
+
+    const matched = Object.values(itemCounts).map(x=>({
+      ...x,
+      inStoreInventory:!!x.storeItem,
+      currentStoreQty:x.storeItem?.qty??null,
+      newStoreQty:x.storeItem?Math.max(0,x.storeItem.qty-x.unitsSold):null
+    }));
+    matched.sort((a,b)=>(b.inStoreInventory?1:0)-(a.inStoreInventory?1:0)||a.product.name.localeCompare(b.product.name));
+    const unmatched = Object.entries(unmatchedCounts).map(([n,c])=>({csvName:n,unitsSold:c}));
+
+    storeResults[store] = {matched, unmatched, minTs, maxTs, newRowCount, skippedCount, lastTsDate};
+  }
+
+  renderSalesPreview(storeResults);
 }
 
-function renderSalesPreview(matched, unmatched, store, minTs, maxTs, newRowCount, skippedCount, totalUnits, lastTsDate){
-  const inStore = matched.filter(x=>x.inStoreInventory);
-  const notInStore = matched.filter(x=>!x.inStoreInventory);
+function renderSalesPreview(storeResults){
+  const stores = Object.keys(storeResults);
+  window._siConfirmData = storeResults;
 
-  const periodStr = minTs && maxTs
-    ? `${toPST(minTs.toISOString())} → ${toPST(maxTs.toISOString())}`
-    : 'Unknown period';
+  document.getElementById('si-preview-area').innerHTML = stores.map(store => {
+    const {matched, unmatched, minTs, maxTs, newRowCount, skippedCount, lastTsDate} = storeResults[store];
+    const inStore = matched.filter(x=>x.inStoreInventory);
+    const notInStore = matched.filter(x=>!x.inStoreInventory);
+    const periodStr = minTs && maxTs
+      ? `${toPST(minTs.toISOString())} \u2192 ${toPST(maxTs.toISOString())}`
+      : 'No new transactions';
+    const storeKey = store.replace(/\s+/g,'_');
 
-  document.getElementById('si-preview-area').innerHTML=`
-    <div class="card" style="border-top:3px solid #0d1f4e">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;margin-bottom:14px">
+    return `<div class="card" style="border-top:3px solid #0d1f4e;margin-bottom:14px" id="si-card-${storeKey}">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;margin-bottom:10px">
         <div>
-          <div class="card-title" style="margin-bottom:4px">Import Preview — ${store}</div>
-          <div style="font-size:12px;color:#5060a0;margin-bottom:6px;font-weight:600">${periodStr}</div>
-          <div style="display:flex;gap:12px;flex-wrap:wrap">
-            <span style="font-size:11px;color:#1a7a45;font-weight:700">✓ ${newRowCount} new transactions</span>
-            ${skippedCount>0?`<span style="font-size:11px;color:#7080a0">${skippedCount} already imported (skipped)</span>`:''}
-            <span style="font-size:11px;color:#0d1f4e;font-weight:600">${totalUnits} total units</span>
-            <span style="font-size:11px;color:#b01c1c">${unmatched.length} unmatched items</span>
+          <div class="card-title" style="margin-bottom:2px">${store}</div>
+          <div style="font-size:12px;color:#5060a0;font-weight:600;margin-bottom:4px">${periodStr}</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            ${newRowCount>0?`<span style="font-size:11px;color:#1a7a45;font-weight:700">✓ ${newRowCount} new transactions</span>`:'<span style="font-size:11px;color:#b35a00;font-weight:700">No new transactions</span>'}
+            ${skippedCount>0?`<span style="font-size:11px;color:#7080a0">${skippedCount} already imported</span>`:''}
+            ${unmatched.length>0?`<span style="font-size:11px;color:#b01c1c">${unmatched.length} unmatched</span>`:''}
           </div>
         </div>
-        <button id="si-confirm-btn" onclick="confirmSalesImport()"
+        <button id="si-confirm-btn-${storeKey}" onclick="confirmSalesImport('${store}')"
           ${inStore.length===0?'disabled style="opacity:0.5"':''}
-          style="background:#1a7a45;color:#fff;border:none;border-radius:7px;padding:9px 18px;font-size:13px;font-weight:700;cursor:pointer">
-          ✓ Apply ${inStore.length} Updates to ${store}
+          style="background:#1a7a45;color:#fff;border:none;border-radius:7px;padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">
+          \u2713 Apply ${inStore.length} Updates
         </button>
       </div>
-
-      ${skippedCount>0&&!lastTsDate?'':skippedCount>0?`
-      <div style="background:#e6f4ee;border-radius:7px;padding:8px 12px;margin-bottom:12px;font-size:11px;color:#1a7a45">
-        ✓ <strong>${skippedCount} duplicate transactions automatically excluded</strong> — already imported through ${toPST(lastTsDate.toISOString())}
-      </div>`:''}
-
-      ${inStore.length>0?`
-      <div style="font-size:10px;font-weight:700;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">Will Update Store Inventory (${inStore.length} items)</div>
-      <div style="overflow-x:auto;margin-bottom:14px">
-        <table>
-          <thead><tr>
-            <th style="padding-left:4px;min-width:200px">ITEM</th>
-            <th>UNITS SOLD</th>
-            <th>CURRENT QTY</th>
-            <th>NEW QTY</th>
-          </tr></thead>
-          <tbody>
-          ${inStore.map(x=>`<tr>
-            <td style="padding-left:4px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:240px">${x.product.name}</td>
-            <td style="font-weight:700;color:#b35a00">−${x.unitsSold}</td>
-            <td style="font-weight:700;color:#0d1f4e">${x.currentStoreQty}</td>
-            <td style="font-weight:700;color:${x.newStoreQty<=0?'#b01c1c':'#1a7a45'}">${x.newStoreQty}</td>
-          </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>`:'<div style="font-size:12px;color:#7080a0;margin-bottom:14px">No new transactions affect items in this store\'s inventory.</div>'}
-
-      ${notInStore.length>0?`
-      <details style="margin-bottom:10px">
-        <summary style="font-size:11px;font-weight:700;color:#7080a0;cursor:pointer;padding:6px 0">
-          Matched to warehouse but not in ${store} inventory — ${notInStore.length} items (no action taken)
-        </summary>
-        <div style="margin-top:8px;font-size:11px;color:#7080a0">
-          ${notInStore.map(x=>`<div style="padding:3px 0">${x.product.name} — ${x.unitsSold} sold</div>`).join('')}
-        </div>
-      </details>`:''}
-
-      ${unmatched.length>0?`
-      <details>
-        <summary style="font-size:11px;font-weight:700;color:#b01c1c;cursor:pointer;padding:6px 0">
-          ⚠ Not matched to warehouse inventory — ${unmatched.length} items
-        </summary>
-        <div style="margin-top:8px;font-size:11px;color:#b01c1c">
-          ${unmatched.map(x=>`<div style="padding:3px 0">${x.csvName} — ${x.unitsSold} units</div>`).join('')}
-        </div>
-      </details>`:''}
-    </div>
-  `;
-
-  // Store parsed data for confirm step
-  window._siConfirmData = {matched, store, minTs, maxTs, totalUnits, newRowCount};
+      ${skippedCount>0&&lastTsDate?`<div style="background:#e6f4ee;border-radius:7px;padding:7px 12px;margin-bottom:10px;font-size:11px;color:#1a7a45">\u2713 <strong>${skippedCount} already-imported transactions excluded</strong> \u2014 through ${toPST(lastTsDate.toISOString())}</div>`:''}
+      ${inStore.length>0?`<div style="font-size:10px;font-weight:700;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Will update (${inStore.length} items)</div>
+      <div style="overflow-x:auto;margin-bottom:10px"><table><thead><tr>
+        <th style="padding-left:4px;min-width:180px">ITEM</th><th>SOLD</th><th>CURRENT</th><th>NEW QTY</th>
+      </tr></thead><tbody>
+      ${inStore.map(x=>`<tr>
+        <td style="padding-left:4px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:220px">${x.product.name}</td>
+        <td style="font-weight:700;color:#b35a00">-${x.unitsSold}</td>
+        <td style="font-weight:700;color:#0d1f4e">${x.currentStoreQty}</td>
+        <td style="font-weight:700;color:${x.newStoreQty<=0?'#b01c1c':'#1a7a45'}">${x.newStoreQty}</td>
+      </tr>`).join('')}
+      </tbody></table></div>`:''}
+      ${notInStore.length>0?`<details style="margin-bottom:6px"><summary style="font-size:11px;font-weight:700;color:#7080a0;cursor:pointer;padding:4px 0">Not in ${store} inventory (${notInStore.length} - no action)</summary><div style="margin-top:6px;font-size:11px;color:#7080a0">${notInStore.map(x=>`<div>${x.product.name} - ${x.unitsSold} sold</div>`).join('')}</div></details>`:''}
+      ${unmatched.length>0?`<details><summary style="font-size:11px;font-weight:700;color:#b01c1c;cursor:pointer;padding:4px 0">\u26a0 Unmatched (${unmatched.length})</summary><div style="margin-top:6px;font-size:11px;color:#b01c1c">${unmatched.map(x=>`<div>${x.csvName} - ${x.unitsSold}</div>`).join('')}</div></details>`:''}
+    </div>`;
+  }).join('');
 }
 
-async function confirmSalesImport(){
-  const btn = document.getElementById('si-confirm-btn');
-  if(btn){ btn.disabled=true; btn.textContent='⏳ Saving…'; btn.style.opacity='0.6'; }
+async function confirmSalesImport(store){
+  const storeKey = store.replace(/\s+/g,'_');
+  const btn = document.getElementById('si-confirm-btn-'+storeKey);
+  if(btn){ btn.disabled=true; btn.textContent='\u23f3 Saving...'; btn.style.opacity='0.6'; }
 
-  const {matched, store, minTs, maxTs, totalUnits, newRowCount} = window._siConfirmData;
+  const data = window._siConfirmData&&window._siConfirmData[store];
+  if(!data){ showToast('No data found for '+store); return; }
+  const {matched, minTs, maxTs, newRowCount} = data;
   const inStore = matched.filter(x=>x.inStoreInventory);
-  const dateLabel = minTs && maxTs
-    ? `${minTs.toLocaleDateString('en-US',{month:'short',day:'numeric'})} – ${maxTs.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`
+  const dateLabel = minTs&&maxTs
+    ? `${minTs.toLocaleDateString('en-US',{month:'short',day:'numeric'})} - ${maxTs.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`
     : 'unknown period';
   let updated = 0;
 
@@ -5840,46 +5813,35 @@ async function confirmSalesImport(){
     if(!si) continue;
     si.qty = Math.max(0, si.qty - item.unitsSold);
     await saveStoreItem(si);
-
-    const entry = {
-      id: Date.now()+Math.random(),
-      date: new Date().toISOString().slice(0,10),
-      product: item.product.name,
-      qty: -item.unitsSold,
-      by: `Sales — ${store} (${dateLabel})`
-    };
-    restockLog = [entry,...restockLog];
+    const entry = {id:Date.now()+Math.random(),date:new Date().toISOString().slice(0,10),product:item.product.name,qty:-item.unitsSold,by:`Sales - ${store} (${dateLabel})`};
+    restockLog=[entry,...restockLog];
     await saveRestock(entry);
     updated++;
   }
 
-  // Save import record with last_sale_ts
-  const record = {
-    id: Date.now(),
-    store_name: store,
-    last_sale_ts: maxTs ? maxTs.toISOString() : new Date().toISOString(),
-    imported_at: new Date().toISOString(),
-    item_count: updated,
-    units_sold: newRowCount
-  };
-  await saveSalesImportRecord(record);
-
-  // Summary activity log entry
-  const summary = {
-    id: Date.now()+Math.random(),
-    date: new Date().toISOString().slice(0,10),
-    product: `Sales Import — ${store} (${newRowCount} transactions · ${updated} items updated)`,
-    qty: -inStore.reduce((s,x)=>s+x.unitsSold,0),
-    by: `Sales — ${store} (${dateLabel})`
-  };
+  await saveSalesImportRecord({id:Date.now(),store_name:store,last_sale_ts:maxTs?maxTs.toISOString():new Date().toISOString(),imported_at:new Date().toISOString(),item_count:updated,units_sold:newRowCount});
+  const summary = {id:Date.now()+Math.random(),date:new Date().toISOString().slice(0,10),product:`Sales Import - ${store} (${newRowCount} transactions, ${updated} items updated)`,qty:-inStore.reduce((s,x)=>s+x.unitsSold,0),by:`Sales - ${store} (${dateLabel})`};
   restockLog=[summary,...restockLog];
   await saveRestock(summary);
 
-  _salesRows = null;
-  window._siConfirmData = null;
-  showToast(`✓ Sales import complete — ${updated} store items updated for ${store}`);
+  // Mark this store done in UI without clearing other stores
+  delete window._siConfirmData[store];
+  const card = document.getElementById('si-card-'+storeKey);
+  if(card) card.innerHTML = `<div style="display:flex;align-items:center;gap:10px;padding:8px 0"><span style="font-size:20px">\u2705</span><div><div style="font-size:13px;font-weight:700;color:#1a7a45">${store} - saved</div><div style="font-size:11px;color:#7080a0">${updated} items updated, ${dateLabel}</div></div></div>`;
+
+  showToast(`\u2713 ${updated} items updated for ${store}`);
   updateSidebar();
-  renderSalesImport();
+  const tracker = document.getElementById('si-store-tracker');
+  if(tracker) tracker.innerHTML = renderStoreTrackerHTML();
+
+  // Only reset file state when ALL stores are done
+  if(Object.keys(window._siConfirmData).length===0){
+    _salesRows=null; window._siConfirmData=null;
+    const s=document.getElementById('si-file-status');
+    const p=document.getElementById('si-parse-btn');
+    if(s){s.textContent='\u2713 All stores imported';s.style.background='#e6f4ee';s.style.color='#1a7a45';}
+    if(p){p.disabled=true;p.style.opacity='0.4';p.textContent='\u{1F50D} Preview New Transactions';}
+  }
 }
 
 
