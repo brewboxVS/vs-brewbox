@@ -3465,6 +3465,10 @@ function renderOpenOrderRow(order){
           <span style="font-size:11px;color:#7080a0">${dateStr} · ${totalItems} item${totalItems!==1?'s':''} · ${totalUnits} units</span>
         </div>
         <div style="display:flex;align-items:center;gap:8px">
+          <button id="export-btn-${order.id}" onclick="event.stopPropagation();exportStoreOrderToSheet(${order.id})"
+            style="background:#0d1f4e;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:11px;font-weight:700;cursor:pointer">
+            📊 Export
+          </button>
           <button id="recv-btn-${order.id}" onclick="event.stopPropagation();receiveStoreOrder(${order.id})"
             style="background:#1a7a45;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:11px;font-weight:700;cursor:pointer">
             ✓ Receive Order
@@ -5106,6 +5110,83 @@ async function cancelStoreOrder(orderId){
   showToast('Store order cancelled');
 }
 
+// ── Export store order to Google Sheet ──
+async function exportStoreOrderToSheet(orderId){
+  const order = storeOrders.find(o=>o.id===orderId);
+  if(!order){ showToast('Order not found'); return; }
+
+  const btn = document.getElementById('export-btn-'+orderId);
+  if(btn){ btn.disabled=true; btn.textContent='⏳ Exporting…'; btn.style.opacity='0.6'; }
+
+  const storeName = order.store_name;
+  const orderDate = new Date(order.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+  const sheetTitle = `${storeName} Store Order ${orderDate} #${orderId.toString().slice(-6)}`;
+
+  // Build spreadsheet data
+  const headers = ['Item Name','Category','Source','Qty on Hand','Min','Max','Order Qty'];
+  const rows = [headers];
+  for(const item of order.items){
+    // Look up category from store inventory or warehouse
+    const si = storeInventory.find(x=>x.product_id===item.product_id && x.store_name===storeName);
+    const cat = si ? getStoreItemCat1(si) : '';
+    rows.push([
+      item.product_name,
+      cat || '',
+      item.product_source || 'mm',
+      item.current_store_qty ?? '',
+      item.store_min ?? '',
+      item.store_max ?? '',
+      item.order_qty
+    ]);
+  }
+  // Add totals row
+  rows.push(['TOTAL','','','','','',order.items.reduce((s,i)=>s+(i.order_qty||0),0)]);
+
+  try{
+    const res = await fetch('https://api.anthropic.com/v1/messages',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        model:'claude-sonnet-4-20250514',
+        max_tokens:1000,
+        mcp_servers:[{type:'url',url:'https://gmail.mcp.claude.com/mcp',name:'gmail-mcp'}],
+        system:'You are a Google Sheets assistant. Respond ONLY with valid JSON containing sheet_id and sheet_url fields.',
+        messages:[{role:'user',content:`Create a new Google Sheet titled "${sheetTitle}" in a folder path "Store Orders/${storeName}". Create any folders that don't exist.
+
+Populate it with this data (first row is headers):
+${JSON.stringify(rows)}
+
+Format the sheet:
+- Bold the header row and the last row (totals)
+- Freeze the header row
+- Column A (Item Name) should be 220px wide
+- Column B (Category) should be 100px wide
+- Auto-fit other columns
+
+Return JSON: {"sheet_id":"<id>","sheet_url":"<url>","success":true}`}]
+      })
+    });
+    const data = await res.json();
+    const text = data.content?.find(b=>b.type==='text')?.text||'';
+    const clean = text.replace(/```json|```/g,'').trim();
+    try{
+      const result = JSON.parse(clean);
+      if(result.sheet_url){
+        if(btn){ btn.disabled=false; btn.textContent='📊 Export'; btn.style.opacity='1'; }
+        showToast('✓ Exported to Google Drive — Store Orders/' + storeName);
+        // Open the sheet in a new tab
+        window.open(result.sheet_url, '_blank');
+        return;
+      }
+    }catch(e){}
+    if(btn){ btn.disabled=false; btn.textContent='📊 Export'; btn.style.opacity='1'; }
+    showToast('⚠ Could not create Google Sheet — check Drive connection');
+  }catch(e){
+    if(btn){ btn.disabled=false; btn.textContent='📊 Export'; btn.style.opacity='1'; }
+    showToast('⚠ Export failed — check connection');
+  }
+}
+
 async function cancelWhOrder(orderId){
   if(!confirm('Cancel this warehouse order? It will be removed from open orders.')) return;
   whOrders = whOrders.filter(o=>o.id!==orderId);
@@ -5508,7 +5589,10 @@ function renderMobOpenOrder(order){
           </div>
         </div>`).join('')}
     </div>
-    <button class="mob-order-recv-btn" id="recv-btn-${order.id}" onclick="receiveStoreOrder(${order.id})">✓ Receive Order</button>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button id="export-btn-${order.id}" onclick="exportStoreOrderToSheet(${order.id})" style="flex:1;padding:10px;background:#0d1f4e;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">📊 Export</button>
+      <button class="mob-order-recv-btn" id="recv-btn-${order.id}" onclick="receiveStoreOrder(${order.id})" style="flex:2">✓ Receive Order</button>
+    </div>
     <button class="mob-order-cancel-btn" onclick="cancelStoreOrder(${order.id})">✕ Cancel Order</button>
     `:''}
   </div>`;
