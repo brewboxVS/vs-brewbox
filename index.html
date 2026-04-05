@@ -579,6 +579,7 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
       <div id="import-nav">
         <button class="nav-btn" id="import-toggle" onclick="toggleImportMenu()">⬆ &nbsp;<span>Import</span><span class="nav-arrow" id="import-arrow">›</span></button>
         <div id="import-submenu" style="display:none">
+          <button class="nav-btn nav-sub" onclick="setView('sales-import')">📥 &nbsp;<span>Sales Import</span></button>
         </div>
       </div>
       <div id="activity-nav">
@@ -1269,6 +1270,7 @@ async function initApp(){
   await loadStoreInventory();
   await loadStoreOrders();
   await loadWhOrders();
+  await loadSalesImportHistory();
   hideLoading();
   setView('dashboard');
 }
@@ -1313,6 +1315,7 @@ function updateSidebar(){
   if(currentView==='store-orders') document.querySelector('.nav-btn[onclick*="store-orders"]')?.classList.add('active');
   if(currentView==='store-count') document.querySelector('.nav-btn[onclick*="store-count"]')?.classList.add('active');
   if(currentView==='restock'||currentView==='order-activity') { openActivityMenu(); document.querySelector('.nav-btn[onclick*="'+currentView+'"]')?.classList.add('active'); }
+  if(currentView==='sales-import') { openImportMenu(); document.querySelector('.nav-btn[onclick*="sales-import"]')?.classList.add('active'); }
   if(currentView==='orders') document.querySelector('.nav-btn[onclick*="orders"]')?.classList.add('active');
   if(currentView==='restock') document.querySelector('.nav-btn[onclick*="restock"]')?.classList.add('active');
   if(currentView==='count') document.querySelector('.nav-btn[onclick*="count"]')?.classList.add('active');
@@ -1386,7 +1389,7 @@ function openStoresMenu(){
 
 function setView(v){
   currentView=v;
-  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log'};
+  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log','sales-import':'Sales Import',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log'};
   if(v==='count' && Object.keys(countState).length===0) initCountState();
   if(v==='store-count' && Object.keys(storeCountState).length===0) initStoreCountState();
   document.getElementById('page-title').textContent=titles[v]||v;
@@ -1413,6 +1416,7 @@ function render(){
   else if(currentView==='store-orders') renderStoreOrders();
   else if(currentView==='store-count') renderStoreCount();
   else if(currentView==='order-activity') renderOrderActivity();
+  else if(currentView==='sales-import') renderSalesImport();
   else if(currentView==='orders') renderOrders();
   else if(currentView==='count') renderCount();
   else if(currentView==='wh-orders') renderWhOrders();
@@ -5399,6 +5403,402 @@ window.addEventListener('resize', ()=>{
     render();
   }
 });
+
+
+// ═══════════════════════════════════════════════════
+//  SALES IMPORT
+// ═══════════════════════════════════════════════════
+const LS_SALES_IMPORTS = 'vs_brewbox_sales_imports';
+let salesImportHistory = []; // [{id, store_name, date_from, date_to, imported_at, item_count, units_sold}]
+
+async function loadSalesImportHistory(){
+  try{
+    const rows = await sbFetch('sales_imports?order=imported_at.desc&limit=50',{method:'GET',prefer:'return=representation'});
+    salesImportHistory = rows;
+  }catch(e){
+    try{ salesImportHistory = JSON.parse(localStorage.getItem(LS_SALES_IMPORTS)||'[]'); }catch(e2){ salesImportHistory=[]; }
+  }
+}
+
+async function saveSalesImportRecord(record){
+  if(useSupabase){
+    try{
+      await sbFetch('sales_imports',{method:'POST',prefer:'resolution=merge-duplicates,return=minimal',body:JSON.stringify([record])});
+    }catch(e){}
+  }
+  salesImportHistory.unshift(record);
+  localStorage.setItem(LS_SALES_IMPORTS, JSON.stringify(salesImportHistory.slice(0,50)));
+}
+
+// ── Render Sales Import page ──
+function renderSalesImport(){
+  // Last import per store
+  const lastByStore = {};
+  for(const r of salesImportHistory){
+    if(!lastByStore[r.store_name]) lastByStore[r.store_name] = r;
+  }
+
+  document.getElementById('main-body').innerHTML=`
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
+
+      <!-- Upload panel -->
+      <div class="card" style="border-top:3px solid #0d1f4e">
+        <div class="card-title" style="margin-bottom:4px">📥 Upload Cantaloupe Sales Report</div>
+        <div style="font-size:11px;color:#7080a0;margin-bottom:14px;line-height:1.6">
+          Export the <strong>Sales by Item</strong> report from Cantaloupe for the date range you need.
+          Upload the CSV or XLSX file here.
+        </div>
+
+        <div style="margin-bottom:12px">
+          <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:6px">Store</label>
+          <select id="si-store-select" style="width:100%;background:#fff;border:1.5px solid #d0d5e0;border-radius:7px;padding:8px 12px;font-size:13px;font-weight:600;color:#0d1f4e;outline:none;cursor:pointer">
+            ${STORES.map(s=>`<option value="${s}">${s}</option>`).join('')}
+          </select>
+        </div>
+
+        <div style="margin-bottom:12px">
+          <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:6px">Date Range (for your records)</label>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="date" id="si-date-from" style="flex:1;background:#fff;border:1.5px solid #d0d5e0;border-radius:7px;padding:7px 10px;font-size:12px;color:#0d1f4e;outline:none"/>
+            <span style="font-size:12px;color:#7080a0">to</span>
+            <input type="date" id="si-date-to" style="flex:1;background:#fff;border:1.5px solid #d0d5e0;border-radius:7px;padding:7px 10px;font-size:12px;color:#0d1f4e;outline:none"/>
+          </div>
+        </div>
+
+        <label id="si-upload-label" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;border:2px dashed #d0d5e0;border-radius:8px;padding:22px;cursor:pointer;background:#f4f6fa;transition:border-color .2s;margin-bottom:12px"
+          onmouseover="this.style.borderColor='#0d1f4e'" onmouseout="this.style.borderColor='#d0d5e0'">
+          <span style="font-size:28px">📊</span>
+          <span style="font-size:12px;color:#7080a0;text-align:center">Click to upload CSV or XLSX<br>Cantaloupe Sales by Item report</span>
+          <input type="file" id="si-file-input" accept=".csv,.xlsx,.xls" style="display:none" onchange="handleSalesFileUpload(this)"/>
+        </label>
+
+        <div id="si-file-status" style="display:none;font-size:12px;color:#1a7a45;font-weight:600;margin-bottom:10px;padding:8px 12px;background:#e6f4ee;border-radius:7px"></div>
+
+        <button id="si-parse-btn" onclick="parseSalesFile()" disabled
+          style="width:100%;padding:10px;background:#0d1f4e;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:700;cursor:pointer;opacity:0.4">
+          🔍 Parse & Preview
+        </button>
+      </div>
+
+      <!-- Last import tracker -->
+      <div class="card" style="border-top:3px solid #1a7a45">
+        <div class="card-title" style="margin-bottom:12px">📅 Last Import by Store</div>
+        ${STORES.map(store=>{
+          const last = lastByStore[store];
+          return `<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:9px 0;border-bottom:1px solid #f0f2f8">
+            <div>
+              <div style="font-size:12px;font-weight:700;color:#0d1f4e">${store}</div>
+              ${last?`
+                <div style="font-size:11px;color:#7080a0;margin-top:2px">${toPST(last.imported_at)}</div>
+                <div style="font-size:10px;color:#5060a0;margin-top:1px">${last.date_from} → ${last.date_to} · ${last.units_sold} units</div>
+              `:`<div style="font-size:11px;color:#b0b8cc;margin-top:2px">No imports yet</div>`}
+            </div>
+            ${last?`<div style="font-size:10px;font-weight:700;color:#1a7a45;background:#e6f4ee;padding:3px 8px;border-radius:4px;white-space:nowrap">
+              Next from: ${nextImportDate(last.date_to)}
+            </div>`:''}
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+
+    <!-- Preview area -->
+    <div id="si-preview-area"></div>
+  `;
+
+  // Load history if not loaded
+  if(salesImportHistory.length === 0){
+    loadSalesImportHistory().then(()=>renderSalesImport());
+  }
+}
+
+function nextImportDate(dateToStr){
+  if(!dateToStr) return '—';
+  const d = new Date(dateToStr+'T00:00:00');
+  d.setDate(d.getDate()+1);
+  return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+}
+
+let _salesFileData = null; // raw parsed rows
+
+function handleSalesFileUpload(input){
+  const file = input.files[0];
+  if(!file) return;
+  const statusEl = document.getElementById('si-file-status');
+  const parseBtn = document.getElementById('si-parse-btn');
+  const label = document.getElementById('si-upload-label');
+
+  statusEl.textContent = `⏳ Reading ${file.name}…`;
+  statusEl.style.display = 'block';
+  statusEl.style.background = '#e8edf8';
+  statusEl.style.color = '#0d1f4e';
+
+  const reader = new FileReader();
+
+  if(file.name.endsWith('.csv')){
+    reader.onload = e => {
+      try{
+        const text = e.target.result;
+        const rows = parseCSVToRows(text);
+        _salesFileData = rows;
+        statusEl.textContent = `✓ ${file.name} loaded — ${rows.length-1} items found`;
+        statusEl.style.background = '#e6f4ee';
+        statusEl.style.color = '#1a7a45';
+        parseBtn.disabled = false;
+        parseBtn.style.opacity = '1';
+        label.style.borderColor = '#1a7a45';
+        label.style.background = '#f0fff4';
+      }catch(err){
+        statusEl.textContent = '⚠ Could not read CSV: ' + err.message;
+        statusEl.style.background = '#fde8e8';
+        statusEl.style.color = '#b01c1c';
+      }
+    };
+    reader.readAsText(file);
+  } else {
+    // XLSX — use SheetJS
+    reader.onload = e => {
+      try{
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data,{type:'array'});
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet,{header:1,defval:''});
+        _salesFileData = rows;
+        statusEl.textContent = `✓ ${file.name} loaded — ${rows.length-1} items found`;
+        statusEl.style.background = '#e6f4ee';
+        statusEl.style.color = '#1a7a45';
+        parseBtn.disabled = false;
+        parseBtn.style.opacity = '1';
+        label.style.borderColor = '#1a7a45';
+        label.style.background = '#f0fff4';
+      }catch(err){
+        statusEl.textContent = '⚠ Could not read XLSX: ' + err.message;
+        statusEl.style.background = '#fde8e8';
+        statusEl.style.color = '#b01c1c';
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  }
+}
+
+function parseCSVToRows(text){
+  // Simple CSV parser handling quoted fields
+  const lines = text.split('\n').filter(l=>l.trim());
+  return lines.map(line=>{
+    const cols = [];
+    let cur = '', inQ = false;
+    for(let i=0;i<line.length;i++){
+      const c=line[i];
+      if(c==='"') inQ=!inQ;
+      else if(c===','&&!inQ){ cols.push(cur.trim()); cur=''; }
+      else cur+=c;
+    }
+    cols.push(cur.trim());
+    return cols;
+  });
+}
+
+function parseSalesFile(){
+  if(!_salesFileData || _salesFileData.length < 2) return;
+
+  const store = document.getElementById('si-store-select')?.value;
+  const dateFrom = document.getElementById('si-date-from')?.value;
+  const dateTo = document.getElementById('si-date-to')?.value;
+
+  const headers = _salesFileData[0].map(h=>String(h).trim());
+  const nameIdx = headers.findIndex(h=>h==='Name');
+  const upcIdx = headers.findIndex(h=>h==='UPC');
+  const countIdx = headers.findIndex(h=>h==='Count');
+
+  if(nameIdx===-1||countIdx===-1){
+    showToast('⚠ Could not find Name/Count columns — is this a Cantaloupe Sales by Item report?');
+    return;
+  }
+
+  // Build UPC lookup from products (normalize to string, strip decimals)
+  const upcMap = {};
+  for(const p of products){
+    if(p.upc){
+      const upcStr = p.upc.replace(/\D/g,''); // digits only
+      if(upcStr) upcMap[upcStr] = p;
+    }
+  }
+
+  // Build name lookup (lowercase, for fuzzy fallback)
+  const nameMap = {};
+  for(const p of products){
+    nameMap[p.name.toLowerCase().trim()] = p;
+  }
+
+  const matched = [], unmatched = [];
+  let totalUnits = 0;
+
+  for(let i=1;i<_salesFileData.length;i++){
+    const row = _salesFileData[i];
+    const name = String(row[nameIdx]||'').trim();
+    const rawCount = parseFloat(row[countIdx])||0;
+    const rawUPC = upcIdx !== -1 ? String(row[upcIdx]||'').replace(/\.\d+$/,'').replace(/\D/g,'') : '';
+
+    if(!name || name==='Totals' || rawCount===0) continue;
+
+    // Match: try UPC first, then exact name, then lowercase name
+    let product = null;
+    if(rawUPC && upcMap[rawUPC]) product = upcMap[rawUPC];
+    if(!product && nameMap[name.toLowerCase()]) product = nameMap[name.toLowerCase()];
+
+    // Also check store inventory for this store
+    let storeItem = null;
+    if(product){
+      storeItem = storeInventory.find(x=>x.store_name===store && x.product_id===product.id && x.product_source==='mm');
+    }
+
+    if(product){
+      matched.push({
+        csvName: name,
+        product,
+        storeItem,
+        unitsSold: rawCount,
+        currentStoreQty: storeItem?.qty ?? null,
+        newStoreQty: storeItem ? Math.max(0, storeItem.qty - rawCount) : null,
+        inStoreInventory: !!storeItem
+      });
+      totalUnits += rawCount;
+    } else {
+      unmatched.push({csvName: name, unitsSold: rawCount});
+    }
+  }
+
+  // Sort matched: in-store-inventory first, then alphabetical
+  matched.sort((a,b)=>(b.inStoreInventory?1:0)-(a.inStoreInventory?1:0)||a.csvName.localeCompare(b.csvName));
+
+  renderSalesPreview(matched, unmatched, store, dateFrom, dateTo, totalUnits);
+}
+
+function renderSalesPreview(matched, unmatched, store, dateFrom, dateTo, totalUnits){
+  const inStore = matched.filter(x=>x.inStoreInventory);
+  const notInStore = matched.filter(x=>!x.inStoreInventory);
+
+  document.getElementById('si-preview-area').innerHTML=`
+    <div class="card" style="border-top:3px solid #0d1f4e">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px">
+        <div>
+          <div class="card-title" style="margin-bottom:2px">Import Preview — ${store}</div>
+          <div style="font-size:11px;color:#7080a0">
+            ${dateFrom&&dateTo?`${dateFrom} → ${dateTo} · `:''}
+            <span style="color:#1a7a45;font-weight:700">${inStore.length} items will update</span> ·
+            ${notInStore.length} matched but not in store inventory ·
+            <span style="color:#b01c1c">${unmatched.length} unmatched</span> ·
+            ${totalUnits} total units sold
+          </div>
+        </div>
+        <button id="si-confirm-btn" onclick="confirmSalesImport(${JSON.stringify(matched).replace(/"/g,'&quot;')}, '${store}', '${dateFrom}', '${dateTo}', ${totalUnits})"
+          style="background:#1a7a45;color:#fff;border:none;border-radius:7px;padding:9px 18px;font-size:13px;font-weight:700;cursor:pointer">
+          ✓ Apply ${inStore.length} Updates to ${store}
+        </button>
+      </div>
+
+      ${inStore.length>0?`
+      <div style="font-size:10px;font-weight:700;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">
+        Will Update Store Inventory (${inStore.length})
+      </div>
+      <div style="overflow-x:auto;margin-bottom:14px">
+        <table>
+          <thead><tr>
+            <th style="padding-left:4px;min-width:200px">ITEM</th>
+            <th>UNITS SOLD</th>
+            <th>CURRENT QTY</th>
+            <th>NEW QTY</th>
+            <th>CHANGE</th>
+          </tr></thead>
+          <tbody>
+          ${inStore.map(x=>`<tr>
+            <td style="padding-left:4px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:220px">${x.csvName}</td>
+            <td style="font-weight:700;color:#b35a00">−${x.unitsSold}</td>
+            <td style="color:#0d1f4e;font-weight:700">${x.currentStoreQty}</td>
+            <td style="font-weight:700;color:${x.newStoreQty<=0?'#b01c1c':'#1a7a45'}">${x.newStoreQty}</td>
+            <td style="color:#b01c1c;font-weight:700">−${x.unitsSold}</td>
+          </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`:''}
+
+      ${notInStore.length>0?`
+      <details style="margin-bottom:10px">
+        <summary style="font-size:11px;font-weight:700;color:#7080a0;cursor:pointer;padding:6px 0">
+          Matched but not in ${store} inventory (${notInStore.length} items — no action taken)
+        </summary>
+        <div style="margin-top:8px;font-size:11px;color:#7080a0">
+          ${notInStore.map(x=>`<div style="padding:3px 0">${x.csvName} — ${x.unitsSold} sold</div>`).join('')}
+        </div>
+      </details>`:''}
+
+      ${unmatched.length>0?`
+      <details>
+        <summary style="font-size:11px;font-weight:700;color:#b01c1c;cursor:pointer;padding:6px 0">
+          ⚠ Not matched to warehouse inventory (${unmatched.length} items — check names)
+        </summary>
+        <div style="margin-top:8px;font-size:11px;color:#b01c1c">
+          ${unmatched.map(x=>`<div style="padding:3px 0">${x.csvName} — ${x.unitsSold} sold</div>`).join('')}
+        </div>
+      </details>`:''}
+    </div>
+  `;
+}
+
+async function confirmSalesImport(matched, store, dateFrom, dateTo, totalUnits){
+  const btn = document.getElementById('si-confirm-btn');
+  if(btn){ btn.disabled=true; btn.textContent='⏳ Saving…'; btn.style.opacity='0.6'; }
+
+  const inStore = matched.filter(x=>x.inStoreInventory);
+  let updated = 0;
+
+  for(const item of inStore){
+    const si = storeInventory.find(x=>x.store_name===store && x.product_id===item.product.id && x.product_source==='mm');
+    if(!si) continue;
+    const newQty = Math.max(0, si.qty - item.unitsSold);
+    si.qty = newQty;
+    await saveStoreItem(si);
+
+    // Log each item to activity
+    const entry = {
+      id: Date.now()+Math.random(),
+      date: new Date().toISOString().slice(0,10),
+      product: item.product.name,
+      qty: -item.unitsSold,
+      by: `Sales Import — ${store} (${dateFrom}${dateTo&&dateTo!==dateFrom?' to '+dateTo:''})`
+    };
+    restockLog = [entry,...restockLog];
+    await saveRestock(entry);
+    updated++;
+  }
+
+  // Save import record
+  const record = {
+    id: Date.now(),
+    store_name: store,
+    date_from: dateFrom||'',
+    date_to: dateTo||'',
+    imported_at: new Date().toISOString(),
+    item_count: updated,
+    units_sold: totalUnits
+  };
+  await saveSalesImportRecord(record);
+
+  // Log summary to activity
+  const summary = {
+    id: Date.now()+Math.random(),
+    date: new Date().toISOString().slice(0,10),
+    product: `Sales Import — ${store} (${updated} items · ${totalUnits} units)`,
+    qty: -totalUnits,
+    by: `Sales Import — ${store}`
+  };
+  restockLog = [summary,...restockLog];
+  await saveRestock(summary);
+
+  _salesFileData = null;
+  showToast(`✓ Sales import complete — ${updated} store items updated for ${store}`);
+  updateSidebar();
+  renderSalesImport();
+}
 
 // ═══════════════════════════════════════════════════
 //  BOOT — credentials baked in, go straight to app
