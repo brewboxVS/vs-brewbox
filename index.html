@@ -3654,7 +3654,7 @@ function initStoreCountState(){
   storeCountSubmitResult = null;
   const items = storeInventory.filter(x=>x.store_name===storeCountStore);
   for(const item of items){
-    storeCountState[item.id] = {verified:false, actualQty:'', reason:''};
+    storeCountState[item.id] = {verified:false, actualQty:'', reason:'', stepperVal:item.qty};
   }
 }
 
@@ -5033,10 +5033,13 @@ function updateMobTitle(title){
   if(el) el.textContent = title;
 }
 
-// Hook nav buttons to close menu on mobile
+// Hook nav buttons to close menu on mobile — only close for page navigation, not submenu toggles
 document.addEventListener('click', e=>{
   const navBtn = e.target.closest('.nav-btn');
-  if(navBtn && IS_MOBILE()) closeMobMenu();
+  if(!navBtn || !IS_MOBILE()) return;
+  // Only close if this button navigates to a page (has onclick with setView)
+  const onclick = navBtn.getAttribute('onclick') || '';
+  if(onclick.includes('setView')) closeMobMenu();
 });
 
 // ═══════════════════════════════════════════════════
@@ -5076,7 +5079,7 @@ function renderMobStoreCount(){
       return `
         <div class="mob-count-section-hdr">
           <span>${group.label} (${group.items.length})</span>
-          <button class="skip-btn" onclick="toggleStoreCountSkip('${group.source}');renderStoreCount()">
+          <button class="skip-btn" onclick="toggleStoreCountSkip('${group.source}');renderMobStoreCount()">
             ${skipped?'↩ Include':'⏭ Skip'}
           </button>
         </div>
@@ -5087,7 +5090,7 @@ function renderMobStoreCount(){
     </div>
 
     <div class="mob-count-submit">
-      <button class="cancel-btn" onclick="cancelStoreCount();renderStoreCount()">✕ Cancel</button>
+      <button class="cancel-btn" onclick="cancelStoreCount();renderMobStoreCount()">✕ Cancel</button>
       <button class="submit-btn" onclick="confirmSubmitStoreCount()" ${storeCountSubmitted?'disabled style="opacity:0.5"':''}>
         ✓ Submit Count
       </button>
@@ -5381,47 +5384,8 @@ function mobSetRecQtys(){
   showToast('Recommended quantities set');
 }
 
-// ═══════════════════════════════════════════════════
-//  ROUTER OVERRIDE — detect mobile and use mobile renders
-// ═══════════════════════════════════════════════════
-const _origRender = render;
-function render(){
-  if(IS_MOBILE()){
-    if(currentView==='store-count'){ renderStoreCount(); return; }
-    if(currentView==='store-inventory'){ renderStoreInventory(); return; }
-    if(currentView==='store-orders'){ renderStoreOrders(); return; }
-  }
-  _origRender();
-  updateMobTitle(document.querySelector('.top-bar-title')?.textContent || 'BrewBox OS');
-}
-
-// Override specific render functions to switch on mobile
-const _origRenderStoreCount = renderStoreCount;
-function renderStoreCount(){
-  if(IS_MOBILE()){ renderMobStoreCount(); return; }
-  _origRenderStoreCount();
-}
-
-const _origRenderStoreInventory = renderStoreInventory;
-function renderStoreInventory(){
-  if(IS_MOBILE()){ renderMobStoreInventory(); return; }
-  _origRenderStoreInventory();
-}
-
-const _origRenderStoreOrders = renderStoreOrders;
-function renderStoreOrders(){
-  if(IS_MOBILE()){ renderMobStoreOrders(); return; }
-  _origRenderStoreOrders();
-}
-
-// Update mobile title when setView is called
-const _origSetView = setView;
-function setView(v){
-  _origSetView(v);
-  const titles = {'store-count':'Store Count','store-inventory':'Store Inventory','store-orders':'Store Orders','inventory':'MM Inventory','coffee':'Coffee Inventory','wh-orders':'WH Orders','count':'WH Count','dashboard':'Dashboard','restock':'Activity','order-activity':'Orders'};
-  updateMobTitle(titles[v]||'BrewBox OS');
-  if(IS_MOBILE()) closeMobMenu();
-}
+// ── Mobile router patch — applied at boot after all fns defined ──
+// (patched into setView and render at boot time, see BOOT section)
 
 // Handle resize (switch between layouts)
 let _lastMobile = IS_MOBILE();
@@ -5839,4 +5803,46 @@ if('serviceWorker' in navigator){
 </html>
 <script>
 // Marker - will be removed
+
+// ══════════════════════════════════════════════════════
+//  MOBILE PATCH — runs after ALL functions are defined
+//  Patches setView and the 3 store render functions
+// ══════════════════════════════════════════════════════
+(function patchMobile(){
+  // Patch renderStoreCount
+  const _sc = renderStoreCount;
+  renderStoreCount = function(){
+    if(IS_MOBILE()){ renderMobStoreCount(); return; }
+    _sc();
+  };
+
+  // Patch renderStoreInventory
+  const _si = renderStoreInventory;
+  renderStoreInventory = function(){
+    if(IS_MOBILE()){ renderMobStoreInventory(); return; }
+    _si();
+  };
+
+  // Patch renderStoreOrders
+  const _so = renderStoreOrders;
+  renderStoreOrders = function(){
+    if(IS_MOBILE()){ renderMobStoreOrders(); return; }
+    _so();
+  };
+
+  // Patch setView to update mobile title and close menu
+  const _sv = setView;
+  setView = function(v){
+    _sv(v);
+    const titles = {
+      'store-count':'Store Count','store-inventory':'Store Inventory',
+      'store-orders':'Store Orders','inventory':'MM Inventory',
+      'coffee':'Coffee Inventory','wh-orders':'WH Orders',
+      'count':'WH Count','dashboard':'Dashboard',
+      'restock':'Activity','order-activity':'Orders'
+    };
+    updateMobTitle(titles[v]||'BrewBox OS');
+  };
+})();
+
 </script>
