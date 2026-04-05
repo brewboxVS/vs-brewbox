@@ -5597,6 +5597,21 @@ function parseCSVToRows(text){
   });
 }
 
+// ── Date overlap detection helpers ──
+function datesOverlap(from1, to1, from2, to2){
+  // Returns true if [from1..to1] overlaps [from2..to2]
+  // Dates as YYYY-MM-DD strings
+  if(!from1||!to1||!from2||!to2) return false;
+  return from1 <= to2 && from2 <= to1;
+}
+
+function findOverlappingImports(store, dateFrom, dateTo){
+  return salesImportHistory.filter(r =>
+    r.store_name === store &&
+    datesOverlap(dateFrom, dateTo, r.date_from, r.date_to)
+  );
+}
+
 function parseSalesFile(){
   if(!_salesFileData || _salesFileData.length < 2) return;
 
@@ -5670,28 +5685,62 @@ function parseSalesFile(){
   // Sort matched: in-store-inventory first, then alphabetical
   matched.sort((a,b)=>(b.inStoreInventory?1:0)-(a.inStoreInventory?1:0)||a.csvName.localeCompare(b.csvName));
 
-  renderSalesPreview(matched, unmatched, store, dateFrom, dateTo, totalUnits);
+  // Check for overlapping prior imports
+  const overlaps = (dateFrom && dateTo) ? findOverlappingImports(store, dateFrom, dateTo) : [];
+
+  renderSalesPreview(matched, unmatched, store, dateFrom, dateTo, totalUnits, overlaps);
 }
 
-function renderSalesPreview(matched, unmatched, store, dateFrom, dateTo, totalUnits){
+function renderSalesPreview(matched, unmatched, store, dateFrom, dateTo, totalUnits, overlaps=[]){
   const inStore = matched.filter(x=>x.inStoreInventory);
   const notInStore = matched.filter(x=>!x.inStoreInventory);
+  const hasOverlap = overlaps.length > 0;
 
   document.getElementById('si-preview-area').innerHTML=`
-    <div class="card" style="border-top:3px solid #0d1f4e">
+
+    ${hasOverlap ? `
+    <div style="background:#fff3e0;border:2px solid #e8943a;border-radius:8px;padding:12px 14px;margin-bottom:12px">
+      <div style="display:flex;align-items:flex-start;gap:10px">
+        <span style="font-size:20px;flex-shrink:0">⚠️</span>
+        <div>
+          <div style="font-size:13px;font-weight:700;color:#b35a00;margin-bottom:4px">Possible Duplicate Import Detected</div>
+          <div style="font-size:12px;color:#7060a0;margin-bottom:8px;line-height:1.6">
+            This date range overlaps with ${overlaps.length} previous import${overlaps.length>1?'s':''} for <strong>${store}</strong>:
+          </div>
+          ${overlaps.map(r=>`
+            <div style="font-size:11px;background:#fff;border:1px solid #f0c080;border-radius:6px;padding:6px 10px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center">
+              <span style="color:#0d1f4e;font-weight:600">${r.date_from} → ${r.date_to}</span>
+              <span style="color:#7080a0">${r.units_sold} units · imported ${toPST(r.imported_at)}</span>
+            </div>`).join('')}
+          <div style="font-size:11px;color:#b35a00;margin-top:8px;line-height:1.5">
+            Importing again will <strong>double-deduct</strong> these sales from store inventory.
+            Only proceed if you intentionally want to re-apply this data.
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;margin-top:10px;cursor:pointer">
+            <input type="checkbox" id="si-override-checkbox" onchange="document.getElementById('si-confirm-btn').disabled=!this.checked; document.getElementById('si-confirm-btn').style.opacity=this.checked?'1':'0.4'"
+              style="width:16px;height:16px;accent-color:#b35a00;cursor:pointer"/>
+            <span style="font-size:12px;font-weight:700;color:#b35a00">I understand — apply anyway</span>
+          </label>
+        </div>
+      </div>
+    </div>` : ''}
+
+    <div class="card" style="border-top:3px solid ${hasOverlap?'#e8943a':'#0d1f4e'}">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px">
         <div>
           <div class="card-title" style="margin-bottom:2px">Import Preview — ${store}</div>
           <div style="font-size:11px;color:#7080a0">
             ${dateFrom&&dateTo?`${dateFrom} → ${dateTo} · `:''}
             <span style="color:#1a7a45;font-weight:700">${inStore.length} items will update</span> ·
-            ${notInStore.length} matched but not in store inventory ·
+            ${notInStore.length} matched but not in store ·
             <span style="color:#b01c1c">${unmatched.length} unmatched</span> ·
             ${totalUnits} total units sold
           </div>
         </div>
-        <button id="si-confirm-btn" onclick="confirmSalesImport(${JSON.stringify(matched).replace(/"/g,'&quot;')}, '${store}', '${dateFrom}', '${dateTo}', ${totalUnits})"
-          style="background:#1a7a45;color:#fff;border:none;border-radius:7px;padding:9px 18px;font-size:13px;font-weight:700;cursor:pointer">
+        <button id="si-confirm-btn"
+          onclick="confirmSalesImport(${JSON.stringify(matched).replace(/"/g,'&quot;')}, '${store}', '${dateFrom}', '${dateTo}', ${totalUnits})"
+          ${hasOverlap?'disabled':''}
+          style="background:#1a7a45;color:#fff;border:none;border-radius:7px;padding:9px 18px;font-size:13px;font-weight:700;cursor:pointer;${hasOverlap?'opacity:0.4':''}">
           ✓ Apply ${inStore.length} Updates to ${store}
         </button>
       </div>
@@ -5710,8 +5759,8 @@ function renderSalesPreview(matched, unmatched, store, dateFrom, dateTo, totalUn
             <th>CHANGE</th>
           </tr></thead>
           <tbody>
-          ${inStore.map(x=>`<tr>
-            <td style="padding-left:4px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:220px">${x.csvName}</td>
+          ${inStore.map(x=>`<tr ${hasOverlap?'style="background:#fff8f0"':''}>
+            <td style="padding-left:4px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:220px">${x.csvName}${hasOverlap?'<span style="font-size:9px;color:#e8943a;font-weight:700;margin-left:6px;background:#fff3e0;padding:1px 5px;border-radius:3px">POSSIBLE DUP</span>':''}</td>
             <td style="font-weight:700;color:#b35a00">−${x.unitsSold}</td>
             <td style="color:#0d1f4e;font-weight:700">${x.currentStoreQty}</td>
             <td style="font-weight:700;color:${x.newStoreQty<=0?'#b01c1c':'#1a7a45'}">${x.newStoreQty}</td>
