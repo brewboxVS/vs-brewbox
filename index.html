@@ -3260,6 +3260,7 @@ let storeOrders = [];      // all store_orders rows
 let currentOrderStore = 'SM Toyota';
 let expandedOrderIds = new Set();
 let storeOrderSubmitting = false;
+let storeOrderRecQtySet = false;
 const LS_STORE_ORDERS = 'vs_brewbox_store_orders';
 
 async function loadStoreOrders(){
@@ -3315,12 +3316,17 @@ async function saveStoreOrder(order){
 function renderStoreOrders(){
   const openOrders = storeOrders.filter(o=>o.store_name===currentOrderStore && o.status==='open');
   const closedOrders = storeOrders.filter(o=>o.store_name===currentOrderStore && o.status==='received');
-  const storeItems = storeInventory.filter(x=>x.store_name===currentOrderStore);
+  const allStoreItems = storeInventory.filter(x=>x.store_name===currentOrderStore);
+  // When rec qty is set, only show items that need restocking
+  const storeItems = storeOrderRecQtySet
+    ? allStoreItems.filter(x=>x.max_level > 0 && x.qty < x.max_level)
+    : allStoreItems;
+  const filteredOut = allStoreItems.length - storeItems.length;
 
   document.getElementById('main-body').innerHTML=`
     <div style="display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap">
       <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.8px">Store:</label>
-      <select onchange="currentOrderStore=this.value;renderStoreOrders()"
+      <select onchange="currentOrderStore=this.value;storeOrderRecQtySet=false;renderStoreOrders()"
         style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:160px">
         ${STORES.map(s=>`<option value="${s}" ${s===currentOrderStore?'selected':''}>${s}</option>`).join('')}
       </select>
@@ -3345,10 +3351,11 @@ function renderStoreOrders(){
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
         <div>
           <div class="card-title" style="margin-bottom:2px">New Order — ${currentOrderStore}</div>
-          <div style="font-size:11px;color:#7080a0">${storeItems.length} items · Set order quantities below</div>
+          <div style="font-size:11px;color:#7080a0">${storeOrderRecQtySet?`<span style="color:#1a7a45;font-weight:700">${storeItems.length} items need restocking</span> · ${filteredOut} fully stocked hidden`:`${allStoreItems.length} items · Set order quantities below`}</div>
         </div>
         <div style="display:flex;gap:8px">
-          <button onclick="setRecommendedQtys()" style="background:#f4f6fa;color:#0d1f4e;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 14px;font-size:11px;font-weight:700;cursor:pointer">⚡ Set Recommended Qtys</button>
+          ${storeOrderRecQtySet?`<button onclick="storeOrderRecQtySet=false;renderStoreOrders()" style="background:#f4f6fa;color:#5060a0;border:1.5px solid #d0d5e0;border-radius:7px;padding:7px 14px;font-size:11px;font-weight:700;cursor:pointer">Show All Items</button>`
+          :`<button onclick="setRecommendedQtys()" style="background:#f4f6fa;color:#0d1f4e;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 14px;font-size:11px;font-weight:700;cursor:pointer">⚡ Set Recommended Qtys</button>`}
           <button id="save-order-btn" onclick="saveNewStoreOrder()" class="primary-btn" style="padding:8px 16px">💾 Save as Open Order</button>
         </div>
       </div>
@@ -3373,7 +3380,8 @@ function renderStoreOrders(){
             const srcBadge = item.product_source==='coffee'
               ? '<span style="background:#f3e8ff;color:#6b2fa0;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700">COFFEE</span>'
               : '<span style="background:#e8edf8;color:#0d1f4e;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700">MM</span>';
-            return '<tr><td style="padding-left:8px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:220px">'+item.product_name+'</td><td>'+srcBadge+'</td><td style="font-weight:700;color:'+(item.qty<=0?'#b01c1c':item.min_level>0&&item.qty<=item.min_level?'#b35a00':'#1a7a45')+'">'+item.qty+'</td><td>'+item.min_level+'</td><td style="color:#7080a0">'+item.max_level+'</td><td style="color:#5060a0">'+whQty+'</td><td><input type="number" id="oq-'+item.id+'" min="0" placeholder="—" style="width:75px;background:#f4f6fa;border:1.5px solid #d0d5e0;border-radius:5px;padding:4px 7px;font-size:12px;font-weight:700;color:#0d1f4e;outline:none"/></td></tr>';
+            const recQty = storeOrderRecQtySet ? Math.max(0, item.max_level - item.qty) : 0;
+            return '<tr><td style="padding-left:8px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:220px">'+item.product_name+'</td><td>'+srcBadge+'</td><td style="font-weight:700;color:'+(item.qty<=0?'#b01c1c':item.min_level>0&&item.qty<=item.min_level?'#b35a00':'#1a7a45')+'">'+item.qty+'</td><td>'+item.min_level+'</td><td style="color:#7080a0">'+item.max_level+'</td><td style="color:#5060a0">'+whQty+'</td><td><input type="number" id="oq-'+item.id+'" min="0" placeholder="—" value="'+(recQty>0?recQty:'')+'" style="width:75px;background:#f4f6fa;border:1.5px solid '+(recQty>0?'#c9a84c':'#d0d5e0')+';border-radius:5px;padding:4px 7px;font-size:12px;font-weight:700;color:#0d1f4e;outline:none"/></td></tr>';
           }).join('')+'</tbody></table></div></div>';
         }).join('');
       })()}`}
@@ -3381,14 +3389,9 @@ function renderStoreOrders(){
 }
 
 function setRecommendedQtys(){
-  const storeItems = storeInventory.filter(x=>x.store_name===currentOrderStore);
-  for(const item of storeItems){
-    const el = document.getElementById(`oq-${item.id}`);
-    if(!el) continue;
-    const needed = Math.max(0, item.max_level - item.qty);
-    el.value = needed > 0 ? needed : '';
-  }
-  showToast('Recommended quantities set');
+  storeOrderRecQtySet = true;
+  renderStoreOrders();
+  showToast('Showing items that need restocking');
 }
 
 async function saveNewStoreOrder(){
@@ -5426,11 +5429,15 @@ async function mobInvSave(id){
 function renderMobStoreOrders(){
   updateMobTitle('Store Orders');
   const openOrders = storeOrders.filter(o=>o.store_name===currentOrderStore && o.status==='open');
-  const storeItems = storeInventory.filter(x=>x.store_name===currentOrderStore);
+  const allStoreItems = storeInventory.filter(x=>x.store_name===currentOrderStore);
+  const storeItems = storeOrderRecQtySet
+    ? allStoreItems.filter(x=>x.max_level > 0 && x.qty < x.max_level)
+    : allStoreItems;
+  const filteredOut = allStoreItems.length - storeItems.length;
 
   document.getElementById('main-body').innerHTML=`
     <div class="mob-order-store-bar">
-      <select onchange="currentOrderStore=this.value;renderStoreOrders()">
+      <select onchange="currentOrderStore=this.value;storeOrderRecQtySet=false;renderStoreOrders()">
         ${STORES.map(s=>`<option value="${s}" ${s===currentOrderStore?'selected':''}>${s}</option>`).join('')}
       </select>
     </div>
@@ -5445,9 +5452,12 @@ function renderMobStoreOrders(){
     <div class="mob-new-order-section">
       <div class="mob-new-order-hdr">
         <span>New Order — ${currentOrderStore}</span>
-        <button onclick="mobSetRecQtys()" style="font-size:10px;font-weight:700;color:#0d1f4e;background:#e8edf8;border:none;border-radius:5px;padding:5px 10px;cursor:pointer">⚡ Rec. Qty</button>
+        ${storeOrderRecQtySet
+          ?`<button onclick="storeOrderRecQtySet=false;renderStoreOrders()" style="font-size:10px;font-weight:700;color:#5060a0;background:#f4f6fa;border:1px solid #d0d5e0;border-radius:5px;padding:5px 10px;cursor:pointer">Show All</button>`
+          :`<button onclick="mobSetRecQtys()" style="font-size:10px;font-weight:700;color:#0d1f4e;background:#e8edf8;border:none;border-radius:5px;padding:5px 10px;cursor:pointer">⚡ Rec. Qty</button>`}
       </div>
-      ${storeItems.length===0?`<div style="text-align:center;padding:30px;color:#7080a0;font-size:13px">No items in store inventory</div>`
+      ${storeOrderRecQtySet?`<div style="font-size:11px;color:#1a7a45;font-weight:600;padding:6px 12px;background:#f0fff4;border-radius:6px;margin-bottom:6px">${storeItems.length} items need restocking · ${filteredOut} fully stocked hidden</div>`:''}
+      ${storeItems.length===0?`<div style="text-align:center;padding:30px;color:#7080a0;font-size:13px">${storeOrderRecQtySet?'All items are fully stocked!':'No items in store inventory'}</div>`
       :(function(){
         const catGroups = {};
         for(const item of storeItems){
@@ -5462,7 +5472,8 @@ function renderMobStoreOrders(){
             const wh = item.product_source==='coffee'
               ? coffeeProducts.find(p=>p.id===item.product_id)
               : products.find(p=>p.id===item.product_id);
-            return '<div class="mob-new-order-item"><div class="item-info"><div class="name">'+item.product_name+'</div><div class="meta">On hand: <strong>'+item.qty+'</strong> · WH: '+(wh?.qty??'—')+'</div></div><input type="number" class="item-qty-input" id="moq-'+item.id+'" min="0" placeholder="0"/></div>';
+            const recQty = storeOrderRecQtySet ? Math.max(0, item.max_level - item.qty) : 0;
+            return '<div class="mob-new-order-item"><div class="item-info"><div class="name">'+item.product_name+'</div><div class="meta">On hand: <strong>'+item.qty+'</strong> · WH: '+(wh?.qty??'—')+'</div></div><input type="number" class="item-qty-input" id="moq-'+item.id+'" min="0" placeholder="0" value="'+(recQty>0?recQty:'')+'"/></div>';
           }).join('');
         }).join('');
       })()}
@@ -5504,14 +5515,9 @@ function renderMobOpenOrder(order){
 }
 
 function mobSetRecQtys(){
-  const storeItems = storeInventory.filter(x=>x.store_name===currentOrderStore);
-  for(const item of storeItems){
-    const el = document.getElementById('moq-'+item.id);
-    if(!el) continue;
-    const needed = Math.max(0, item.max_level - item.qty);
-    el.value = needed > 0 ? needed : '';
-  }
-  showToast('Recommended quantities set');
+  storeOrderRecQtySet = true;
+  renderStoreOrders();
+  showToast('Showing items that need restocking');
 }
 
 // ── Mobile router patch — applied at boot after all fns defined ──
