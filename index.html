@@ -234,11 +234,13 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
   .top-bar { display: none !important; }
 
   /* Main body fills all remaining space */
-  #main { flex: 1; overflow: hidden; }
+  #main { flex: 1; overflow: hidden; width: 100%; }
   .main-body {
-    padding: 10px 12px !important;
+    padding: 10px 10px !important;
     overflow-y: auto; overflow-x: hidden;
+    width: 100%; box-sizing: border-box;
   }
+  * { box-sizing: border-box; }
 
   /* Show the mobile topbar (hidden on desktop) */
   #mob-topbar { display: flex; }
@@ -339,8 +341,9 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
   .mob-count-submit {
     position: fixed; bottom: 0; left: 0; right: 0;
     background: #fff; border-top: 1px solid #e8ecf4;
-    padding: 10px 14px 14px; z-index: 50;
+    padding: 10px 12px 16px; z-index: 50;
     display: flex; gap: 8px;
+    box-sizing: border-box; width: 100%;
   }
   .mob-count-submit button { flex: 1; padding: 14px; font-size: 14px; font-weight: 700; border-radius: 8px; border: none; cursor: pointer; }
   .mob-count-submit .submit-btn { background: #0d1f4e; color: #fff; }
@@ -5804,6 +5807,300 @@ if('serviceWorker' in navigator){
 <script>
 // Marker - will be removed
 
+// ═══════════════════════════════════════════════════
+//  MOBILE WAREHOUSE COUNT
+// ═══════════════════════════════════════════════════
+function renderMobWhCount(){
+  updateMobTitle('WH Count');
+  const allProducts = products.filter(p => p.active);
+  const total = allProducts.length;
+  const verified = allProducts.filter(p => {
+    const s = countState[p.id];
+    return s && (s.verified || (s.actualQty !== '' && s.reason));
+  }).length;
+
+  // Group by category
+  const groups = {};
+  for(const p of allProducts){
+    const cat = p.cat1 || 'OTHER';
+    if(!groups[cat]) groups[cat] = [];
+    groups[cat].push(p);
+  }
+  const CAT_ORDER = ['DRINKS','CHIPS','SNACKS','CANDY','PASTRY','COLD FOOD','FROZEN FOOD'];
+  const orderedCats = [...CAT_ORDER.filter(c=>groups[c]), ...Object.keys(groups).filter(c=>!CAT_ORDER.includes(c))];
+
+  document.getElementById('main-body').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div style="font-size:13px;color:#5060a0;font-weight:600">${verified}/${total} verified</div>
+      <div style="display:flex;gap:8px">
+        <button onclick="cancelWhCount()" style="padding:8px 14px;background:#fff;color:#b01c1c;border:1.5px solid #b01c1c;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">✕ Cancel</button>
+        <button id="mob-wh-count-submit" onclick="confirmSubmitCount()" style="padding:8px 14px;background:#0d1f4e;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer" ${countSubmitted?'disabled style="opacity:0.5"':''}>✓ Submit</button>
+      </div>
+    </div>
+
+    <div style="padding-bottom:20px">
+    ${orderedCats.map(cat => {
+      const items = groups[cat] || [];
+      const skipped = countSkippedCats.has(cat);
+      const catVerified = items.filter(p => {
+        const s = countState[p.id];
+        return s && (s.verified || (s.actualQty !== '' && s.reason));
+      }).length;
+      return `
+        <div class="mob-count-section-hdr">
+          <span>${cat} <span style="font-size:10px;color:#8090b0">${catVerified}/${items.length}</span></span>
+          <button class="skip-btn" onclick="mobWhCountSkip('${cat}')">${skipped ? '↩ Include' : '⏭ Skip'}</button>
+        </div>
+        ${skipped ? `<div style="font-size:12px;color:#7080a0;margin-bottom:10px;padding:8px 12px;background:#f4f6fa;border-radius:8px">Section skipped</div>`
+        : items.map(p => renderMobWhCountCard(p)).join('')}
+      `;
+    }).join('')}
+    </div>
+
+    <div class="mob-count-submit">
+      <button class="cancel-btn" onclick="cancelWhCount();renderWhCount()">✕ Cancel</button>
+      <button class="submit-btn" onclick="confirmSubmitCount()" ${countSubmitted?'disabled style="opacity:0.5"':''}>✓ Submit Count</button>
+    </div>
+  `;
+}
+
+function renderMobWhCountCard(p){
+  const s = countState[p.id] || {verified:false, actualQty:'', reason:'', stepperVal:undefined};
+  if(s.stepperVal === undefined) s.stepperVal = p.qty;
+  const currentQty = p.qty;
+  const displayVal = s.verified ? currentQty : s.stepperVal;
+  const diff = s.verified ? 0 : displayVal - currentQty;
+  const isDiff = diff !== 0;
+  const reasons = isDiff ? (diff < 0 ? ['Spoilage','Theft/Walkoff','Manual Decrease'] : ['Manual Increase','Restock from Order']) : [];
+  const cardClass = s.verified ? 'verified' : (isDiff ? 'has-diff' : '');
+
+  return `<div class="mob-count-card ${cardClass}" id="mwc-${p.id}">
+    <div class="mob-count-name">
+      <span style="font-size:13px">${p.name}</span>
+      <button class="mob-correct-btn ${s.verified?'active':''}" onclick="mobWhCountVerify(${p.id})">
+        ${s.verified ? '✓ Correct' : 'Mark OK'}
+      </button>
+    </div>
+    <div class="mob-count-current">Warehouse stock: <strong>${currentQty}</strong></div>
+    ${!s.verified ? `
+    <div class="mob-stepper">
+      <button class="mob-stepper-btn minus" onclick="mobWhCountStep(${p.id},-1)" ontouchstart="">−</button>
+      <div class="mob-stepper-val ${isDiff?'changed':''}">${displayVal}</div>
+      <button class="mob-stepper-btn plus" onclick="mobWhCountStep(${p.id},1)" ontouchstart="">+</button>
+    </div>
+    ${isDiff ? `
+    <div class="mob-count-diff">
+      Difference: <span class="diff-val ${diff<0?'neg':'pos'}">${diff>0?'+':''}${diff}</span>
+    </div>
+    <div class="mob-count-reason">
+      <select onchange="mobWhCountReason(${p.id},this.value)"
+        style="width:100%;padding:10px 12px;background:#fff;border:1.5px solid ${s.reason?'#0d1f4e':'#e8943a'};border-radius:8px;font-size:13px;color:#1a2340;outline:none;cursor:pointer">
+        <option value="">-- Select reason --</option>
+        ${reasons.map(r=>`<option value="${r}" ${s.reason===r?'selected':''}>${r}</option>`).join('')}
+      </select>
+    </div>` : ''}
+    ` : `<div style="font-size:12px;color:#1a7a45;font-weight:600;margin-top:4px">✓ Quantity confirmed correct</div>`}
+  </div>`;
+}
+
+function mobWhCountStep(id, delta){
+  const p = products.find(x=>x.id===id);
+  if(!p) return;
+  if(!countState[id]) countState[id] = {verified:false, actualQty:'', reason:'', stepperVal:p.qty};
+  const s = countState[id];
+  if(s.stepperVal === undefined) s.stepperVal = p.qty;
+  s.stepperVal = Math.max(0, s.stepperVal + delta);
+  s.actualQty = String(s.stepperVal);
+  s.verified = false;
+  const diff = s.stepperVal - p.qty;
+  // Reset reason if direction changed
+  if(s.reason){
+    const negR = ['Spoilage','Theft/Walkoff','Manual Decrease'];
+    const posR = ['Manual Increase','Restock from Order'];
+    if(diff < 0 && posR.includes(s.reason)) s.reason = '';
+    if(diff > 0 && negR.includes(s.reason)) s.reason = '';
+    if(diff === 0) s.reason = '';
+  }
+  // DOM patch
+  const card = document.getElementById('mwc-'+id);
+  if(card){
+    const isDiff = diff !== 0;
+    card.className = 'mob-count-card' + (isDiff?' has-diff':'');
+    const valEl = card.querySelector('.mob-stepper-val');
+    if(valEl){ valEl.textContent = s.stepperVal; valEl.className='mob-stepper-val'+(isDiff?' changed':''); }
+    if(isDiff){
+      const diffEl = card.querySelector('.mob-count-diff');
+      if(!diffEl){ card.outerHTML = renderMobWhCountCard(p); return; }
+      diffEl.innerHTML = `Difference: <span class="diff-val ${diff<0?'neg':'pos'}">${diff>0?'+':''}${diff}</span>`;
+      const selEl = card.querySelector('.mob-count-reason select');
+      if(selEl) selEl.style.borderColor = s.reason?'#0d1f4e':'#e8943a';
+    } else {
+      const diffEl = card.querySelector('.mob-count-diff');
+      if(diffEl) card.outerHTML = renderMobWhCountCard(p);
+    }
+  }
+}
+
+function mobWhCountVerify(id){
+  const p = products.find(x=>x.id===id);
+  if(!p) return;
+  if(!countState[id]) countState[id] = {verified:false, actualQty:'', reason:'', stepperVal:p.qty};
+  const s = countState[id];
+  s.verified = !s.verified;
+  if(s.verified){ s.stepperVal = p.qty; s.actualQty = ''; s.reason = ''; }
+  const card = document.getElementById('mwc-'+id);
+  if(card) card.outerHTML = renderMobWhCountCard(p);
+}
+
+function mobWhCountReason(id, val){
+  if(!countState[id]) return;
+  countState[id].reason = val;
+}
+
+function mobWhCountSkip(cat){
+  if(countSkippedCats.has(cat)) countSkippedCats.delete(cat);
+  else countSkippedCats.add(cat);
+  renderMobWhCount();
+}
+
+function cancelWhCount(){
+  initCountState();
+}
+
+// ═══════════════════════════════════════════════════
+//  MOBILE WAREHOUSE ORDERS
+// ═══════════════════════════════════════════════════
+function renderMobWhOrders(){
+  updateMobTitle('WH Orders');
+  if(!whOrdersLoaded){ loadWhOrders().then(()=>renderMobWhOrders()); return; }
+  const openOrders = whOrders.filter(o=>o.status==='open');
+  const rcvdOrders = whOrders.filter(o=>o.status==='received').slice(0,3);
+  const lowCount = products.filter(p=>p.active&&p.minLevel>0&&p.qty<=p.minLevel).length;
+
+  document.getElementById('main-body').innerHTML = `
+    <!-- Stats -->
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px">
+      <div class="stat-card" style="padding:8px 10px">
+        <div class="stat-val" style="font-size:18px;color:#b01c1c">${lowCount}</div>
+        <div class="stat-label">At/Below Min</div>
+      </div>
+      <div class="stat-card" style="padding:8px 10px;border-top-color:#c9a84c">
+        <div class="stat-val" style="font-size:18px;color:#b35a00">${openOrders.length}</div>
+        <div class="stat-label">Open</div>
+      </div>
+      <div class="stat-card" style="padding:8px 10px;border-top-color:#1a7a45">
+        <div class="stat-val" style="font-size:18px;color:#1a7a45">${whOrders.filter(o=>o.status==='received').length}</div>
+        <div class="stat-label">Received</div>
+      </div>
+    </div>
+
+    <!-- Create order buttons -->
+    <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">
+      <button onclick="previewNewWhOrder()" style="width:100%;padding:14px;background:#0d1f4e;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;${lowCount===0?'opacity:0.5':''}" ${lowCount===0?'disabled':''}>
+        📋 Preview & Create Planned Order
+      </button>
+      <button onclick="openQuickCapture()" style="width:100%;padding:14px;background:#6b2fa0;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer">
+        📸 Quick Capture (Receipt / Text)
+      </button>
+    </div>
+
+    <!-- Open orders -->
+    ${openOrders.length>0 ? `
+    <div style="font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:#b35a00;margin-bottom:8px">Open Orders</div>
+    ${openOrders.map(o=>renderMobWhOrderCard(o,true)).join('')}` : ''}
+
+    <!-- Recently received -->
+    ${rcvdOrders.length>0 ? `
+    <div style="font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:#1a7a45;margin:14px 0 8px">Recently Received</div>
+    ${rcvdOrders.map(o=>renderMobWhOrderCard(o,false)).join('')}` : ''}
+
+    ${openOrders.length===0&&whOrders.length===0 ? `
+    <div style="text-align:center;padding:40px 20px;color:#7080a0">
+      <div style="font-size:32px;margin-bottom:10px">📦</div>
+      <div style="font-size:15px;font-weight:600;margin-bottom:6px">No warehouse orders yet</div>
+      <div style="font-size:13px">Create a planned order or use Quick Capture above</div>
+    </div>` : ''}
+  `;
+}
+
+function renderMobWhOrderCard(order, isOpen){
+  const isExpanded = whExpandedIds.has(order.id);
+  const dateStr = toPST(order.created_at);
+  const rcvdStr = order.received_at ? toPST(order.received_at) : '';
+  const checkedItems = order.items.filter(x=>x.bought_rec||(x.actual_cases!==''&&parseFloat(x.actual_cases)>0)).length;
+
+  // Group by vendor for display
+  const byVendor = {};
+  for(const item of order.items){
+    if(!byVendor[item.vendor]) byVendor[item.vendor]=[];
+    byVendor[item.vendor].push(item);
+  }
+
+  return `<div style="background:${isOpen?'#fffbf0':'#f0fff4'};border:1.5px solid ${isOpen?'#c9a84c':'#a8dcc0'};border-radius:10px;padding:12px 14px;margin-bottom:10px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;cursor:pointer" onclick="mobWhToggleExpand(${order.id})">
+      <div>
+        <div style="font-size:13px;font-weight:700;color:#0d1f4e">WH Order #${order.id.toString().slice(-6)}</div>
+        <div style="font-size:11px;color:#7080a0;margin-top:2px">${dateStr}${rcvdStr?' · Rcvd '+rcvdStr:''}</div>
+        <div style="font-size:11px;color:#5060a0;margin-top:1px">${order.items.length} items${isOpen?' · '+checkedItems+' confirmed':''}</div>
+      </div>
+      <span style="font-size:16px;color:#8090b0">${isExpanded?'▲':'▼'}</span>
+    </div>
+
+    ${isExpanded ? `
+    <div style="border-top:1px solid ${isOpen?'#f0e8cc':'#c8e8d0'};padding-top:10px;margin-top:2px">
+      ${isOpen ? `
+      ${Object.entries(byVendor).map(([vendor,items])=>`
+        <div style="font-size:10px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:1px;margin:8px 0 4px">${vendor}</div>
+        ${items.map((item,_)=>{
+          const globalIdx = order.items.indexOf(item);
+          const casesUsed = item.bought_rec ? item.rec_cases : (item.actual_cases!==''?parseFloat(item.actual_cases)||0:0);
+          const qtyAdd = casesUsed * item.pieces_per_box;
+          return `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #f4e8c0">
+            <div style="flex:1;min-width:0">
+              <div style="font-size:13px;font-weight:600;color:#0d1f4e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.product_name}</div>
+              <div style="font-size:11px;color:#7080a0">Rec: ${item.rec_cases} cases · ${item.pieces_per_box}pcs/case</div>
+            </div>
+            <div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex-shrink:0">
+              <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+                <input type="checkbox" ${item.bought_rec?'checked':''} onchange="updateWhItemBoughtRec(${order.id},${globalIdx},this.checked)"
+                  style="width:20px;height:20px;accent-color:#1a7a45;cursor:pointer"/>
+                <span style="font-size:11px;color:${item.bought_rec?'#1a7a45':'#7080a0'}">${item.bought_rec?'✓ Got it':''}</span>
+              </label>
+              <input type="number" value="${item.actual_cases||''}" placeholder="Cases" min="0" ${item.bought_rec?'disabled':''}
+                oninput="updateWhItemActualCases(${order.id},${globalIdx},this.value)"
+                style="width:72px;padding:6px;border:1.5px solid ${!item.bought_rec&&item.actual_cases?'#c9a84c':'#d0d5e0'};border-radius:6px;font-size:14px;font-weight:700;text-align:center;outline:none;${item.bought_rec?'opacity:0.4':''}"/>
+              ${qtyAdd>0?`<div style="font-size:10px;color:#1a7a45;font-weight:700">+${qtyAdd} units</div>`:''}
+            </div>
+          </div>`;
+        }).join('')}
+      `).join('')}
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <button onclick="syncWhOrderFromSheet(${order.id})" style="flex:1;padding:11px;background:#f4f6fa;color:#0d1f4e;border:1.5px solid #0d1f4e;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">🔄 Sync</button>
+        <button id="wh-recv-btn-${order.id}" onclick="receiveWhOrder(${order.id})" style="flex:2;padding:11px;background:#1a7a45;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">✓ Receive</button>
+        <button onclick="cancelWhOrder(${order.id})" style="flex:1;padding:11px;background:#fff;color:#b01c1c;border:1.5px solid #b01c1c;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">✕</button>
+      </div>` :
+      // Received order — read-only summary
+      `${Object.entries(byVendor).map(([vendor,items])=>`
+        <div style="font-size:10px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:1px;margin:6px 0 4px">${vendor}</div>
+        ${items.map(item=>{
+          const c=item.bought_rec?item.rec_cases:(item.actual_cases!==''?parseFloat(item.actual_cases)||0:0);
+          return c>0?`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #e8f4ec;font-size:12px">
+            <span style="color:#0d1f4e;font-weight:600">${item.product_name}</span>
+            <span style="color:#1a7a45;font-weight:700">+${c*item.pieces_per_box} units</span>
+          </div>`:'';
+        }).join('')}
+      `).join('')}`}
+    </div>` : ''}
+  </div>`;
+}
+
+function mobWhToggleExpand(id){
+  if(whExpandedIds.has(id)) whExpandedIds.delete(id);
+  else whExpandedIds.add(id);
+  renderMobWhOrders();
+}
+
+
 // ══════════════════════════════════════════════════════
 //  MOBILE PATCH — runs after ALL functions are defined
 //  Patches setView and the 3 store render functions
@@ -5828,6 +6125,20 @@ if('serviceWorker' in navigator){
   renderStoreOrders = function(){
     if(IS_MOBILE()){ renderMobStoreOrders(); return; }
     _so();
+  };
+
+  // Patch renderCount (Warehouse Inventory Count)
+  const _rc = renderCount;
+  renderCount = function(){
+    if(IS_MOBILE()){ renderMobWhCount(); return; }
+    _rc();
+  };
+
+  // Patch renderWhOrders (Warehouse Orders)
+  const _rwo = renderWhOrders;
+  renderWhOrders = function(){
+    if(IS_MOBILE()){ renderMobWhOrders(); return; }
+    _rwo();
   };
 
   // Patch setView to update mobile title and close menu
