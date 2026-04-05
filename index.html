@@ -5442,10 +5442,41 @@ function getLastImportTs(store){
 // ── Render Sales Import page ──
 let _salesRows = null; // parsed rows from file
 
-function renderSalesImport(){
+
+function renderStoreTrackerHTML(){
   const lastByStore = {};
   for(const r of salesImportHistory){
     if(!lastByStore[r.store_name]) lastByStore[r.store_name] = r;
+  }
+  return STORES.map(store=>{
+    const last = lastByStore[store];
+    return `<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:9px 0;border-bottom:1px solid #f0f2f8">
+      <div>
+        <div style="font-size:12px;font-weight:700;color:#0d1f4e">${store}</div>
+        ${last ? `
+          <div style="font-size:11px;color:#7080a0;margin-top:2px">Imported: ${toPST(last.imported_at)}</div>
+          <div style="font-size:10px;color:#5060a0;margin-top:1px">${last.units_sold} units · through ${toPST(last.last_sale_ts)}</div>
+        ` : `<div style="font-size:11px;color:#b0b8cc;margin-top:2px">No imports yet — all data will be new</div>`}
+      </div>
+      ${last ? `<div style="font-size:10px;font-weight:700;color:#1a7a45;background:#e6f4ee;padding:4px 8px;border-radius:5px;text-align:right;white-space:nowrap">
+        Run next report<br>from ${toPST(last.last_sale_ts)}
+      </div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function renderSalesImport(){
+  // Create a persistent file input that lives OUTSIDE innerHTML
+  // so it survives re-renders of the page content
+  let fi = document.getElementById('si-file-input');
+  if(!fi){
+    fi = document.createElement('input');
+    fi.type = 'file';
+    fi.id = 'si-file-input';
+    fi.accept = '.csv,.xlsx,.xls';
+    fi.style.cssText = 'position:fixed;top:-200px;left:-200px;width:1px;height:1px;opacity:0';
+    fi.addEventListener('change', function(){ handleSalesFileUpload(this); });
+    document.body.appendChild(fi);
   }
 
   document.getElementById('main-body').innerHTML=`
@@ -5459,16 +5490,16 @@ function renderSalesImport(){
           Each row = 1 unit sold with a timestamp. Upload CSV or XLSX.
         </div>
 
-        <label id="si-upload-label" for="si-file-input" style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;border:2px dashed #d0d5e0;border-radius:8px;padding:22px;cursor:pointer;background:#f4f6fa;transition:border-color .2s;margin-bottom:12px"
+        <div id="si-upload-label" onclick="document.getElementById('si-file-input').click()"
+          style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;border:2px dashed #d0d5e0;border-radius:8px;padding:22px;cursor:pointer;background:#f4f6fa;transition:border-color .2s;margin-bottom:12px"
           onmouseover="this.style.borderColor='#0d1f4e'" onmouseout="this.style.borderColor='#d0d5e0'">
           <span style="font-size:28px">📊</span>
           <span style="font-size:12px;color:#7080a0;text-align:center">Click to upload CSV or XLSX<br>Cantaloupe Item Sales report</span>
-          <input type="file" id="si-file-input" accept=".csv,.xlsx,.xls" style="position:absolute;opacity:0;width:0;height:0" onchange="handleSalesFileUpload(this)"/>
-        </label>
+        </div>
 
         <div id="si-file-status" style="display:none;font-size:12px;color:#1a7a45;font-weight:600;margin-bottom:10px;padding:8px 12px;background:#e6f4ee;border-radius:7px"></div>
 
-        <div style="margin-bottom:12px" id="si-store-row" style="display:none">
+        <div style="margin-bottom:12px">
           <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.8px;display:block;margin-bottom:6px">Store (auto-detected from file)</label>
           <select id="si-store-select" style="width:100%;background:#fff;border:1.5px solid #d0d5e0;border-radius:7px;padding:8px 12px;font-size:13px;font-weight:600;color:#0d1f4e;outline:none;cursor:pointer">
             ${STORES.map(s=>`<option value="${s}">${s}</option>`).join('')}
@@ -5485,38 +5516,18 @@ function renderSalesImport(){
       <!-- Last import tracker -->
       <div class="card" style="border-top:3px solid #1a7a45">
         <div class="card-title" style="margin-bottom:12px">📅 Last Import by Store</div>
-        ${STORES.map(store=>{
-          const last = lastByStore[store];
-          return `<div style="display:flex;justify-content:space-between;align-items:flex-start;padding:9px 0;border-bottom:1px solid #f0f2f8">
-            <div>
-              <div style="font-size:12px;font-weight:700;color:#0d1f4e">${store}</div>
-              ${last ? `
-                <div style="font-size:11px;color:#7080a0;margin-top:2px">Imported: ${toPST(last.imported_at)}</div>
-                <div style="font-size:10px;color:#5060a0;margin-top:1px">${last.units_sold} units · through ${toPST(last.last_sale_ts)}</div>
-              ` : `<div style="font-size:11px;color:#b0b8cc;margin-top:2px">No imports yet — all data will be new</div>`}
-            </div>
-            ${last ? `<div style="font-size:10px;font-weight:700;color:#1a7a45;background:#e6f4ee;padding:4px 8px;border-radius:5px;text-align:right;white-space:nowrap">
-              Run next report<br>from ${toPST(last.last_sale_ts)}
-            </div>` : ''}
-          </div>`;
-        }).join('')}
+        <div id="si-store-tracker">${renderStoreTrackerHTML()}</div>
       </div>
     </div>
 
     <div id="si-preview-area"></div>
   `;
 
-  if(salesImportHistory.length === 0){
-    loadSalesImportHistory().then(()=>renderSalesImport());
-  }
-  // Ensure file input change event fires reliably across all browsers
-  setTimeout(()=>{
-    const fi = document.getElementById('si-file-input');
-    if(fi && !fi._salesListenerAdded){
-      fi._salesListenerAdded = true;
-      fi.addEventListener('change', function(){ handleSalesFileUpload(this); });
-    }
-  }, 0);
+  // Load history and update tracker panel only — don't re-render whole page
+  loadSalesImportHistory().then(()=>{
+    const tracker = document.getElementById('si-store-tracker');
+    if(tracker) tracker.innerHTML = renderStoreTrackerHTML();
+  });
 }
 
 function handleSalesFileUpload(input){
