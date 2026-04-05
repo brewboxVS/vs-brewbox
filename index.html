@@ -5434,6 +5434,39 @@ async function saveSalesImportRecord(record){
   localStorage.setItem(LS_SALES_IMPORTS, JSON.stringify(salesImportHistory.slice(0,100)));
 }
 
+// ── Cantaloupe store name → app store name mapping ──
+const CANTALOUPE_STORE_MAP = {
+  'santa margarita toyota': 'SM Toyota',
+  'sm toyota':              'SM Toyota',
+  'safran':                 'Safran',
+  'exodus':                 'Exodus',
+  'elevated brandz':        'Elevated Brandz',
+  'sr honda':               'SR Honda',
+  'scott robinson honda':   'SR Honda',
+};
+function cantaloupeToStore(raw){
+  if(!raw) return null;
+  const key = raw.toLowerCase().trim();
+  if(CANTALOUPE_STORE_MAP[key]) return CANTALOUPE_STORE_MAP[key];
+  for(const [k,v] of Object.entries(CANTALOUPE_STORE_MAP)){
+    if(key.includes(k)||k.includes(key)) return v;
+  }
+  return null;
+}
+
+// ── Parse JS-style date: "Wed Apr 01 2026 07:05:44 GMT-0700 ..." ──
+function parseCantaloupeDate(s){
+  if(!s) return null;
+  const m = String(s).match(/\w+ (\w+ \d+ \d+ \d+:\d+:\d+)/);
+  if(!m) return null;
+  try{ return new Date(m[1]); }catch(e){ return null; }
+}
+
+function cleanUPC(raw){
+  if(!raw) return '';
+  return String(raw).split(',')[0].trim().replace(/\.0+$/, '').trim();
+}
+
 function getLastImportTs(store){
   const rec = salesImportHistory.find(r=>r.store_name===store);
   return rec ? rec.last_sale_ts : null;
