@@ -6960,13 +6960,19 @@ if('serviceWorker' in navigator){
 function renderMobWhCount(){
   updateMobTitle('WH Count');
   const allProducts = products.filter(p => p.active);
-  const total = allProducts.length;
-  const verified = allProducts.filter(p => {
+  const allCoffee = coffeeProducts.filter(p => p.active);
+  const total = allProducts.length + allCoffee.length;
+  const mmVerified = allProducts.filter(p => {
     const s = countState[p.id];
     return s && (s.verified || (s.actualQty !== '' && s.reason));
   }).length;
+  const coffeeVerified = allCoffee.filter(p => {
+    const s = countState['c_'+p.id];
+    return s && (s.verified || (s.actualQty !== '' && s.reason));
+  }).length;
+  const verified = mmVerified + coffeeVerified;
 
-  // Group by category
+  // Group MM by category
   const groups = {};
   for(const p of allProducts){
     const cat = p.cat1 || 'OTHER';
@@ -6976,6 +6982,16 @@ function renderMobWhCount(){
   const CAT_ORDER = ['DRINKS','CHIPS','SNACKS','CANDY','PASTRY','COLD FOOD','FROZEN FOOD'];
   const orderedCats = [...CAT_ORDER.filter(c=>groups[c]), ...Object.keys(groups).filter(c=>!CAT_ORDER.includes(c))];
   for(const c of orderedCats){ if(groups[c]) groups[c].sort((a,b)=>a.name.localeCompare(b.name)); }
+
+  // Group Coffee by category
+  const coffeeGroups = {};
+  for(const p of allCoffee){
+    const cat = p.cat1 || 'OTHER';
+    if(!coffeeGroups[cat]) coffeeGroups[cat] = [];
+    coffeeGroups[cat].push(p);
+  }
+  const coffeeCatOrder = [...COFFEE_CAT_ORDER.filter(c=>coffeeGroups[c]), ...Object.keys(coffeeGroups).filter(c=>!COFFEE_CAT_ORDER.includes(c))];
+  for(const c of coffeeCatOrder){ if(coffeeGroups[c]) coffeeGroups[c].sort((a,b)=>a.name.localeCompare(b.name)); }
 
   document.getElementById('main-body').innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
@@ -7003,6 +7019,27 @@ function renderMobWhCount(){
         : items.map(p => renderMobWhCountCard(p)).join('')}
       `;
     }).join('')}
+
+    ${allCoffee.length > 0 ? `
+    <div style="margin:16px 0 10px;padding:10px 0;border-top:3px solid #6b2fa0">
+      <div style="font-size:12px;font-weight:800;color:#6b2fa0;letter-spacing:1.5px;text-transform:uppercase">☕ Coffee Inventory</div>
+    </div>
+    ${coffeeCatOrder.map(cat => {
+      const items = coffeeGroups[cat] || [];
+      const skipped = countSkippedCats.has('C_'+cat);
+      const catVerified = items.filter(p => {
+        const s = countState['c_'+p.id];
+        return s && (s.verified || (s.actualQty !== '' && s.reason));
+      }).length;
+      return `
+        <div class="mob-count-section-hdr" style="border-left:3px solid #6b2fa0">
+          <span>${cat} <span style="font-size:10px;color:#8090b0">${catVerified}/${items.length}</span></span>
+          <button class="skip-btn" onclick="mobWhCountSkip('C_${cat}')">${skipped ? '↩ Include' : '⏭ Skip'}</button>
+        </div>
+        ${skipped ? `<div style="font-size:12px;color:#7080a0;margin-bottom:10px;padding:8px 12px;background:#f4f6fa;border-radius:8px">Section skipped</div>`
+        : items.map(p => renderMobCoffeeCountCard(p)).join('')}
+      `;
+    }).join('')}` : ''}
     </div>
 
     <div class="mob-count-submit">
@@ -7109,6 +7146,102 @@ function mobWhCountSkip(cat){
   if(countSkippedCats.has(cat)) countSkippedCats.delete(cat);
   else countSkippedCats.add(cat);
   renderMobWhCount();
+}
+
+// ── Mobile Coffee Count Card & Helpers ──
+function renderMobCoffeeCountCard(p){
+  const key = 'c_'+p.id;
+  const s = countState[key] || {verified:false, actualQty:'', reason:'', stepperVal:undefined};
+  if(s.stepperVal === undefined) s.stepperVal = p.qty;
+  const currentQty = p.qty;
+  const displayVal = s.verified ? currentQty : s.stepperVal;
+  const diff = s.verified ? 0 : displayVal - currentQty;
+  const isDiff = diff !== 0;
+  const reasons = isDiff ? (diff < 0 ? ['Spoilage','Theft/Walkoff','Manual Decrease'] : ['Manual Increase','Restock from Order']) : [];
+  const cardClass = s.verified ? 'verified' : (isDiff ? 'has-diff' : '');
+
+  return `<div class="mob-count-card ${cardClass}" id="mwc-c_${p.id}" style="border-left:3px solid #6b2fa0">
+    <div class="mob-count-name">
+      <span style="font-size:13px">${p.name}</span>
+      <button class="mob-correct-btn ${s.verified?'active':''}" onclick="mobCoffeeCountVerify(${p.id})">
+        ${s.verified ? '✓ Correct' : 'Mark OK'}
+      </button>
+    </div>
+    <div class="mob-count-current">Warehouse stock: <strong>${currentQty}</strong></div>
+    ${!s.verified ? `
+    <div class="mob-stepper">
+      <button class="mob-stepper-btn minus" onclick="mobCoffeeCountStep(${p.id},-1)" ontouchstart="">−</button>
+      <div class="mob-stepper-val ${isDiff?'changed':''}">${displayVal}</div>
+      <button class="mob-stepper-btn plus" onclick="mobCoffeeCountStep(${p.id},1)" ontouchstart="">+</button>
+    </div>
+    ${isDiff ? `
+    <div class="mob-count-diff">
+      Difference: <span class="diff-val ${diff<0?'neg':'pos'}">${diff>0?'+':''}${diff}</span>
+    </div>
+    <div class="mob-count-reason">
+      <select onchange="mobCoffeeCountReason(${p.id},this.value)"
+        style="width:100%;padding:10px 12px;background:#fff;border:1.5px solid ${s.reason?'#6b2fa0':'#e8943a'};border-radius:8px;font-size:13px;color:#1a2340;outline:none;cursor:pointer">
+        <option value="">-- Select reason --</option>
+        ${reasons.map(r=>`<option value="${r}" ${s.reason===r?'selected':''}>${r}</option>`).join('')}
+      </select>
+    </div>` : ''}
+    ` : `<div style="font-size:12px;color:#1a7a45;font-weight:600;margin-top:4px">✓ Quantity confirmed correct</div>`}
+  </div>`;
+}
+
+function mobCoffeeCountStep(id, delta){
+  const p = coffeeProducts.find(x=>x.id===id);
+  if(!p) return;
+  const key = 'c_'+id;
+  if(!countState[key]) countState[key] = {verified:false, actualQty:'', reason:'', stepperVal:p.qty};
+  const s = countState[key];
+  if(s.stepperVal === undefined) s.stepperVal = p.qty;
+  s.stepperVal = Math.max(0, s.stepperVal + delta);
+  s.actualQty = String(s.stepperVal);
+  s.verified = false;
+  const diff = s.stepperVal - p.qty;
+  if(s.reason){
+    const negR = ['Spoilage','Theft/Walkoff','Manual Decrease'];
+    const posR = ['Manual Increase','Restock from Order'];
+    if(diff < 0 && posR.includes(s.reason)) s.reason = '';
+    if(diff > 0 && negR.includes(s.reason)) s.reason = '';
+    if(diff === 0) s.reason = '';
+  }
+  const card = document.getElementById('mwc-c_'+id);
+  if(card){
+    const isDiff = diff !== 0;
+    card.className = 'mob-count-card' + (isDiff?' has-diff':'');
+    const valEl = card.querySelector('.mob-stepper-val');
+    if(valEl){ valEl.textContent = s.stepperVal; valEl.className='mob-stepper-val'+(isDiff?' changed':''); }
+    if(isDiff){
+      const diffEl = card.querySelector('.mob-count-diff');
+      if(!diffEl){ card.outerHTML = renderMobCoffeeCountCard(p); return; }
+      diffEl.innerHTML = `Difference: <span class="diff-val ${diff<0?'neg':'pos'}">${diff>0?'+':''}${diff}</span>`;
+      const selEl = card.querySelector('.mob-count-reason select');
+      if(selEl) selEl.style.borderColor = s.reason?'#6b2fa0':'#e8943a';
+    } else {
+      const diffEl = card.querySelector('.mob-count-diff');
+      if(diffEl) card.outerHTML = renderMobCoffeeCountCard(p);
+    }
+  }
+}
+
+function mobCoffeeCountVerify(id){
+  const p = coffeeProducts.find(x=>x.id===id);
+  if(!p) return;
+  const key = 'c_'+id;
+  if(!countState[key]) countState[key] = {verified:false, actualQty:'', reason:'', stepperVal:p.qty};
+  const s = countState[key];
+  s.verified = !s.verified;
+  if(s.verified){ s.stepperVal = p.qty; s.actualQty = ''; s.reason = ''; }
+  const card = document.getElementById('mwc-c_'+id);
+  if(card) card.outerHTML = renderMobCoffeeCountCard(p);
+}
+
+function mobCoffeeCountReason(id, val){
+  const key = 'c_'+id;
+  if(!countState[key]) return;
+  countState[key].reason = val;
 }
 
 function cancelWhCount(){
