@@ -1457,11 +1457,16 @@ function toggleDashStore(store){
 
 function renderDashboard(){
   // ── Warehouse Par % by Vendor ──
+  const DASH_VENDOR_PRIORITY = ["Costco Business Center","Sam's Club","Wal-mart","Costco Wholesale","Vistar"];
   const allActive = [...products.filter(p=>p.active&&p.maxLevel>0), ...coffeeProducts.filter(p=>p.active&&p.maxLevel>0)];
   const vendorPar = {};
   for(const p of allActive){
     const vList = (p.vendors||[]);
-    const vendor = vList.length > 0 ? vList[0] : 'Unassigned';
+    let vendor = 'Unassigned';
+    for(const vp of DASH_VENDOR_PRIORITY){
+      if(vList.includes(vp)){ vendor = vp; break; }
+    }
+    if(vendor==='Unassigned' && vList.length>0) vendor = vList[0];
     if(!vendorPar[vendor]) vendorPar[vendor] = {sum:0, count:0};
     const pct = Math.min(1, Math.max(0, p.qty) / p.maxLevel);
     vendorPar[vendor].sum += pct;
