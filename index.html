@@ -3428,7 +3428,7 @@ async function saveNewStoreOrder(){
   const storeItems = storeInventory.filter(x=>x.store_name===currentOrderStore);
   const orderItems = [];
   for(const item of storeItems){
-    const el = document.getElementById(`oq-${item.id}`);
+    const el = document.getElementById(`oq-${item.id}`) || document.getElementById(`moq-${item.id}`);
     const qty = parseFloat(el?.value)||0;
     if(qty > 0){
       orderItems.push({
