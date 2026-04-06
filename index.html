@@ -1448,6 +1448,13 @@ function render(){
 // ═══════════════════════════════════════════════════
 //  VIEWS
 // ═══════════════════════════════════════════════════
+let _dashStoreExpanded = new Set();
+function toggleDashStore(store){
+  if(_dashStoreExpanded.has(store)) _dashStoreExpanded.delete(store);
+  else _dashStoreExpanded.add(store);
+  renderDashboard();
+}
+
 function renderDashboard(){
   // ── Warehouse Par % by Vendor ──
   const allActive = [...products.filter(p=>p.active&&p.maxLevel>0), ...coffeeProducts.filter(p=>p.active&&p.maxLevel>0)];
@@ -1529,12 +1536,62 @@ function renderDashboard(){
 
     </div>
 
-    <div class="card">
-      <div class="card-title">Recent Activity</div>
-      ${restockLog.length===0?'<div style="color:#7080a0;font-size:12px;padding:8px 0">No activity logged yet.</div>':
-      `<table><thead><tr><th>DATE</th><th>PRODUCT</th><th>QTY</th><th>BY</th></tr></thead><tbody>
-      ${restockLog.slice(0,8).map(r=>`<tr><td>${r.date}</td><td style="font-weight:600">${r.product}</td><td style="font-weight:700;color:${parseFloat(r.qty)>=0?'#1a7a45':'#b01c1c'}">${parseFloat(r.qty)>=0?'+':''}${r.qty}</td><td style="color:#7080a0">${r.by}</td></tr>`).join('')}</tbody></table>`}
-    </div>`;
+    <!-- Store Inventory Widgets -->
+    ${(function(){
+      const storeData = STORES.map(store=>{
+        const items = storeInventory.filter(x=>x.store_name===store && x.max_level>0);
+        if(items.length===0) return {store, pct:0, count:0, catData:[]};
+        const pct = (items.reduce((s,x)=>s+Math.min(1,Math.max(0,x.qty)/x.max_level),0)/items.length)*100;
+        // Category breakdown
+        const catMap = {};
+        for(const x of items){
+          const cat = getStoreItemCat1(x)||'UNCATEGORIZED';
+          if(!catMap[cat]) catMap[cat]={sum:0,count:0};
+          catMap[cat].sum += Math.min(1,Math.max(0,x.qty)/x.max_level);
+          catMap[cat].count++;
+        }
+        const catData = Object.entries(catMap).map(([c,d])=>({cat:c,pct:(d.sum/d.count)*100,count:d.count})).sort((a,b)=>a.pct-b.pct);
+        return {store, pct, count:items.length, catData};
+      }).sort((a,b)=>a.pct-b.pct);
+
+      return storeData.map(sd=>{
+        const barColor = sd.pct>=75?'#1a7a45':sd.pct>=50?'#b35a00':'#b01c1c';
+        const storeKey = sd.store.replace(/[^a-zA-Z]/g,'');
+        const isExp = _dashStoreExpanded.has(sd.store);
+        const accent = {'SM Toyota':'#003087','Safran':'#006a4e','Exodus':'#7b1fa2','Elevated Brandz':'#c62828','SR Honda':'#e65100'}[sd.store]||'#0d1f4e';
+        return `<div class="card" style="margin-bottom:10px;border-left:3px solid ${accent};cursor:pointer" onclick="toggleDashStore('${sd.store}')">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
+              <span style="font-size:13px;font-weight:700;color:#0d1f4e">${sd.store}</span>
+              <span style="font-size:10px;color:#7080a0">${sd.count} items</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px">
+              <div style="width:120px;height:8px;background:#e8ecf4;border-radius:4px;overflow:hidden">
+                <div style="width:${Math.min(100,sd.pct)}%;height:100%;background:${barColor};border-radius:4px"></div>
+              </div>
+              <span style="font-size:14px;font-weight:800;color:${barColor};min-width:40px;text-align:right">${sd.pct.toFixed(0)}%</span>
+              <span style="font-size:14px;color:#8090b0">${isExp?'▲':'▼'}</span>
+            </div>
+          </div>
+          ${isExp?`<div style="margin-top:12px;padding-top:10px;border-top:1px solid #e8ecf4" onclick="event.stopPropagation()">
+            ${sd.catData.length===0?'<div style="font-size:11px;color:#7080a0">No items with max levels set.</div>':''}
+            ${sd.catData.map(c=>{
+              const cc = c.pct>=75?'#1a7a45':c.pct>=50?'#b35a00':'#b01c1c';
+              return `<div style="margin-bottom:8px">
+                <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
+                  <span style="font-size:11px;font-weight:600;color:#0d1f4e">${c.cat}</span>
+                  <span style="font-size:10px;color:#7080a0">${c.count} items · <strong style="color:${cc}">${c.pct.toFixed(0)}%</strong></span>
+                </div>
+                <div style="width:100%;height:6px;background:#e8ecf4;border-radius:3px;overflow:hidden">
+                  <div style="width:${Math.min(100,c.pct)}%;height:100%;background:${cc};border-radius:3px"></div>
+                </div>
+              </div>`;
+            }).join('')}
+          </div>`:''}
+        </div>`;
+      }).join('');
+    })()}
+  `;
 }
 
 function renderInventory(){
