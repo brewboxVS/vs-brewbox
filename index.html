@@ -3331,7 +3331,7 @@ function renderStoreOrders(){
   const allStoreItems = storeInventory.filter(x=>x.store_name===currentOrderStore);
   // When rec qty is set, only show items that need restocking
   const storeItems = storeOrderRecQtySet
-    ? allStoreItems.filter(x=>x.max_level > 0 && x.qty <= x.min_level)
+    ? allStoreItems.filter(x=>x.max_level > 0 && x.qty <= x.min_level && x.qty < x.max_level)
     : allStoreItems;
   const filteredOut = allStoreItems.length - storeItems.length;
 
@@ -5667,7 +5667,7 @@ function renderMobStoreOrders(){
   const openOrders = storeOrders.filter(o=>o.store_name===currentOrderStore && o.status==='open');
   const allStoreItems = storeInventory.filter(x=>x.store_name===currentOrderStore);
   const storeItems = storeOrderRecQtySet
-    ? allStoreItems.filter(x=>x.max_level > 0 && x.qty <= x.min_level)
+    ? allStoreItems.filter(x=>x.max_level > 0 && x.qty <= x.min_level && x.qty < x.max_level)
     : allStoreItems;
   const filteredOut = allStoreItems.length - storeItems.length;
 
