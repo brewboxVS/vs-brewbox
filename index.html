@@ -2865,6 +2865,7 @@ let currentStore = 'SM Toyota';
 let storeSearchTerm = '';
 let storeEditingRows = new Set();
 let storeCategoryFilters = new Set();
+let storeSourceFilter = 'all'; // 'all', 'mm', 'coffee'
 
 // Helper: get cat1 for a store inventory item, with fallback to warehouse product
 function getStoreItemCat1(item){
@@ -2875,6 +2876,7 @@ function getStoreItemCat1(item){
   return wp?.cat1 || '';
 }
 const STORE_CATEGORIES = ['DRINKS','SNACKS','CHIPS','CANDY','PASTRY','COLD FOOD','FROZEN FOOD'];
+const COFFEE_CAT_ORDER = ['WB ESPRESSO','WB MED ROAST','WB DECAF','SOLUBLE POWDERS','COFFEE PERIPHERALS','FLAVORED SYRUPS','KITCHEN SUPPLIES'];
 const LS_STORE_INV = 'vs_brewbox_store_inventory';
 
 // ── Supabase helpers for store_inventory ──
@@ -2950,9 +2952,14 @@ async function syncStoreAssignment(productId, source, productName, newStores, ol
 
 // ── Render Store Inventory page ──
 function renderStoreInventory(){
-  const storeItems = storeInventory.filter(x=>x.store_name===currentStore);
-  const mmItems = storeItems.filter(x=>x.product_source==='mm');
-  const coffeeItems = storeItems.filter(x=>x.product_source==='coffee');
+  const allStoreItems = storeInventory.filter(x=>x.store_name===currentStore);
+  const mmItems = allStoreItems.filter(x=>x.product_source==='mm'||x.product_source!=='coffee');
+  const coffeeItems = allStoreItems.filter(x=>x.product_source==='coffee');
+  const hasBoth = mmItems.length > 0 && coffeeItems.length > 0;
+
+  // Apply source filter
+  const storeItems = storeSourceFilter === 'mm' ? mmItems :
+    storeSourceFilter === 'coffee' ? coffeeItems : allStoreItems;
 
   // Apply search + category filter
   const filtered = storeItems.filter(x=>{
@@ -2962,39 +2969,44 @@ function renderStoreInventory(){
     return ms && matchCat;
   }).sort((a,b)=>a.product_name.localeCompare(b.product_name));
 
-  const outCount = storeItems.filter(x=>x.qty<=0).length;
-  const lowCount = storeItems.filter(x=>x.qty>0&&x.min_level>0&&x.qty<=x.min_level).length;
+  const outCount = allStoreItems.filter(x=>x.qty<=0).length;
+  const lowCount = allStoreItems.filter(x=>x.qty>0&&x.min_level>0&&x.qty<=x.min_level).length;
 
-  // Build unique categories present at this store
+  // Build unique categories present for current source filter
   const storeCats = [...new Set(storeItems.map(x=>getStoreItemCat1(x)).filter(Boolean))].sort();
 
   document.getElementById('main-body').innerHTML=`
     <div style="display:flex;gap:12px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
       <div style="display:flex;align-items:center;gap:10px">
         <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.8px">Store:</label>
-        <select onchange="currentStore=this.value;storeSearchTerm='';storeCategoryFilters.clear();renderStoreInventory()"
+        <select onchange="currentStore=this.value;storeSearchTerm='';storeCategoryFilters.clear();storeSourceFilter='all';renderStoreInventory()"
           style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:160px">
           ${STORES.map(s=>`<option value="${s}" ${s===currentStore?'selected':''}>${s}</option>`).join('')}
         </select>
       </div>
+      ${hasBoth?`<div style="display:flex;gap:4px;background:#f4f6fa;border-radius:7px;padding:3px">
+        <button onclick="storeSourceFilter='all';storeCategoryFilters.clear();renderStoreInventory()" style="padding:5px 12px;border:none;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer;${storeSourceFilter==='all'?'background:#0d1f4e;color:#fff':'background:transparent;color:#5060a0'}">All (${allStoreItems.length})</button>
+        <button onclick="storeSourceFilter='mm';storeCategoryFilters.clear();renderStoreInventory()" style="padding:5px 12px;border:none;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer;${storeSourceFilter==='mm'?'background:#0d1f4e;color:#fff':'background:transparent;color:#5060a0'}">MM (${mmItems.length})</button>
+        <button onclick="storeSourceFilter='coffee';storeCategoryFilters.clear();renderStoreInventory()" style="padding:5px 12px;border:none;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer;${storeSourceFilter==='coffee'?'background:#6b2fa0;color:#fff':'background:transparent;color:#6b2fa0'}">☕ Coffee (${coffeeItems.length})</button>
+      </div>`:''}
       <button class="primary-btn" onclick="openImportStoreItemModal()" style="margin-left:auto">+ Import Item</button>
     </div>
 
     <div class="cat-filters" style="margin-bottom:8px">
       <button class="cat-btn${storeCategoryFilters.size===0?' active':''}" onclick="storeCategoryFilters.clear();renderStoreInventory()">ALL</button>
-      ${STORE_CATEGORIES.filter(c=>storeCats.includes(c)).map(c=>`<button class="cat-btn cat-${c.replace(' ','-')}${storeCategoryFilters.has(c)?' active':''}" onclick="(function(){if(storeCategoryFilters.has('${c}')){storeCategoryFilters.delete('${c}')}else{storeCategoryFilters.add('${c}')};renderStoreInventory()})()">${c}</button>`).join('')}
+      ${[...STORE_CATEGORIES, ...COFFEE_CAT_ORDER].filter(c=>storeCats.includes(c)).map(c=>`<button class="cat-btn cat-${c.replace(/\s+/g,'-')}${storeCategoryFilters.has(c)?' active':''}" onclick="(function(){if(storeCategoryFilters.has('${c}')){storeCategoryFilters.delete('${c}')}else{storeCategoryFilters.add('${c}')};renderStoreInventory()})()">${c}</button>`).join('')}
     </div>
 
     <div class="filter-row" style="margin-bottom:10px">
       <input class="search-input" id="store-search-input" placeholder="Search items…" value="${storeSearchTerm}"
         oninput="storeSearchTerm=this.value;renderWithSearchFocus(renderStoreInventory,'store-search-input')" style="width:240px"/>
-      <span style="font-size:11px;color:#7080a0;margin-left:2px">${filtered.length} shown · ${storeItems.length} total SKUs</span>
+      <span style="font-size:11px;color:#7080a0;margin-left:2px">${filtered.length} shown · ${allStoreItems.length} total SKUs</span>
     </div>
 
     <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px">
-      <div class="stat-card"><div class="stat-val">${storeItems.length}</div><div class="stat-label">Total SKUs</div></div>
+      <div class="stat-card"><div class="stat-val">${allStoreItems.length}</div><div class="stat-label">Total SKUs</div></div>
       <div class="stat-card" style="border-top-color:#1a3266"><div class="stat-val" style="color:#1a3266">${mmItems.length}</div><div class="stat-label">MM Items</div></div>
-      <div class="stat-card" style="border-top-color:#6b3a1f"><div class="stat-val" style="color:#6b3a1f">${coffeeItems.length}</div><div class="stat-label">Coffee Items</div></div>
+      <div class="stat-card" style="border-top-color:#6b2fa0"><div class="stat-val" style="color:#6b2fa0">${coffeeItems.length}</div><div class="stat-label">Coffee Items</div></div>
       <div class="stat-card" style="border-top-color:#b01c1c"><div class="stat-val" style="color:#b01c1c">${outCount}</div><div class="stat-label">Out of Stock</div></div>
     </div>
 
@@ -3361,29 +3373,44 @@ function renderStoreOrders(){
       </div>
       ${storeItems.length===0?`<div style="text-align:center;padding:20px;color:#7080a0">No items in store inventory. Add items via Store Inventory first.</div>`:`
       ${(function(){
-        // Group by category, sort alphabetically within each
-        const catGroups = {};
-        for(const item of storeItems){
-          const cat = getStoreItemCat1(item) || 'UNCATEGORIZED';
-          if(!catGroups[cat]) catGroups[cat] = [];
-          catGroups[cat].push(item);
+        // Separate MM and Coffee items
+        const mmItems = storeItems.filter(x=>x.product_source!=='coffee');
+        const coffeeItems = storeItems.filter(x=>x.product_source==='coffee');
+        let html = '';
+
+        // Helper to render a section of items grouped by category
+        function renderSection(items, catList, label, borderColor){
+          if(items.length===0) return '';
+          const catGroups = {};
+          for(const item of items){
+            const cat = getStoreItemCat1(item) || 'UNCATEGORIZED';
+            if(!catGroups[cat]) catGroups[cat] = [];
+            catGroups[cat].push(item);
+          }
+          const catOrder = [...catList, 'UNCATEGORIZED'].filter(c=>catGroups[c]);
+          for(const c of catOrder) catGroups[c].sort((a,b)=>a.product_name.localeCompare(b.product_name));
+
+          let s = label ? '<div style="margin:16px 0 8px;padding:8px 0;border-top:3px solid '+borderColor+'"><div style="font-size:11px;font-weight:800;color:'+borderColor+';letter-spacing:1.5px;text-transform:uppercase">'+label+' ('+items.length+' items)</div></div>' : '';
+          s += catOrder.map(cat=>{
+            const citems = catGroups[cat];
+            return '<div style="margin-bottom:16px"><div style="font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:#5060a0;padding:6px 8px;background:#f4f6fa;border-radius:5px;margin-bottom:4px">'+cat+' ('+citems.length+')</div><div style="overflow-x:auto"><table><thead><tr><th style="padding-left:8px;min-width:200px">ITEM</th><th>SOURCE</th><th>QTY ON HAND</th><th>MIN</th><th>MAX</th><th>WAREHOUSE QTY</th><th style="min-width:100px">ORDER QTY</th></tr></thead><tbody>'+citems.map(item=>{
+              const wh = item.product_source==='coffee'
+                ? coffeeProducts.find(p=>p.id===item.product_id)
+                : products.find(p=>p.id===item.product_id);
+              const whQty = wh ? wh.qty : 0;
+              const srcBadge = item.product_source==='coffee'
+                ? '<span style="background:#f3e8ff;color:#6b2fa0;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700">COFFEE</span>'
+                : '<span style="background:#e8edf8;color:#0d1f4e;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700">MM</span>';
+              const recQty = storeOrderRecQtySet ? Math.max(0, item.max_level - item.qty) : 0;
+              return '<tr><td style="padding-left:8px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:220px">'+item.product_name+'</td><td>'+srcBadge+'</td><td style="font-weight:700;color:'+(item.qty<=0?'#b01c1c':item.min_level>0&&item.qty<=item.min_level?'#b35a00':'#1a7a45')+'">'+item.qty+'</td><td>'+item.min_level+'</td><td style="color:#7080a0">'+item.max_level+'</td><td style="color:#5060a0">'+whQty+'</td><td><input type="number" id="oq-'+item.id+'" min="0" placeholder="—" value="'+(recQty>0?recQty:'')+'" style="width:75px;background:#f4f6fa;border:1.5px solid '+(recQty>0?'#c9a84c':'#d0d5e0')+';border-radius:5px;padding:4px 7px;font-size:12px;font-weight:700;color:#0d1f4e;outline:none"/></td></tr>';
+            }).join('')+'</tbody></table></div></div>';
+          }).join('');
+          return s;
         }
-        const catOrder = [...STORE_CATEGORIES, 'UNCATEGORIZED'].filter(c=>catGroups[c]);
-        for(const c of catOrder) catGroups[c].sort((a,b)=>a.product_name.localeCompare(b.product_name));
-        return catOrder.map(cat=>{
-          const items = catGroups[cat];
-          return '<div style="margin-bottom:16px"><div style="font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:#5060a0;padding:6px 8px;background:#f4f6fa;border-radius:5px;margin-bottom:4px">'+cat+' ('+items.length+')</div><div style="overflow-x:auto"><table><thead><tr><th style="padding-left:8px;min-width:200px">ITEM</th><th>SOURCE</th><th>QTY ON HAND</th><th>MIN</th><th>MAX</th><th>WAREHOUSE QTY</th><th style="min-width:100px">ORDER QTY</th></tr></thead><tbody>'+items.map(item=>{
-            const wh = item.product_source==='coffee'
-              ? coffeeProducts.find(p=>p.id===item.product_id)
-              : products.find(p=>p.id===item.product_id);
-            const whQty = wh ? wh.qty : 0;
-            const srcBadge = item.product_source==='coffee'
-              ? '<span style="background:#f3e8ff;color:#6b2fa0;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700">COFFEE</span>'
-              : '<span style="background:#e8edf8;color:#0d1f4e;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700">MM</span>';
-            const recQty = storeOrderRecQtySet ? Math.max(0, item.max_level - item.qty) : 0;
-            return '<tr><td style="padding-left:8px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:220px">'+item.product_name+'</td><td>'+srcBadge+'</td><td style="font-weight:700;color:'+(item.qty<=0?'#b01c1c':item.min_level>0&&item.qty<=item.min_level?'#b35a00':'#1a7a45')+'">'+item.qty+'</td><td>'+item.min_level+'</td><td style="color:#7080a0">'+item.max_level+'</td><td style="color:#5060a0">'+whQty+'</td><td><input type="number" id="oq-'+item.id+'" min="0" placeholder="—" value="'+(recQty>0?recQty:'')+'" style="width:75px;background:#f4f6fa;border:1.5px solid '+(recQty>0?'#c9a84c':'#d0d5e0')+';border-radius:5px;padding:4px 7px;font-size:12px;font-weight:700;color:#0d1f4e;outline:none"/></td></tr>';
-          }).join('')+'</tbody></table></div></div>';
-        }).join('');
+
+        html += renderSection(mmItems, STORE_CATEGORIES, coffeeItems.length>0?'MM Inventory':'', '#0d1f4e');
+        html += renderSection(coffeeItems, COFFEE_CAT_ORDER, '☕ Coffee Inventory', '#6b2fa0');
+        return html;
       })()}`}
     </div>`;
 }
@@ -3725,20 +3752,66 @@ function initStoreCountState(){
 }
 
 function renderStoreCount(){
-  const items = storeInventory.filter(x=>x.store_name===storeCountStore);
-  const total = items.length;
+  const allItems = storeInventory.filter(x=>x.store_name===storeCountStore);
+  const mmItems = allItems.filter(x=>x.product_source!=='coffee');
+  const coffeeItems = allItems.filter(x=>x.product_source==='coffee');
+  const total = allItems.length;
   const verified = Object.values(storeCountState).filter(s=>s.verified||(s.actualQty!==''&&s.reason!=='')).length;
   const pending = Math.max(0, total - verified);
 
-  // Group by category
-  const catGroups = {};
-  for(const item of items){
+  // Group MM by category
+  const mmCatGroups = {};
+  for(const item of mmItems){
     const cat = getStoreItemCat1(item) || 'UNCATEGORIZED';
-    if(!catGroups[cat]) catGroups[cat] = [];
-    catGroups[cat].push(item);
+    if(!mmCatGroups[cat]) mmCatGroups[cat] = [];
+    mmCatGroups[cat].push(item);
   }
-  const catOrder = [...STORE_CATEGORIES, 'UNCATEGORIZED'].filter(c=>catGroups[c]);
-  for(const c of catOrder) catGroups[c].sort((a,b)=>a.product_name.localeCompare(b.product_name));
+  const mmCatOrder = [...STORE_CATEGORIES, 'UNCATEGORIZED'].filter(c=>mmCatGroups[c]);
+  for(const c of mmCatOrder) mmCatGroups[c].sort((a,b)=>a.product_name.localeCompare(b.product_name));
+
+  // Group Coffee by category
+  const coffeeCatGroups = {};
+  for(const item of coffeeItems){
+    const cat = getStoreItemCat1(item) || 'UNCATEGORIZED';
+    if(!coffeeCatGroups[cat]) coffeeCatGroups[cat] = [];
+    coffeeCatGroups[cat].push(item);
+  }
+  const coffeeCatOrder = [...COFFEE_CAT_ORDER, 'UNCATEGORIZED'].filter(c=>coffeeCatGroups[c]);
+  for(const c of coffeeCatOrder) coffeeCatGroups[c].sort((a,b)=>a.product_name.localeCompare(b.product_name));
+
+  // Helper to render a category section
+  function renderCatSection(cat, groupItems, skipped){
+    const catVerified = groupItems.filter(x=>storeCountState[x.id]&&(storeCountState[x.id].verified||(storeCountState[x.id].actualQty!==''&&storeCountState[x.id].reason!==''))).length;
+    return `
+      <div class="card" style="margin-bottom:12px;${skipped?'opacity:0.5':''}">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${skipped?'0':'10px'}">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="card-title" style="margin-bottom:0">${cat}</div>
+            ${!skipped?`<span style="font-size:10px;color:#7080a0">${catVerified}/${groupItems.length} verified</span>`:''}
+          </div>
+          <button onclick="toggleStoreCountSkip('${cat}')"
+            style="background:${skipped?'#e8edf8':'#f4f6fa'};color:${skipped?'#0d1f4e':'#7080a0'};border:1.5px solid ${skipped?'#0d1f4e':'#d0d5e0'};border-radius:6px;padding:4px 12px;font-size:10px;font-weight:700;cursor:pointer">
+            ${skipped?'↩ Include Section':'⏭ Skip Section'}
+          </button>
+        </div>
+        ${skipped?'<div style="font-size:11px;color:#7080a0;padding:4px 0">This section is skipped.</div>':''}
+        ${!skipped?`
+        <table>
+          <thead><tr>
+            <th style="min-width:180px;padding-left:8px">ITEM</th>
+            <th>CURRENT QTY</th>
+            <th>✓ CORRECT</th>
+            <th>ACTUAL QTY</th>
+            <th>DIFFERENCE</th>
+            <th>REASON</th>
+            <th>VERIFIED QTY</th>
+          </tr></thead>
+          <tbody>
+          ${groupItems.map(item=>renderStoreCountRow(item)).join('')}
+          </tbody>
+        </table>`:''}
+      </div>`;
+  }
 
   document.getElementById('main-body').innerHTML=`
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px">
@@ -3764,40 +3837,14 @@ function renderStoreCount(){
 
     ${storeCountSubmitResult ? renderStoreCountResult() : ''}
 
-    ${storeCountSubmitResult ? '' : catOrder.map(cat=>{
-      const groupItems = catGroups[cat];
-      const skipped = storeCountSkippedCats.has(cat);
-      const catVerified = groupItems.filter(x=>storeCountState[x.id]&&(storeCountState[x.id].verified||(storeCountState[x.id].actualQty!==''&&storeCountState[x.id].reason!==''))).length;
-      return `
-        <div class="card" style="margin-bottom:12px;${skipped?'opacity:0.5':''}">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${skipped?'0':'10px'}">
-            <div style="display:flex;align-items:center;gap:10px">
-              <div class="card-title" style="margin-bottom:0">${cat}</div>
-              ${!skipped?`<span style="font-size:10px;color:#7080a0">${catVerified}/${groupItems.length} verified</span>`:''}
-            </div>
-            <button onclick="toggleStoreCountSkip('${cat}')"
-              style="background:${skipped?'#e8edf8':'#f4f6fa'};color:${skipped?'#0d1f4e':'#7080a0'};border:1.5px solid ${skipped?'#0d1f4e':'#d0d5e0'};border-radius:6px;padding:4px 12px;font-size:10px;font-weight:700;cursor:pointer">
-              ${skipped?'↩ Include Section':'⏭ Skip Section'}
-            </button>
-          </div>
-          ${skipped?'<div style="font-size:11px;color:#7080a0;padding:4px 0">This section is skipped.</div>':''}
-          ${!skipped?`
-          <table>
-            <thead><tr>
-              <th style="min-width:180px;padding-left:8px">ITEM</th>
-              <th>CURRENT QTY</th>
-              <th>✓ CORRECT</th>
-              <th>ACTUAL QTY</th>
-              <th>DIFFERENCE</th>
-              <th>REASON</th>
-              <th>VERIFIED QTY</th>
-            </tr></thead>
-            <tbody>
-            ${groupItems.map(item=>renderStoreCountRow(item)).join('')}
-            </tbody>
-          </table>`:''}
-        </div>`;
-    }).join('')||''}
+    ${storeCountSubmitResult ? '' : mmCatOrder.map(cat=>renderCatSection(cat, mmCatGroups[cat], storeCountSkippedCats.has(cat))).join('')}
+
+    ${storeCountSubmitResult || coffeeItems.length===0 ? '' : `
+    <div style="margin:16px 0 8px;padding:8px 0;border-top:3px solid #6b2fa0">
+      <div style="font-size:11px;font-weight:800;color:#6b2fa0;letter-spacing:1.5px;text-transform:uppercase">☕ Coffee Inventory (${coffeeItems.length} items)</div>
+    </div>`}
+
+    ${storeCountSubmitResult ? '' : coffeeCatOrder.map(cat=>renderCatSection(cat, coffeeCatGroups[cat], storeCountSkippedCats.has(cat))).join('')}
   `;
 }
 
@@ -4176,8 +4223,9 @@ async function saveWhOrder(order){
 
 // ── Calculate recommended order items ──
 function calcWhOrderItems(selectedVendors){
-  const lowItems = products.filter(p=> p.active && p.maxLevel > 0 && p.qty <= p.minLevel);
-  const orderItems = lowItems.map(p => {
+  // MM products
+  const lowMM = products.filter(p=> p.active && p.maxLevel > 0 && p.qty <= p.minLevel);
+  const mmItems = lowMM.map(p => {
     const assignedVendors = (p.vendors||[]);
     let vendor = '';
     for(const vp of VENDOR_PRIORITY){
@@ -4192,11 +4240,38 @@ function calcWhOrderItems(selectedVendors){
 
     return {
       product_id: p.id, product_name: p.name, cat1: p.cat1||'', vendor,
+      product_source: 'mm',
       current_qty: p.qty, min_level: p.minLevel, max_level: p.maxLevel,
       pieces_per_box: ppb, rec_cases: recCases,
       bought_rec: false, actual_cases: '', notes: ''
     };
   });
+
+  // Coffee products
+  const lowCoffee = coffeeProducts.filter(p=> p.active && p.maxLevel > 0 && p.qty <= p.minLevel);
+  const coffeeItems = lowCoffee.map(p => {
+    const assignedVendors = (p.vendors||[]);
+    let vendor = '';
+    for(const vp of VENDOR_PRIORITY){
+      if(assignedVendors.includes(vp)){ vendor = vp; break; }
+    }
+    if(!vendor && assignedVendors.length>0) vendor = assignedVendors[0];
+    if(!vendor) vendor = 'Unassigned';
+
+    const ppb = p.piecesPerBox || 1;
+    const needed = Math.max(0, p.maxLevel - p.qty);
+    const recCases = Math.max(1, Math.ceil(needed / ppb));
+
+    return {
+      product_id: p.id, product_name: p.name, cat1: p.cat1||'', vendor,
+      product_source: 'coffee',
+      current_qty: p.qty, min_level: p.minLevel, max_level: p.maxLevel,
+      pieces_per_box: ppb, rec_cases: recCases,
+      bought_rec: false, actual_cases: '', notes: ''
+    };
+  });
+
+  const orderItems = [...mmItems, ...coffeeItems];
 
   // Filter by selected vendors if provided
   const filtered = selectedVendors && selectedVendors.length > 0
@@ -4357,7 +4432,7 @@ function renderWhOrders(){
 
   const openOrders = whOrders.filter(o=>o.status==='open');
   const receivedOrders = whOrders.filter(o=>o.status==='received').slice(0,5);
-  const lowItems = products.filter(p=>p.active&&p.maxLevel>0&&p.qty<=p.minLevel);
+  const lowItems = [...products.filter(p=>p.active&&p.maxLevel>0&&p.qty<=p.minLevel), ...coffeeProducts.filter(p=>p.active&&p.maxLevel>0&&p.qty<=p.minLevel)];
 
   document.getElementById('main-body').innerHTML=`
     <!-- Stats -->
@@ -4772,12 +4847,20 @@ async function receiveWhOrder(orderId){
     if(casesUsed <= 0) continue;
 
     const qtyAdd = casesUsed * item.pieces_per_box;
-    const p = products.find(x=>x.id===item.product_id);
+    const isCoffee = item.product_source === 'coffee';
+    const p = isCoffee
+      ? coffeeProducts.find(x=>x.id===item.product_id)
+      : products.find(x=>x.id===item.product_id);
     if(!p) continue;
 
     p.qty += qtyAdd;
-    products = products.map(x=>x.id===p.id?{...x,qty:p.qty}:x);
-    await saveProduct(products.find(x=>x.id===p.id));
+    if(isCoffee){
+      coffeeProducts = coffeeProducts.map(x=>x.id===p.id?{...x,qty:p.qty}:x);
+      await saveCoffeeProduct(coffeeProducts.find(x=>x.id===p.id));
+    } else {
+      products = products.map(x=>x.id===p.id?{...x,qty:p.qty}:x);
+      await saveProduct(products.find(x=>x.id===p.id));
+    }
 
     // Log to restock
     const entry = {
@@ -5612,23 +5695,35 @@ function renderMobStoreOrders(){
       ${storeOrderRecQtySet?`<div style="font-size:11px;color:#1a7a45;font-weight:600;padding:6px 12px;background:#f0fff4;border-radius:6px;margin-bottom:6px">${storeItems.length} items need restocking · ${filteredOut} fully stocked hidden</div>`:''}
       ${storeItems.length===0?`<div style="text-align:center;padding:30px;color:#7080a0;font-size:13px">${storeOrderRecQtySet?'All items are fully stocked!':'No items in store inventory'}</div>`
       :(function(){
-        const catGroups = {};
-        for(const item of storeItems){
-          const cat = getStoreItemCat1(item) || 'UNCATEGORIZED';
-          if(!catGroups[cat]) catGroups[cat] = [];
-          catGroups[cat].push(item);
-        }
-        const catOrder = [...STORE_CATEGORIES, 'UNCATEGORIZED'].filter(c=>catGroups[c]);
-        for(const c of catOrder) catGroups[c].sort((a,b)=>a.product_name.localeCompare(b.product_name));
-        return catOrder.map(cat=>{
-          return '<div style="font-size:10px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:#5060a0;padding:8px 12px;background:#f4f6fa;border-radius:6px;margin-bottom:4px;margin-top:8px">'+cat+' ('+catGroups[cat].length+')</div>'+catGroups[cat].map(item=>{
-            const wh = item.product_source==='coffee'
-              ? coffeeProducts.find(p=>p.id===item.product_id)
-              : products.find(p=>p.id===item.product_id);
-            const recQty = storeOrderRecQtySet ? Math.max(0, item.max_level - item.qty) : 0;
-            return '<div class="mob-new-order-item"><div class="item-info"><div class="name">'+item.product_name+'</div><div class="meta">On hand: <strong>'+item.qty+'</strong> · WH: '+(wh?.qty??'—')+'</div></div><input type="number" class="item-qty-input" id="moq-'+item.id+'" min="0" placeholder="0" value="'+(recQty>0?recQty:'')+'"/></div>';
+        const mmSI = storeItems.filter(x=>x.product_source!=='coffee');
+        const coffeeSI = storeItems.filter(x=>x.product_source==='coffee');
+
+        function renderMobSection(items, catList, label, color){
+          if(items.length===0) return '';
+          const catGroups = {};
+          for(const item of items){
+            const cat = getStoreItemCat1(item) || 'UNCATEGORIZED';
+            if(!catGroups[cat]) catGroups[cat] = [];
+            catGroups[cat].push(item);
+          }
+          const catOrder = [...catList, 'UNCATEGORIZED'].filter(c=>catGroups[c]);
+          for(const c of catOrder) catGroups[c].sort((a,b)=>a.product_name.localeCompare(b.product_name));
+
+          let s = label ? '<div style="margin:12px 0 6px;padding:8px 0;border-top:3px solid '+color+'"><div style="font-size:10px;font-weight:800;color:'+color+';letter-spacing:1.2px;text-transform:uppercase">'+label+' ('+items.length+')</div></div>' : '';
+          s += catOrder.map(cat=>{
+            return '<div style="font-size:10px;font-weight:800;letter-spacing:1.2px;text-transform:uppercase;color:#5060a0;padding:8px 12px;background:#f4f6fa;border-radius:6px;margin-bottom:4px;margin-top:8px">'+cat+' ('+catGroups[cat].length+')</div>'+catGroups[cat].map(item=>{
+              const wh = item.product_source==='coffee'
+                ? coffeeProducts.find(p=>p.id===item.product_id)
+                : products.find(p=>p.id===item.product_id);
+              const recQty = storeOrderRecQtySet ? Math.max(0, item.max_level - item.qty) : 0;
+              return '<div class="mob-new-order-item"><div class="item-info"><div class="name">'+item.product_name+'</div><div class="meta">On hand: <strong>'+item.qty+'</strong> · WH: '+(wh?.qty??'—')+'</div></div><input type="number" class="item-qty-input" id="moq-'+item.id+'" min="0" placeholder="0" value="'+(recQty>0?recQty:'')+'"/></div>';
+            }).join('');
           }).join('');
-        }).join('');
+          return s;
+        }
+
+        return renderMobSection(mmSI, STORE_CATEGORIES, coffeeSI.length>0?'MM Inventory':'', '#0d1f4e')
+             + renderMobSection(coffeeSI, COFFEE_CAT_ORDER, '☕ Coffee Inventory', '#6b2fa0');
       })()}
       <div class="mob-order-actions">
         <button class="mob-order-save-btn" onclick="saveNewStoreOrder()">💾 Save as Open Order</button>
@@ -6154,6 +6249,10 @@ function initCountState(){
   for(const p of activeProducts){
     countState[p.id] = {verified:false, actualQty:'', reason:'', skip:false};
   }
+  const activeCoffee = coffeeProducts.filter(p=>p.active);
+  for(const p of activeCoffee){
+    countState['c_'+p.id] = {verified:false, actualQty:'', reason:'', skip:false};
+  }
 }
 
 function renderCount(){
@@ -6164,11 +6263,19 @@ function renderCount(){
     const cat = p.cat1 && COUNT_CAT_ORDER.includes(p.cat1) ? p.cat1 : 'SNACKS';
     byCategory[cat].push(p);
   }
-  // Sort each category alphabetically
   for(const cat of COUNT_CAT_ORDER){ byCategory[cat].sort((a,b)=>a.name.localeCompare(b.name)); }
 
-  // Summary stats
-  const total = activeProducts.length;
+  // Coffee products
+  const activeCoffee = coffeeProducts.filter(p=>p.active);
+  const coffeeByCat = {};
+  for(const cat of COFFEE_CAT_ORDER) coffeeByCat[cat] = [];
+  for(const p of activeCoffee){
+    const cat = p.cat1 && COFFEE_CAT_ORDER.includes(p.cat1) ? p.cat1 : 'COFFEE PERIPHERALS';
+    coffeeByCat[cat].push(p);
+  }
+  for(const cat of COFFEE_CAT_ORDER){ coffeeByCat[cat].sort((a,b)=>a.name.localeCompare(b.name)); }
+
+  const total = activeProducts.length + activeCoffee.length;
   const verified = Object.values(countState).filter(s=>s.verified||s.skip||(s.actualQty!==''&&s.reason!=='')).length;
   const skippedCount = Object.values(countState).filter(s=>s.skip).length;
   const pending = total - verified - skippedCount;
@@ -6228,6 +6335,47 @@ function renderCount(){
             </tr></thead>
             <tbody>
             ${items.map(p => renderCountRow(p)).join('')}
+            </tbody>
+          </table>`:''}
+        </div>`;
+    }).join('')||''}
+
+    ${countSubmitResult ? '' : `
+    <div style="margin:20px 0 10px;padding:10px 0;border-top:3px solid #6b2fa0">
+      <div style="font-size:12px;font-weight:800;color:#6b2fa0;letter-spacing:1.5px;text-transform:uppercase">☕ Coffee Inventory</div>
+    </div>`}
+
+    ${countSubmitResult ? '' : COFFEE_CAT_ORDER.map(cat => {
+      const items = coffeeByCat[cat];
+      if(!items || items.length===0) return '';
+      const skipped = countSkippedCats.has('C_'+cat);
+      const catVerified = items.filter(p=>countState['c_'+p.id]&&(countState['c_'+p.id].verified||countState['c_'+p.id].skip||(countState['c_'+p.id].actualQty!==''&&countState['c_'+p.id].reason!==''))).length;
+      return `
+        <div class="card" style="margin-bottom:12px;border-left:3px solid #6b2fa0;${skipped?'opacity:0.5':''}">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${skipped?'0':'10px'}">
+            <div style="display:flex;align-items:center;gap:10px">
+              <div class="card-title" style="margin-bottom:0">${cat}</div>
+              ${!skipped?`<span style="font-size:10px;color:#7080a0">${catVerified}/${items.length} verified</span>`:''}
+            </div>
+            <button onclick="toggleSkipCat('C_${cat}')"
+              style="background:${skipped?'#f3e8ff':'#f4f6fa'};color:${skipped?'#6b2fa0':'#7080a0'};border:1.5px solid ${skipped?'#6b2fa0':'#d0d5e0'};border-radius:6px;padding:4px 12px;font-size:10px;font-weight:700;cursor:pointer">
+              ${skipped?'↩ Include Category':'⏭ Skip Category'}
+            </button>
+          </div>
+          ${skipped?'<div style="font-size:11px;color:#7080a0;padding:4px 0">This category is skipped.</div>':''}
+          ${!skipped?`
+          <table>
+            <thead><tr>
+              <th style="min-width:180px;padding-left:8px">ITEM NAME</th>
+              <th style="min-width:80px">CURRENT QTY</th>
+              <th style="min-width:110px">✓ CORRECT QTY</th>
+              <th style="min-width:100px">ACTUAL QTY</th>
+              <th style="min-width:80px">DIFFERENCE</th>
+              <th style="min-width:130px">REASON</th>
+              <th style="min-width:90px">VERIFIED QTY</th>
+            </tr></thead>
+            <tbody>
+            ${items.map(p => renderCoffeeCountRow(p)).join('')}
             </tbody>
           </table>`:''}
         </div>`;
@@ -6325,20 +6473,121 @@ function updateActualQty(id, val){
 
 function updateReason(id, val){
   countState[id].reason = val;
-  // Don't re-render — just update state to avoid losing focus
   countState[id]._pendingReason = val;
+}
+
+// ── Coffee count helpers (use 'c_' prefixed keys) ──
+function renderCoffeeCountRow(p){
+  const key = 'c_'+p.id;
+  const s = countState[key] || {verified:false, actualQty:'', reason:'', skip:false};
+  const currentQty = p.qty;
+  const actualQty = s.actualQty !== '' ? parseFloat(s.actualQty) : null;
+  const isDiff = actualQty !== null && actualQty !== currentQty;
+  const diff = isDiff ? actualQty - currentQty : null;
+  const verifiedQty = s.verified ? currentQty : (actualQty !== null ? actualQty : '');
+  const rowBg = s.verified ? '#f0fff4' : (isDiff ? '#fff8f0' : '');
+
+  return `<tr id="count-row-c_${p.id}" style="background:${rowBg}">
+    <td style="padding-left:8px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:200px;line-height:1.3">${p.name}</td>
+    <td style="font-weight:700;color:#0d1f4e">${currentQty}</td>
+    <td>
+      <label style="display:flex;align-items:center;gap:7px;cursor:pointer">
+        <input type="checkbox" ${s.verified?'checked':''} onchange="toggleCoffeeVerified(${p.id},this.checked)"
+          style="width:16px;height:16px;accent-color:#1a7a45;cursor:pointer"/>
+        <span style="font-size:11px;color:${s.verified?'#1a7a45':'#7080a0'};font-weight:${s.verified?'700':'500'}">
+          ${s.verified?'✓ Correct':'Mark correct'}
+        </span>
+      </label>
+    </td>
+    <td>
+      ${!s.verified?`<input type="number" value="${s.actualQty}" placeholder="Enter qty"
+        style="width:80px;background:#f4f6fa;border:1.5px solid ${isDiff?'#c9a84c':'#d0d5e0'};border-radius:5px;padding:4px 7px;font-size:12px;color:#1a2340;outline:none"
+        oninput="updateCoffeeActualQty(${p.id},this.value)"/>`:
+        `<span style="color:#8090b0;font-size:11px">—</span>`}
+    </td>
+    <td class="count-diff" style="font-weight:700;color:${diff===null?'#8090b0':diff>0?'#1a7a45':'#b01c1c'}">
+      ${diff===null?(s.verified?'—':''):diff>0?'+'+diff:diff}
+    </td>
+    <td>
+      <span class="count-reason" style="font-size:11px;font-weight:600;color:${isDiff&&!s.verified?(s.reason==='Spoilage'?'#b01c1c':'#1a7a45'):'#8090b0'};display:${isDiff&&!s.verified&&s.reason?'':'none'}">
+        ${isDiff&&!s.verified&&s.reason?s.reason:''}
+      </span>
+      ${!isDiff&&!s.verified?`<span style="color:#8090b0;font-size:11px">${s.verified?'—':(actualQty!==null?'No change':'')}</span>`:''}
+      ${s.verified?`<span style="color:#8090b0;font-size:11px">—</span>`:''}
+    </td>
+    <td class="count-verified-qty" style="font-weight:700;color:#1a7a45">
+      ${verifiedQty!==''?verifiedQty:'<span style="color:#d0d5e0;font-size:11px">—</span>'}
+    </td>
+  </tr>`;
+}
+
+function toggleCoffeeVerified(id, checked){
+  const key = 'c_'+id;
+  countState[key].verified = checked;
+  if(checked){ countState[key].actualQty=''; countState[key].reason=''; }
+  render();
+}
+
+function updateCoffeeActualQty(id, val){
+  const key = 'c_'+id;
+  const p = coffeeProducts.find(x=>x.id===id);
+  const currentQty = p ? p.qty : 0;
+  const newQty = val === '' ? null : parseFloat(val);
+  countState[key].actualQty = val;
+  countState[key].verified = false;
+  if(newQty !== null && newQty !== currentQty){
+    countState[key].reason = newQty < currentQty ? 'Spoilage' : 'Manual Increase';
+  } else {
+    countState[key].reason = '';
+  }
+  const diff = newQty !== null ? newQty - currentQty : null;
+  const rowEl = document.getElementById('count-row-c_' + id);
+  if(rowEl){
+    const diffEl = rowEl.querySelector('.count-diff');
+    const verEl = rowEl.querySelector('.count-verified-qty');
+    const reasonEl = rowEl.querySelector('.count-reason');
+    if(diffEl){
+      diffEl.textContent = diff === null ? '' : (diff > 0 ? '+' + diff : diff);
+      diffEl.style.color = diff === null ? '#8090b0' : diff > 0 ? '#1a7a45' : '#b01c1c';
+    }
+    if(verEl) verEl.textContent = newQty !== null ? newQty : '—';
+    if(reasonEl && diff !== null && newQty !== currentQty){
+      reasonEl.textContent = countState[key].reason;
+      reasonEl.style.display = '';
+    } else if(reasonEl){
+      reasonEl.textContent = '';
+    }
+    rowEl.style.background = diff !== null && newQty !== currentQty ? '#fff8f0' : '';
+  }
+}
+
+function updateCoffeeReason(id, val){
+  countState['c_'+id].reason = val;
+  countState['c_'+id]._pendingReason = val;
 }
 
 function toggleSkipCat(cat){
   if(countSkippedCats.has(cat)){
     countSkippedCats.delete(cat);
-    // un-skip all items in this cat
-    const items = products.filter(p=>p.active && p.cat1===cat);
-    for(const p of items) countState[p.id].skip = false;
+    // un-skip items — check if it's a coffee category (prefixed with C_)
+    if(cat.startsWith('C_')){
+      const realCat = cat.slice(2);
+      const items = coffeeProducts.filter(p=>p.active && p.cat1===realCat);
+      for(const p of items) if(countState['c_'+p.id]) countState['c_'+p.id].skip = false;
+    } else {
+      const items = products.filter(p=>p.active && p.cat1===cat);
+      for(const p of items) countState[p.id].skip = false;
+    }
   } else {
     countSkippedCats.add(cat);
-    const items = products.filter(p=>p.active && p.cat1===cat);
-    for(const p of items) countState[p.id].skip = true;
+    if(cat.startsWith('C_')){
+      const realCat = cat.slice(2);
+      const items = coffeeProducts.filter(p=>p.active && p.cat1===realCat);
+      for(const p of items) if(countState['c_'+p.id]) countState['c_'+p.id].skip = true;
+    } else {
+      const items = products.filter(p=>p.active && p.cat1===cat);
+      for(const p of items) countState[p.id].skip = true;
+    }
   }
   render();
 }
@@ -6452,6 +6701,7 @@ async function submitCount(){
   const now = new Date().toISOString();
   const countDate = now.slice(0,10);
 
+  // MM products
   const toUpdate = products.filter(p=>{
     const s = countState[p.id];
     if(!s || s.skip || countSkippedCats.has(p.cat1) || s.verified) return false;
@@ -6459,12 +6709,21 @@ async function submitCount(){
     return aq !== null && s.reason;
   });
 
-  showCountProgress('Submitting Warehouse Inventory Count', toUpdate.length);
+  // Coffee products
+  const coffeeToUpdate = coffeeProducts.filter(p=>{
+    const s = countState['c_'+p.id];
+    if(!s || s.skip || countSkippedCats.has('C_'+p.cat1) || s.verified) return false;
+    const aq = s.actualQty !== '' ? parseFloat(s.actualQty) : null;
+    return aq !== null && s.reason;
+  });
+
+  const totalUpdates = toUpdate.length + coffeeToUpdate.length;
+  showCountProgress('Submitting Warehouse Inventory Count', totalUpdates);
   let processed = 0;
 
   for(const p of toUpdate){
     processed++;
-    updateCountProgress(processed, toUpdate.length, p.name);
+    updateCountProgress(processed, totalUpdates, p.name);
     const s = countState[p.id];
     const newQty = parseFloat(s.actualQty);
     const prevQty = p.qty;
@@ -6481,24 +6740,55 @@ async function submitCount(){
           prefer:'resolution=merge-duplicates,return=minimal',
           body: JSON.stringify([{
             id: Date.now() + Math.floor(Math.random()*10000),
-            product_id: p.id,
-            product_name: p.name,
-            previous_qty: prevQty,
-            new_qty: newQty,
-            difference: diff,
-            reason: reason,
-            count_date: countDate,
-            created_at: now
+            product_id: p.id, product_name: p.name,
+            previous_qty: prevQty, new_qty: newQty,
+            difference: diff, reason: reason,
+            count_date: countDate, created_at: now
           }])
         });
       }
       const entry = {id:Date.now()+Math.random(), date:countDate, product:p.name, qty:diff, by:`Inventory Count (${reason})`};
       restockLog = [entry,...restockLog];
       await saveRestock(entry);
-
       countSubmitResult.adjustments.push({name:p.name, prev:p.qty, newQty, diff, reason});
     } catch(e){
       countSubmitResult.errors.push({name:p.name, error:e.message||'Save failed'});
+    }
+  }
+
+  // Process coffee products
+  for(const p of coffeeToUpdate){
+    processed++;
+    updateCountProgress(processed, totalUpdates, '☕ '+p.name);
+    const s = countState['c_'+p.id];
+    const newQty = parseFloat(s.actualQty);
+    const prevQty = p.qty;
+    const diff = newQty - prevQty;
+    const reason = s.reason;
+
+    coffeeProducts = coffeeProducts.map(x=>x.id===p.id?{...x,qty:newQty}:x);
+
+    try{
+      await saveCoffeeProduct(coffeeProducts.find(x=>x.id===p.id));
+      if(useSupabase){
+        await sbFetch('inventory_count_log', {
+          method:'POST',
+          prefer:'resolution=merge-duplicates,return=minimal',
+          body: JSON.stringify([{
+            id: Date.now() + Math.floor(Math.random()*10000),
+            product_id: p.id, product_name: '☕ '+p.name,
+            previous_qty: prevQty, new_qty: newQty,
+            difference: diff, reason: reason,
+            count_date: countDate, created_at: now
+          }])
+        });
+      }
+      const entry = {id:Date.now()+Math.random(), date:countDate, product:'☕ '+p.name, qty:diff, by:`Coffee Count (${reason})`};
+      restockLog = [entry,...restockLog];
+      await saveRestock(entry);
+      countSubmitResult.adjustments.push({name:'☕ '+p.name, prev:p.qty, newQty, diff, reason});
+    } catch(e){
+      countSubmitResult.errors.push({name:'☕ '+p.name, error:e.message||'Save failed'});
     }
   }
 
@@ -6711,7 +7001,7 @@ function renderMobWhOrders(){
   if(!whOrdersLoaded){ loadWhOrders().then(()=>renderMobWhOrders()); return; }
   const openOrders = whOrders.filter(o=>o.status==='open');
   const rcvdOrders = whOrders.filter(o=>o.status==='received').slice(0,3);
-  const lowCount = products.filter(p=>p.active&&p.maxLevel>0&&p.qty<=p.minLevel).length;
+  const lowCount = products.filter(p=>p.active&&p.maxLevel>0&&p.qty<=p.minLevel).length + coffeeProducts.filter(p=>p.active&&p.maxLevel>0&&p.qty<=p.minLevel).length;
 
   document.getElementById('main-body').innerHTML = `
     <!-- Stats -->
