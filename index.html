@@ -4175,10 +4175,9 @@ async function saveWhOrder(order){
 }
 
 // ── Calculate recommended order items ──
-function calcWhOrderItems(){
-  const lowItems = products.filter(p=> p.active && p.minLevel > 0 && p.qty <= p.minLevel);
+function calcWhOrderItems(selectedVendors){
+  const lowItems = products.filter(p=> p.active && p.maxLevel > 0 && p.qty <= p.minLevel);
   const orderItems = lowItems.map(p => {
-    // Pick vendor by priority
     const assignedVendors = (p.vendors||[]);
     let vendor = '';
     for(const vp of VENDOR_PRIORITY){
@@ -4187,29 +4186,24 @@ function calcWhOrderItems(){
     if(!vendor && assignedVendors.length>0) vendor = assignedVendors[0];
     if(!vendor) vendor = 'Unassigned';
 
-    // Rec cases = ceil((max - currentQty) / piecesPerBox)
     const ppb = p.piecesPerBox || 1;
     const needed = Math.max(0, p.maxLevel - p.qty);
-    const recCases = Math.ceil(needed / ppb);
+    const recCases = Math.max(1, Math.ceil(needed / ppb));
 
     return {
-      product_id: p.id,
-      product_name: p.name,
-      cat1: p.cat1||'',
-      vendor,
-      current_qty: p.qty,
-      min_level: p.minLevel,
-      max_level: p.maxLevel,
-      pieces_per_box: ppb,
-      rec_cases: recCases,
-      bought_rec: false,     // checkbox
-      actual_cases: '',       // override
-      notes: ''
+      product_id: p.id, product_name: p.name, cat1: p.cat1||'', vendor,
+      current_qty: p.qty, min_level: p.minLevel, max_level: p.maxLevel,
+      pieces_per_box: ppb, rec_cases: recCases,
+      bought_rec: false, actual_cases: '', notes: ''
     };
   });
 
-  // Sort by vendor priority then by category
-  orderItems.sort((a,b) => {
+  // Filter by selected vendors if provided
+  const filtered = selectedVendors && selectedVendors.length > 0
+    ? orderItems.filter(item => selectedVendors.includes(item.vendor))
+    : orderItems;
+
+  filtered.sort((a,b) => {
     const ai = VENDOR_PRIORITY.indexOf(a.vendor);
     const bi = VENDOR_PRIORITY.indexOf(b.vendor);
     const av = ai===-1?99:ai, bv = bi===-1?99:bi;
@@ -4219,7 +4213,7 @@ function calcWhOrderItems(){
     return (a.product_name||'').localeCompare(b.product_name||'');
   });
 
-  return orderItems;
+  return filtered;
 }
 
 // ── Build Google Sheet data for the order ──
@@ -4363,7 +4357,7 @@ function renderWhOrders(){
 
   const openOrders = whOrders.filter(o=>o.status==='open');
   const receivedOrders = whOrders.filter(o=>o.status==='received').slice(0,5);
-  const lowItems = products.filter(p=>p.active&&p.minLevel>0&&p.qty<=p.minLevel);
+  const lowItems = products.filter(p=>p.active&&p.maxLevel>0&&p.qty<=p.minLevel);
 
   document.getElementById('main-body').innerHTML=`
     <!-- Stats -->
@@ -4391,12 +4385,12 @@ function renderWhOrders(){
       <div class="card" style="border-top:3px solid #0d1f4e;margin-bottom:0">
         <div class="card-title" style="margin-bottom:4px">📋 Planned Order</div>
         <div style="font-size:11px;color:#7080a0;margin-bottom:12px;line-height:1.5">
-          Calculate recommended quantities for all items at/below min level. Creates a Google Sheet for shopping.
+          Select vendors, review recommended quantities, save order and export to Excel.
           <br><span style="color:${lowItems.length>0?'#b01c1c':'#1a7a45'};font-weight:600">${lowItems.length} item${lowItems.length!==1?'s':''} need reordering</span>
         </div>
-        <button onclick="previewNewWhOrder()" class="primary-btn" style="width:100%;padding:9px"
+        <button onclick="openWhOrderVendorPicker()" class="primary-btn" style="width:100%;padding:9px"
           ${lowItems.length===0?'disabled style="opacity:0.5;cursor:not-allowed"':''}>
-          📋 Preview & Create Order
+          📋 New Planned Order
         </button>
       </div>
       <!-- Option B: Quick capture -->
@@ -4449,9 +4443,9 @@ function renderWhOrderRow(order){
         </div>
         <div style="display:flex;align-items:center;gap:8px" onclick="event.stopPropagation()">
           ${isOpen?`
-            <button onclick="syncWhOrderFromSheet(${order.id})"
-              style="background:#f4f6fa;color:#0d1f4e;border:1.5px solid #0d1f4e;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer">
-              🔄 Sync Sheet
+            <button onclick="exportWhOrderExcel(whOrders.find(o=>o.id===${order.id}))"
+              style="background:#0d1f4e;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:11px;font-weight:700;cursor:pointer">
+              📊 Export
             </button>
             <button id="wh-recv-btn-${order.id}" onclick="receiveWhOrder(${order.id})"
               style="background:#1a7a45;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:11px;font-weight:700;cursor:pointer">
@@ -4568,9 +4562,59 @@ function saveWhOrderDebounced(order){
 }
 
 // ── Preview new order modal ──
-function previewNewWhOrder(){
-  const items = calcWhOrderItems();
-  if(items.length===0){ showToast('No items at or below min level'); return; }
+let _whOrderSelectedVendors = [];
+
+function openWhOrderVendorPicker(){
+  const allItems = calcWhOrderItems();
+  if(allItems.length===0){ showToast('No items need reordering'); return; }
+
+  // Get unique vendors with item counts
+  const vendorCounts = {};
+  for(const item of allItems){
+    vendorCounts[item.vendor] = (vendorCounts[item.vendor]||0) + 1;
+  }
+  // Sort by vendor priority
+  const vendorList = Object.keys(vendorCounts).sort((a,b)=>{
+    const ai = VENDOR_PRIORITY.indexOf(a), bi = VENDOR_PRIORITY.indexOf(b);
+    return (ai===-1?99:ai) - (bi===-1?99:bi);
+  });
+
+  document.getElementById('modal-container').innerHTML=`
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="width:480px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div class="modal-title">Select Vendors to Order From</div>
+          <button onclick="closeModal()" style="background:none;border:none;color:#7080a0;cursor:pointer;font-size:20px">✕</button>
+        </div>
+        <div style="font-size:11px;color:#5060a0;margin-bottom:14px">${allItems.length} items need reordering across ${vendorList.length} vendor${vendorList.length!==1?'s':''}. Select which vendors to include in this order.</div>
+
+        <div id="wh-vendor-picker" style="margin-bottom:16px">
+          ${vendorList.map(v=>`
+          <label style="display:flex;align-items:center;gap:12px;padding:12px 14px;border:1.5px solid #e8ecf4;border-radius:8px;margin-bottom:8px;cursor:pointer;transition:all .15s"
+            onmouseover="this.style.borderColor='#0d1f4e'" onmouseout="this.style.borderColor=this.querySelector('input').checked?'#0d1f4e':'#e8ecf4'">
+            <input type="checkbox" value="${v}" checked style="width:18px;height:18px;accent-color:#0d1f4e;cursor:pointer;flex-shrink:0"/>
+            <div style="flex:1">
+              <div style="font-size:13px;font-weight:700;color:#0d1f4e">${v}</div>
+              <div style="font-size:11px;color:#7080a0">${vendorCounts[v]} item${vendorCounts[v]!==1?'s':''} to order</div>
+            </div>
+          </label>`).join('')}
+        </div>
+
+        <div style="display:flex;gap:10px">
+          <button class="primary-btn" onclick="showWhOrderPreview()" style="padding:10px 20px">Review Order →</button>
+          <button onclick="closeModal()" class="secondary-btn">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function showWhOrderPreview(){
+  const checked = Array.from(document.querySelectorAll('#wh-vendor-picker input:checked')).map(cb=>cb.value);
+  if(checked.length===0){ showToast('Select at least one vendor'); return; }
+
+  _whOrderSelectedVendors = checked;
+  const items = calcWhOrderItems(checked);
+  if(items.length===0){ showToast('No items need reordering for selected vendors'); return; }
 
   const byVendor = {};
   for(const item of items){
@@ -4578,29 +4622,36 @@ function previewNewWhOrder(){
     byVendor[item.vendor].push(item);
   }
 
+  const totalCases = items.reduce((s,i)=>s+i.rec_cases,0);
+  const totalUnits = items.reduce((s,i)=>s+(i.rec_cases*i.pieces_per_box),0);
+
   document.getElementById('modal-container').innerHTML=`
     <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
-      <div class="modal" style="width:720px;max-height:85vh">
+      <div class="modal" style="width:760px;max-height:85vh">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
           <div>
-            <div class="modal-title" style="margin-bottom:2px">New Warehouse Order Preview</div>
-            <div style="font-size:11px;color:#7080a0">${items.length} items · sorted by vendor priority</div>
+            <div class="modal-title" style="margin-bottom:2px">Warehouse Order Preview</div>
+            <div style="font-size:11px;color:#7080a0">${items.length} items · ${totalCases} cases · ${totalUnits} units · ${checked.length} vendor${checked.length!==1?'s':''}</div>
           </div>
-          <button onclick="closeModal()" style="background:none;border:none;color:#7080a0;cursor:pointer;font-size:20px">✕</button>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button onclick="openWhOrderVendorPicker()" style="background:#f4f6fa;color:#5060a0;border:1.5px solid #d0d5e0;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer">← Change Vendors</button>
+            <button onclick="closeModal()" style="background:none;border:none;color:#7080a0;cursor:pointer;font-size:20px">✕</button>
+          </div>
         </div>
 
-        <div style="max-height:55vh;overflow-y:auto;margin-bottom:14px">
+        <div style="max-height:52vh;overflow-y:auto;margin-bottom:14px">
           ${Object.entries(byVendor).map(([vendor,vitems])=>`
-            <div style="margin-bottom:12px">
-              <div style="font-size:10px;font-weight:700;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase;padding:5px 0;border-bottom:2px solid #e8ecf4;margin-bottom:6px">${vendor} (${vitems.length} items)</div>
+            <div style="margin-bottom:14px">
+              <div style="font-size:10px;font-weight:700;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase;padding:6px 0;border-bottom:2px solid #e8ecf4;margin-bottom:6px">${vendor} (${vitems.length} items · ${vitems.reduce((s,i)=>s+i.rec_cases,0)} cases)</div>
               <table style="width:100%">
                 <thead><tr>
                   <th style="padding-left:4px;min-width:180px">ITEM</th>
-                  <th>CURR QTY</th><th>MIN</th><th>MAX</th><th>PCS/CASE</th><th>REC. CASES</th><th>QTY TO ADD</th>
+                  <th>CAT</th><th>QTY</th><th>MIN</th><th>MAX</th><th>PCS/CASE</th><th>CASES</th><th>QTY TO ADD</th>
                 </tr></thead>
                 <tbody>
                 ${vitems.map(item=>`<tr>
                   <td style="padding-left:4px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:200px">${item.product_name}</td>
+                  <td style="font-size:10px;color:#5060a0">${item.cat1}</td>
                   <td style="color:#b01c1c;font-weight:700">${item.current_qty}</td>
                   <td>${item.min_level}</td>
                   <td style="color:#1a7a45">${item.max_level}</td>
@@ -4613,19 +4664,9 @@ function previewNewWhOrder(){
             </div>`).join('')}
         </div>
 
-        <div style="background:#f4f6fa;border-radius:7px;padding:10px 12px;margin-bottom:14px;font-size:11px;color:#5060a0;line-height:1.8">
-          <strong style="color:#0d1f4e">What happens next:</strong><br>
-          1. A Google Sheet is created in your <strong>BrewBox Orders</strong> Drive folder<br>
-          2. While shopping: check ✓ if you bought the rec. qty, or type actual cases if different<br>
-          3. Back home: click <strong>Sync Sheet</strong> to pull your updates, then <strong>Receive Order</strong> to update warehouse
-        </div>
-
         <div style="display:flex;gap:10px">
-          <button id="create-wh-order-btn" class="primary-btn" onclick="createWhOrder()" style="padding:10px 20px">
-            📊 Create Order & Google Sheet
-          </button>
-          <button onclick="createWhOrderNoSheet()" style="background:#f4f6fa;color:#0d1f4e;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 16px;font-size:12px;font-weight:700;cursor:pointer">
-            Create Order Only (no sheet)
+          <button id="create-wh-order-btn" class="primary-btn" onclick="createWhOrderWithExport()" style="padding:10px 20px">
+            💾 Save Order & Export Excel
           </button>
           <button onclick="closeModal()" class="secondary-btn">Cancel</button>
         </div>
@@ -4633,11 +4674,11 @@ function previewNewWhOrder(){
     </div>`;
 }
 
-async function createWhOrder(withSheet=true){
+async function createWhOrderWithExport(){
   const btn = document.getElementById('create-wh-order-btn');
   if(btn){ btn.disabled=true; btn.textContent='Creating…'; btn.style.opacity='0.6'; }
 
-  const items = calcWhOrderItems();
+  const items = calcWhOrderItems(_whOrderSelectedVendors);
   const order = {
     id: Date.now(),
     status: 'open',
@@ -4648,29 +4689,63 @@ async function createWhOrder(withSheet=true){
     items
   };
 
-  // Try Google Sheets
-  if(withSheet){
-    const sheetResult = await createGoogleSheet(order);
-    if(sheetResult){
-      order.sheet_id = sheetResult.sheet_id;
-      order.sheet_url = sheetResult.sheet_url;
-    }
-  }
-
   whOrders.unshift(order);
   await saveWhOrder(order);
+
+  // Log to activity
+  const entry = {
+    id: Date.now()+Math.random(),
+    date: new Date().toISOString().slice(0,10),
+    product: `WH Order #${order.id.toString().slice(-6)} — ${items.length} items`,
+    qty: items.reduce((s,i)=>s+i.rec_cases*i.pieces_per_box,0),
+    by: `Warehouse Order Created`
+  };
+  restockLog = [entry,...restockLog];
+  await saveRestock(entry);
+
   closeModal();
   whExpandedIds.add(order.id);
   renderWhOrders();
 
-  if(order.sheet_url){
-    showToast('Order created & sheet uploaded to Google Drive!');
+  // Export Excel
+  exportWhOrderExcel(order);
+  showToast(`Order created — ${items.length} items from ${_whOrderSelectedVendors.join(', ')}`);
+}
+
+function exportWhOrderExcel(order){
+  const doExport = ()=>{
+    const orderDate = new Date(order.created_at).toISOString().slice(0,10);
+    const fileName = `Warehouse_Order_${orderDate}_${order.id.toString().slice(-6)}.xlsx`;
+    const headers = ['Item Name','Category','Vendor','Qty on Hand','Min','Max','Pcs/Case','Rec. Cases','Qty to Add'];
+    const rows = order.items.map(item=>[
+      item.product_name, item.cat1||'', item.vendor||'',
+      item.current_qty, item.min_level, item.max_level,
+      item.pieces_per_box, item.rec_cases, item.rec_cases * item.pieces_per_box
+    ]);
+    rows.push(['TOTAL','','','','','','',
+      order.items.reduce((s,i)=>s+i.rec_cases,0),
+      order.items.reduce((s,i)=>s+i.rec_cases*i.pieces_per_box,0)
+    ]);
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    ws['!cols'] = [{wch:35},{wch:12},{wch:22},{wch:10},{wch:6},{wch:6},{wch:10},{wch:10},{wch:10}];
+    XLSX.utils.book_append_sheet(wb, ws, 'Warehouse Order');
+    XLSX.writeFile(wb, fileName);
+  };
+
+  if(typeof XLSX === 'undefined'){
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    script.onload = doExport;
+    document.head.appendChild(script);
   } else {
-    showToast('Order created — Google Sheet not available, use app to track');
+    doExport();
   }
 }
 
-async function createWhOrderNoSheet(){ await createWhOrder(false); }
+// Keep legacy function name for backward compat
+function previewNewWhOrder(){ openWhOrderVendorPicker(); }
 
 async function syncWhOrderFromSheet(orderId){
   const order = whOrders.find(o=>o.id===orderId);
@@ -6636,7 +6711,7 @@ function renderMobWhOrders(){
   if(!whOrdersLoaded){ loadWhOrders().then(()=>renderMobWhOrders()); return; }
   const openOrders = whOrders.filter(o=>o.status==='open');
   const rcvdOrders = whOrders.filter(o=>o.status==='received').slice(0,3);
-  const lowCount = products.filter(p=>p.active&&p.minLevel>0&&p.qty<=p.minLevel).length;
+  const lowCount = products.filter(p=>p.active&&p.maxLevel>0&&p.qty<=p.minLevel).length;
 
   document.getElementById('main-body').innerHTML = `
     <!-- Stats -->
@@ -6658,7 +6733,7 @@ function renderMobWhOrders(){
     <!-- Create order buttons -->
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">
       <button onclick="previewNewWhOrder()" style="width:100%;padding:14px;background:#0d1f4e;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;${lowCount===0?'opacity:0.5':''}" ${lowCount===0?'disabled':''}>
-        📋 Preview & Create Planned Order
+        📋 New Planned Order
       </button>
       <button onclick="openQuickCapture()" style="width:100%;padding:14px;background:#6b2fa0;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer">
         📸 Quick Capture (Receipt / Text)
@@ -6736,7 +6811,7 @@ function renderMobWhOrderCard(order, isOpen){
         }).join('')}
       `).join('')}
       <div style="display:flex;gap:8px;margin-top:12px">
-        <button onclick="syncWhOrderFromSheet(${order.id})" style="flex:1;padding:11px;background:#f4f6fa;color:#0d1f4e;border:1.5px solid #0d1f4e;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">🔄 Sync</button>
+        <button onclick="exportWhOrderExcel(whOrders.find(o=>o.id===${order.id}))" style="flex:1;padding:11px;background:#0d1f4e;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">📊 Export</button>
         <button id="wh-recv-btn-${order.id}" onclick="receiveWhOrder(${order.id})" style="flex:2;padding:11px;background:#1a7a45;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">✓ Receive</button>
         <button onclick="cancelWhOrder(${order.id})" style="flex:1;padding:11px;background:#fff;color:#b01c1c;border:1.5px solid #b01c1c;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">✕</button>
       </div>` :
