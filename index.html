@@ -597,6 +597,12 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
           <button class="nav-btn nav-sub" onclick="setView('order-activity')">📦 &nbsp;<span>Order Activity</span></button>
         </div>
       </div>
+      <div id="reports-nav">
+        <button class="nav-btn" id="reports-toggle" onclick="toggleReportsMenu()">📊 &nbsp;<span>Reports</span><span class="nav-arrow" id="reports-arrow">›</span></button>
+        <div id="reports-submenu" style="display:none">
+          <button class="nav-btn nav-sub" onclick="setView('usage-report')">📋 &nbsp;<span>Usage / Theft Report</span></button>
+        </div>
+      </div>
     </div>
     <div id="low-alert-sb"></div>
     <div class="sync-status" id="sync-status"></div>
@@ -1269,6 +1275,26 @@ function setSyncStatus(type, msg){
 // ═══════════════════════════════════════════════════
 //  APP INIT
 // ═══════════════════════════════════════════════════
+let storeSettings = {}; // {storeName: {free_vend: bool}}
+
+async function loadStoreSettings(){
+  if(useSupabase){
+    try{
+      const rows = await sbFetch('store_settings?select=store_name,free_vend',{method:'GET',prefer:'return=representation'});
+      for(const r of rows) storeSettings[r.store_name] = {free_vend: r.free_vend};
+    }catch(e){}
+  }
+}
+
+function isStoreSettings(storeName, key){
+  return storeSettings[storeName] && storeSettings[storeName][key];
+}
+
+function getStoreNegReasons(storeName){
+  const isFV = isStoreSettings(storeName, 'free_vend');
+  return [isFV?'Consumption':'Theft/Walkoff','Complimentary','Spoilage','Return to Warehouse','Manual Decrease'];
+}
+
 async function initApp(){
   document.getElementById('setup-screen').style.display='none';
   document.getElementById('app').style.display='flex';
@@ -1279,6 +1305,7 @@ async function initApp(){
   await loadStoreOrders();
   await loadWhOrders();
   await loadSalesImportHistory();
+  await loadStoreSettings();
   hideLoading();
   setView('dashboard');
 }
@@ -1347,6 +1374,7 @@ function updateSidebar(){
   if(currentView==='store-inventory'||currentView==='store-orders'||currentView==='store-count') openStoresMenu();
   // Auto-open import submenu when on import views
   if(currentView==='orders') openImportMenu();
+  if(currentView==='usage-report') { openReportsMenu(); document.querySelector('.nav-btn[onclick*="usage-report"]')?.classList.add('active'); }
 }
 
 function toggleWarehouseMenu(){
@@ -1394,6 +1422,21 @@ function openActivityMenu(){
   if(arrow) arrow.classList.add('open');
 }
 
+function toggleReportsMenu(){
+  const sub=document.getElementById('reports-submenu');
+  const arrow=document.getElementById('reports-arrow');
+  if(!sub) return;
+  const isOpen=sub.style.display!=='none';
+  sub.style.display=isOpen?'none':'block';
+  arrow?.classList.toggle('open',!isOpen);
+}
+function openReportsMenu(){
+  const sub=document.getElementById('reports-submenu');
+  const arrow=document.getElementById('reports-arrow');
+  if(sub) sub.style.display='block';
+  if(arrow) arrow.classList.add('open');
+}
+
 function toggleStoresMenu(){
   const sub=document.getElementById('stores-submenu');
   const arrow=document.getElementById('stores-arrow');
@@ -1411,7 +1454,7 @@ function openStoresMenu(){
 
 function setView(v){
   currentView=v;
-  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log','sales-import':'Sales Import',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log'};
+  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log','sales-import':'Sales Import',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log','usage-report':'Usage / Theft Report'};
   if(v==='count' && Object.keys(countState).length===0) initCountState();
   if(v==='store-count' && Object.keys(storeCountState).length===0) initStoreCountState();
   document.getElementById('page-title').textContent=titles[v]||v;
@@ -1442,6 +1485,7 @@ function render(){
   else if(currentView==='orders') renderOrders();
   else if(currentView==='count') renderCount();
   else if(currentView==='wh-orders') renderWhOrders();
+  else if(currentView==='usage-report') renderUsageReport();
   else renderRestock();
 }
 
@@ -3858,7 +3902,6 @@ let storeCountSkippedCats = new Set(); // category sections skipped
 let storeCountSubmitted = false;
 let storeCountSubmitResult = null;
 
-const STORE_COUNT_NEG_REASONS = ['Theft/Walkoff','Complimentary','Spoilage','Return to Warehouse','Manual Decrease'];
 const STORE_COUNT_POS_REASONS = ['Manual Increase','Restock'];
 
 function initStoreCountState(){
@@ -3977,7 +4020,7 @@ function renderStoreCountRow(item){
   const diff = isDiff ? actualQty - currentQty : null;
   const verifiedQty = s.verified ? currentQty : (actualQty !== null ? actualQty : '');
   const rowBg = s.verified ? '#f0fff4' : (isDiff ? '#fff8f0' : '');
-  const reasons = diff !== null ? (diff < 0 ? STORE_COUNT_NEG_REASONS : STORE_COUNT_POS_REASONS) : [];
+  const reasons = diff !== null ? (diff < 0 ? getStoreNegReasons(storeCountStore) : STORE_COUNT_POS_REASONS) : [];
 
   return `<tr id="sc-row-${item.id}" style="background:${rowBg}">
     <td style="padding-left:8px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:200px;line-height:1.3">${item.product_name}</td>
@@ -4050,7 +4093,7 @@ function updateStoreCountQty(id, val){
     // Inject or remove reason dropdown
     if(reasonTd){
       if(isDiff){
-        const reasons = diff < 0 ? STORE_COUNT_NEG_REASONS : STORE_COUNT_POS_REASONS;
+        const reasons = diff < 0 ? getStoreNegReasons(storeCountStore) : STORE_COUNT_POS_REASONS;
         reasonTd.innerHTML = `<select onchange="updateStoreCountReason(${id},this.value)"
           style="background:#f4f6fa;border:1.5px solid #e8943a;border-radius:5px;padding:4px 7px;font-size:11px;color:#1a2340;outline:none;cursor:pointer">
           <option value="">-- Select --</option>
@@ -4228,7 +4271,8 @@ async function submitStoreCount(){
               previous_qty:item.qty-diff,
               new_qty:newQty,
               difference:diff,
-              reason:`Store Count — ${reason} — ${storeCountStore}`,
+              reason:reason,
+              store_name:storeCountStore,
               count_date:countDate,
               created_at:now
             }])
@@ -5574,7 +5618,7 @@ function renderMobCountCard(item){
   const displayVal = s.verified ? currentQty : s.stepperVal;
   const diff = s.verified ? 0 : displayVal - currentQty;
   const isDiff = diff !== 0;
-  const reasons = isDiff ? (diff < 0 ? STORE_COUNT_NEG_REASONS : STORE_COUNT_POS_REASONS) : [];
+  const reasons = isDiff ? (diff < 0 ? getStoreNegReasons(storeCountStore) : STORE_COUNT_POS_REASONS) : [];
   const cardClass = s.verified ? 'verified' : (isDiff ? 'has-diff' : '');
 
   return `<div class="mob-count-card ${cardClass}" id="mcc-${item.id}">
@@ -5619,7 +5663,7 @@ function mobCountStep(id, delta){
   // Reset reason if diff direction changed
   const diff = s.stepperVal - item.qty;
   if(s.reason){
-    const negReasons = STORE_COUNT_NEG_REASONS;
+    const negReasons = getStoreNegReasons(storeCountStore);
     const posReasons = STORE_COUNT_POS_REASONS;
     if(diff < 0 && posReasons.includes(s.reason)) s.reason = '';
     if(diff > 0 && negReasons.includes(s.reason)) s.reason = '';
@@ -5635,7 +5679,7 @@ function mobCountStep(id, delta){
     // Update diff line and reason dropdown via partial re-render of card inner
     const diffSection = card.querySelector('.mob-count-diff');
     const reasonSection = card.querySelector('.mob-count-reason');
-    const reasons = isDiff ? (diff<0 ? STORE_COUNT_NEG_REASONS : STORE_COUNT_POS_REASONS) : [];
+    const reasons = isDiff ? (diff<0 ? getStoreNegReasons(storeCountStore) : STORE_COUNT_POS_REASONS) : [];
     if(isDiff){
       if(!diffSection){
         // Re-render card fully (first time diff appears)
@@ -6942,6 +6986,220 @@ function renderCountResult(){
     </div>`;
 }
 
+// ═══════════════════════════════════════════════════
+//  USAGE / THEFT REPORT
+// ═══════════════════════════════════════════════════
+let usageReportStore = '';
+let usageReportFrom = '';
+let usageReportTo = '';
+let usageReportData = null; // null = not yet run
+const USAGE_TAX_RATE = 0.109; // 10.9% taxes + fees
+
+function renderUsageReport(){
+  if(!usageReportStore) usageReportStore = STORES[0];
+  const isFV = isStoreSettings(usageReportStore, 'free_vend');
+  const reportLabel = isFV ? 'Consumption' : 'Theft/Walkoff';
+  const reasons = isFV ? ['Consumption'] : ['Theft/Walkoff'];
+
+  // Default date range: current month
+  if(!usageReportFrom){
+    const now = new Date();
+    usageReportFrom = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0,10);
+    usageReportTo = now.toISOString().slice(0,10);
+  }
+
+  document.getElementById('main-body').innerHTML = `
+    <div class="card" style="border-top:3px solid #0d1f4e;margin-bottom:14px">
+      <div class="card-title" style="margin-bottom:12px">${isFV ? '📋 Consumption Report' : '📋 Theft / Walkoff Report'}</div>
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase">Store:</label>
+          <select onchange="usageReportStore=this.value;usageReportData=null;renderUsageReport()"
+            style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer">
+            ${STORES.map(s=>`<option value="${s}" ${s===usageReportStore?'selected':''}>${s}${isStoreSettings(s,'free_vend')?' (Free Vend)':''}</option>`).join('')}
+          </select>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase">From:</label>
+          <input type="date" value="${usageReportFrom}" onchange="usageReportFrom=this.value;usageReportData=null"
+            style="border:1.5px solid #d0d5e0;border-radius:7px;padding:6px 10px;font-size:12px;font-weight:600;color:#0d1f4e;outline:none"/>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase">To:</label>
+          <input type="date" value="${usageReportTo}" onchange="usageReportTo=this.value;usageReportData=null"
+            style="border:1.5px solid #d0d5e0;border-radius:7px;padding:6px 10px;font-size:12px;font-weight:600;color:#0d1f4e;outline:none"/>
+        </div>
+        <button onclick="runUsageReport()" class="primary-btn" style="padding:8px 18px">🔍 Run Report</button>
+      </div>
+      <div style="font-size:11px;color:#7080a0;line-height:1.5">
+        ${isFV
+          ? 'This report shows all <strong>consumption</strong> logged via store inventory counts for the selected store and date range. Use it to calculate invoices.'
+          : 'This report shows all <strong>theft/walkoff</strong> logged via store inventory counts for the selected store and date range.'}
+        <br>Prices include ${(USAGE_TAX_RATE*100).toFixed(1)}% taxes & fees.
+      </div>
+    </div>
+
+    ${usageReportData === null ? '' : usageReportData.length === 0 ? `
+    <div class="card" style="text-align:center;padding:30px;color:#7080a0">
+      <div style="font-size:16px;margin-bottom:8px">No ${reportLabel.toLowerCase()} records found</div>
+      <div style="font-size:12px">${usageReportStore} · ${usageReportFrom} to ${usageReportTo}</div>
+    </div>` : `
+    <div class="card" style="border-top:3px solid ${isFV?'#c62828':'#b35a00'}">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div>
+          <div class="card-title" style="margin-bottom:2px">${usageReportStore} — ${reportLabel}</div>
+          <div style="font-size:11px;color:#7080a0">${usageReportFrom} to ${usageReportTo} · ${usageReportData.length} items</div>
+        </div>
+        <button onclick="exportUsageReportExcel()" style="background:#0d1f4e;color:#fff;border:none;border-radius:7px;padding:8px 16px;font-size:12px;font-weight:700;cursor:pointer">📊 Export Excel</button>
+      </div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th style="padding-left:8px;min-width:200px">ITEM</th>
+            <th>CATEGORY</th>
+            <th>UNITS</th>
+            <th>UNIT PRICE</th>
+            <th>SUBTOTAL</th>
+            <th>TAX/FEES</th>
+            <th>LINE TOTAL</th>
+          </tr></thead>
+          <tbody>
+          ${usageReportData.map(r=>`<tr>
+            <td style="padding-left:8px;font-weight:600;color:#0d1f4e">${r.name}</td>
+            <td style="font-size:11px;color:#5060a0">${r.cat1||''}</td>
+            <td style="font-weight:700;color:#b01c1c">${r.units}</td>
+            <td>$${r.unitPrice.toFixed(2)}</td>
+            <td>$${r.subtotal.toFixed(2)}</td>
+            <td style="color:#7080a0">$${r.tax.toFixed(2)}</td>
+            <td style="font-weight:700;color:#0d1f4e">$${r.lineTotal.toFixed(2)}</td>
+          </tr>`).join('')}
+          <tr style="border-top:2px solid #0d1f4e;font-weight:700">
+            <td style="padding-left:8px">TOTAL</td>
+            <td></td>
+            <td style="color:#b01c1c">${usageReportData.reduce((s,r)=>s+r.units,0)}</td>
+            <td></td>
+            <td>$${usageReportData.reduce((s,r)=>s+r.subtotal,0).toFixed(2)}</td>
+            <td style="color:#7080a0">$${usageReportData.reduce((s,r)=>s+r.tax,0).toFixed(2)}</td>
+            <td style="color:#0d1f4e">$${usageReportData.reduce((s,r)=>s+r.lineTotal,0).toFixed(2)}</td>
+          </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>`}
+  `;
+}
+
+async function runUsageReport(){
+  const isFV = isStoreSettings(usageReportStore, 'free_vend');
+  const targetReasons = isFV ? ['Consumption'] : ['Theft/Walkoff'];
+
+  showToast('Loading report…');
+  try{
+    // Query inventory_count_log for this store and date range
+    const rows = await sbFetch(
+      `inventory_count_log?store_name=eq.${encodeURIComponent(usageReportStore)}&count_date=gte.${usageReportFrom}&count_date=lte.${usageReportTo}&order=product_name`,
+      {method:'GET', prefer:'return=representation'}
+    );
+
+    // Filter to only consumption/theft reasons and negative differences
+    const filtered = rows.filter(r => {
+      const reason = (r.reason||'').trim();
+      return targetReasons.includes(reason) && parseFloat(r.difference) < 0;
+    });
+
+    // Group by product — sum units consumed
+    const byProduct = {};
+    for(const r of filtered){
+      const key = r.product_name;
+      if(!byProduct[key]) byProduct[key] = {name:key, product_id:r.product_id, units:0};
+      byProduct[key].units += Math.abs(parseFloat(r.difference));
+    }
+
+    // Look up sale_price and category for each product
+    const reportData = Object.values(byProduct).map(item=>{
+      const si = storeInventory.find(x=>x.store_name===usageReportStore && x.product_id===item.product_id);
+      const wh = si?.product_source==='coffee'
+        ? coffeeProducts.find(p=>p.id===item.product_id)
+        : products.find(p=>p.id===item.product_id);
+      const unitPrice = wh ? wh.salePrice : 0;
+      const cat1 = si ? getStoreItemCat1(si) : (wh?.cat1||'');
+      const subtotal = item.units * unitPrice;
+      const tax = subtotal * USAGE_TAX_RATE;
+      return {
+        name: item.name,
+        cat1,
+        units: item.units,
+        unitPrice,
+        subtotal,
+        tax,
+        lineTotal: subtotal + tax
+      };
+    }).sort((a,b)=>a.name.localeCompare(b.name));
+
+    usageReportData = reportData;
+    renderUsageReport();
+
+    if(reportData.length > 0){
+      const total = reportData.reduce((s,r)=>s+r.lineTotal,0);
+      showToast(`Report ready — ${reportData.length} items, $${total.toFixed(2)} total`);
+    } else {
+      showToast('No records found for selected criteria');
+    }
+  }catch(e){
+    showToast('⚠ Error loading report: ' + (e.message||'check connection'));
+    usageReportData = [];
+    renderUsageReport();
+  }
+}
+
+function exportUsageReportExcel(){
+  if(!usageReportData || usageReportData.length===0){ showToast('No data to export'); return; }
+  const isFV = isStoreSettings(usageReportStore, 'free_vend');
+  const label = isFV ? 'Consumption' : 'Theft';
+
+  const doExport = ()=>{
+    const headers = ['Item Name','Category','Units','Unit Price','Subtotal','Tax/Fees ('+((USAGE_TAX_RATE*100).toFixed(1))+'%)','Line Total'];
+    const rows = usageReportData.map(r=>[
+      r.name, r.cat1||'', r.units,
+      r.unitPrice, r.subtotal, r.tax, r.lineTotal
+    ]);
+    rows.push(['TOTAL','',
+      usageReportData.reduce((s,r)=>s+r.units,0),
+      '',
+      usageReportData.reduce((s,r)=>s+r.subtotal,0),
+      usageReportData.reduce((s,r)=>s+r.tax,0),
+      usageReportData.reduce((s,r)=>s+r.lineTotal,0)
+    ]);
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+
+    // Format currency columns
+    for(let r=1; r<=rows.length; r++){
+      for(const c of [3,4,5,6]){
+        const cell = ws[XLSX.utils.encode_cell({r,c})];
+        if(cell && typeof cell.v === 'number') cell.z = '$#,##0.00';
+      }
+    }
+
+    ws['!cols'] = [{wch:35},{wch:18},{wch:8},{wch:12},{wch:12},{wch:14},{wch:12}];
+    const sheetName = `${label} Report`;
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    const fileName = `${usageReportStore.replace(/\s+/g,'_')}_${label}_Report_${usageReportFrom}_to_${usageReportTo}.xlsx`;
+    XLSX.writeFile(wb, fileName);
+    showToast(`✓ Exported — ${fileName}`);
+  };
+
+  if(typeof XLSX === 'undefined'){
+    const script = document.createElement('script');
+    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+    script.onload = doExport;
+    document.head.appendChild(script);
+  } else {
+    doExport();
+  }
+}
+
 // Register service worker for PWA installability
 if('serviceWorker' in navigator){
   window.addEventListener('load', () => {
@@ -7431,7 +7689,8 @@ function mobWhToggleExpand(id){
       'store-orders':'Store Orders','inventory':'MM Inventory',
       'coffee':'Coffee Inventory','wh-orders':'WH Orders',
       'count':'WH Count','dashboard':'Dashboard',
-      'restock':'Activity','order-activity':'Orders'
+      'restock':'Activity','order-activity':'Orders',
+      'usage-report':'Usage Report'
     };
     updateMobTitle(titles[v]||'BrewBox OS');
   };
