@@ -574,6 +574,7 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
           <button class="nav-btn nav-sub" onclick="setView('coffee')">☕ &nbsp;<span>Warehouse Coffee Inventory</span></button>
           <button class="nav-btn nav-sub" onclick="setView('count')">📋 &nbsp;<span>Warehouse Inventory Count</span></button>
           <button class="nav-btn nav-sub" onclick="setView('wh-orders')">🛒 &nbsp;<span>Warehouse Orders</span></button>
+          <button class="nav-btn nav-sub" onclick="setView('vendor-mgmt')">🏷 &nbsp;<span>Vendor Management</span></button>
         </div>
       </div>
       <div id="stores-nav">
@@ -729,22 +730,18 @@ async function sbDelete(table, id){
 // ═══════════════════════════════════════════════════
 //  VENDORS & DEFAULT DATA
 // ═══════════════════════════════════════════════════
-const VENDORS=["Costco Wholesale","Costco Business Center","Sam's Club","Wal-mart","Vistar Merchant Mart","Vistar","Clean Foods","Office Supply","Amazon","Betson Parts"];
-
-const VENDOR_ABBR = {
-  "Costco Wholesale":     "CST",
-  "Costco Business Center": "CSTB",
-  "Sam's Club":           "SAM",
-  "Wal-mart":             "WMT",
-  "Vistar Merchant Mart": "VIS"
-};
+let vendorsList = []; // loaded from DB
 
 const VENDOR_COLORS = {
   "Costco Wholesale":     {bg:"#002d6e",color:"#fff"},
   "Costco Business Center": {bg:"#b8001e",color:"#fff"},
   "Sam's Club":           {bg:"#e65c00",color:"#fff"},
   "Wal-mart":             {bg:"#0071ce",color:"#fff"},
-  "Vistar Merchant Mart": {bg:"#2e7d32",color:"#fff"}
+  "Vistar Merchant Mart": {bg:"#2e7d32",color:"#fff"},
+  "Clean Foods":          {bg:"#558b2f",color:"#fff"},
+  "Office Supply":        {bg:"#5d4037",color:"#fff"},
+  "Amazon":               {bg:"#ff9900",color:"#000"},
+  "Betson Parts":         {bg:"#616161",color:"#fff"}
 };
 
 
@@ -768,7 +765,25 @@ function storeTiles(storesList){
   }).join('');
 }
 
-function vendorAbbr(v){ return VENDOR_ABBR[v] || v.split(' ')[0].substring(0,4).toUpperCase(); }
+function vendorAbbr(v){
+  const vr = vendorsList.find(x=>x.name===v);
+  if(vr && vr.short_code) return vr.short_code;
+  return v.split(' ')[0].substring(0,4).toUpperCase();
+}
+
+function getActiveVendors(){ return vendorsList.filter(v=>v.active).sort((a,b)=>a.sort_order-b.sort_order); }
+function getActiveVendorNames(){ return getActiveVendors().map(v=>v.name); }
+function getMMVendors(){ return getActiveVendors().filter(v=>v.serves_mm).map(v=>v.name); }
+function getCoffeeVendors(){ return getActiveVendors().filter(v=>v.serves_coffee).map(v=>v.name); }
+
+async function loadVendors(){
+  if(useSupabase){
+    try{
+      const rows = await sbFetch('vendors?order=sort_order',{method:'GET',prefer:'return=representation'});
+      vendorsList = rows;
+    }catch(e){ vendorsList = []; }
+  }
+}
 const LS_PRODUCTS='vs_brewbox_products';
 const LS_RESTOCK='vs_brewbox_restock';
 
@@ -1321,6 +1336,7 @@ async function initApp(){
   await loadSalesImportHistory();
   await loadStoreSettings();
   await loadStoreStations();
+  await loadVendors();
   hideLoading();
   setView('dashboard');
 }
@@ -1385,7 +1401,7 @@ function updateSidebar(){
   if(currentView==='count') document.querySelector('.nav-btn[onclick*="count"]')?.classList.add('active');
   if(currentView==='wh-orders') document.querySelector('.nav-btn[onclick*="wh-orders"]')?.classList.add('active');
   // Auto-open warehouse submenu when on warehouse views
-  if(currentView==='inventory'||currentView==='coffee'||currentView==='count'||currentView==='wh-orders') openWarehouseMenu();
+  if(currentView==='inventory'||currentView==='coffee'||currentView==='count'||currentView==='wh-orders'||currentView==='vendor-mgmt') openWarehouseMenu();
   if(currentView==='store-inventory'||currentView==='store-orders'||currentView==='store-count') openStoresMenu();
   // Auto-open import submenu when on import views
   if(currentView==='orders') openImportMenu();
@@ -1469,7 +1485,7 @@ function openStoresMenu(){
 
 function setView(v){
   currentView=v;
-  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log','sales-import':'Sales Import',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log','usage-report':'Usage / Theft Report'};
+  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log','sales-import':'Sales Import',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log','usage-report':'Usage / Theft Report','vendor-mgmt':'Vendor Management'};
   if(v==='count' && Object.keys(countState).length===0) initCountState();
   if(v==='store-count' && Object.keys(storeCountState).length===0) initStoreCountState();
   document.getElementById('page-title').textContent=titles[v]||v;
@@ -1501,6 +1517,7 @@ function render(){
   else if(currentView==='count') renderCount();
   else if(currentView==='wh-orders') renderWhOrders();
   else if(currentView==='usage-report') renderUsageReport();
+  else if(currentView==='vendor-mgmt') renderVendorManagement();
   else renderRestock();
 }
 
@@ -1516,13 +1533,12 @@ function toggleDashStore(store){
 
 function renderDashboard(){
   // ── Warehouse Par % by Vendor ──
-  const DASH_VENDOR_PRIORITY = ["Costco Business Center","Sam's Club","Wal-mart","Costco Wholesale","Vistar"];
   const allActive = [...products.filter(p=>p.active&&p.maxLevel>0), ...coffeeProducts.filter(p=>p.active&&p.maxLevel>0)];
   const vendorPar = {};
   for(const p of allActive){
     const vList = (p.vendors||[]);
     let vendor = 'Unassigned';
-    for(const vp of DASH_VENDOR_PRIORITY){
+    for(const vp of getVendorPriority()){
       if(vList.includes(vp)){ vendor = vp; break; }
     }
     if(vendor==='Unassigned' && vList.length>0) vendor = vList[0];
@@ -1774,8 +1790,9 @@ async function deleteProduct(id){
   showToast('Item deleted');
 }
 
-function vendorCheckboxes(selected){
-  return VENDORS.map(v=>`<label class="multi-select-option"><input type="checkbox" value="${v}" ${selected&&selected.includes(v)?'checked':''} style="accent-color:#0d1f4e"> <span>${v}</span></label>`).join('');
+function vendorCheckboxes(selected, source){
+  const list = source==='coffee' ? getCoffeeVendors() : source==='mm' ? getMMVendors() : getActiveVendorNames();
+  return list.map(v=>`<label class="multi-select-option"><input type="checkbox" value="${v}" ${selected&&selected.includes(v)?'checked':''} style="accent-color:#0d1f4e"> <span>${v}</span></label>`).join('');
 }
 
 function openAddModal(){
@@ -1805,7 +1822,7 @@ function openAddModal(){
           </div>
         </div>
         <label class="form-label" style="margin-top:4px">Vendor</label>
-        <div class="multi-select-container" id="n-vendors">${vendorCheckboxes([])}</div>
+        <div class="multi-select-container" id="n-vendors">${vendorCheckboxes([],"mm")}</div>
         <div style="display:flex;gap:10px;margin-top:12px">
           <button class="primary-btn" onclick="addProduct()">Add Item</button>
           <button class="secondary-btn" onclick="closeModal()">Cancel</button>
@@ -1853,7 +1870,7 @@ function renderInventoryRow(p){
       <td style="min-width:130px">
         <select id="ei-vendors-${p.id}" multiple
           style="width:120px;height:68px;background:#fff;border:1.5px solid #c9a84c;border-radius:5px;font-size:10px;color:#1a2340;outline:none;padding:2px">
-          ${VENDORS.map(v=>`<option value="${v}" ${p.vendors&&p.vendors.includes(v)?'selected':''}>${v}</option>`).join('')}
+          ${getMMVendors().map(v=>`<option value="${v}" ${p.vendors&&p.vendors.includes(v)?'selected':''}>${v}</option>`).join('')}
         </select>
         <div style="font-size:9px;color:#8090b0;margin-top:2px">Ctrl+click multi</div>
       </td>
@@ -2798,7 +2815,7 @@ function renderCoffeeRow(p){
       <td><input class="edit-input" id="ci-cat2-${p.id}" value="${p.cat2||''}" style="width:60px"/></td>
       <td style="min-width:130px">
         <select id="ci-vendors-${p.id}" multiple style="width:120px;height:68px;background:#fff;border:1.5px solid #c9a84c;border-radius:5px;font-size:10px;color:#1a2340;outline:none;padding:2px">
-          ${VENDORS.map(v=>`<option value="${v}" ${p.vendors&&p.vendors.includes(v)?'selected':''}>${v}</option>`).join('')}
+          ${getCoffeeVendors().map(v=>`<option value="${v}" ${p.vendors&&p.vendors.includes(v)?'selected':''}>${v}</option>`).join('')}
         </select>
         <div style="font-size:9px;color:#8090b0;margin-top:2px">Ctrl+click multi</div>
       </td>
@@ -2957,7 +2974,7 @@ function openAddCoffeeModal(){
           </div>
         </div>
         <label class="form-label" style="margin-top:4px">Vendor</label>
-        <div class="multi-select-container" id="cn-vendors">${vendorCheckboxes([])}</div>
+        <div class="multi-select-container" id="cn-vendors">${vendorCheckboxes([],"coffee")}</div>
         <div style="display:flex;gap:10px;margin-top:12px">
           <button class="primary-btn" onclick="addCoffeeProduct()">Add Item</button>
           <button class="secondary-btn" onclick="closeModal()">Cancel</button>
@@ -4563,7 +4580,7 @@ function renderStoreCountResult(){
 // ═══════════════════════════════════════════════════
 //  WAREHOUSE ORDERS (Google Sheets integrated)
 // ═══════════════════════════════════════════════════
-const VENDOR_PRIORITY = ["Costco Business Center","Costco Wholesale","Sam's Club","Wal-mart","Vistar Merchant Mart","Vistar","Clean Foods","Office Supply","Amazon","Betson Parts"];
+function getVendorPriority(){ return getActiveVendors().map(v=>v.name); }
 const WH_ORDERS_FOLDER = 'BrewBox Orders';
 const WH_ORDERS_ARCHIVE = 'BrewBox Orders/Archive';
 
@@ -4640,7 +4657,7 @@ function calcWhOrderItems(selectedVendors){
   const mmItems = lowMM.map(p => {
     const assignedVendors = (p.vendors||[]);
     let vendor = '';
-    for(const vp of VENDOR_PRIORITY){
+    for(const vp of getVendorPriority()){
       if(assignedVendors.includes(vp)){ vendor = vp; break; }
     }
     if(!vendor && assignedVendors.length>0) vendor = assignedVendors[0];
@@ -4664,7 +4681,7 @@ function calcWhOrderItems(selectedVendors){
   const coffeeItems = lowCoffee.map(p => {
     const assignedVendors = (p.vendors||[]);
     let vendor = '';
-    for(const vp of VENDOR_PRIORITY){
+    for(const vp of getVendorPriority()){
       if(assignedVendors.includes(vp)){ vendor = vp; break; }
     }
     if(!vendor && assignedVendors.length>0) vendor = assignedVendors[0];
@@ -4691,8 +4708,8 @@ function calcWhOrderItems(selectedVendors){
     : orderItems;
 
   filtered.sort((a,b) => {
-    const ai = VENDOR_PRIORITY.indexOf(a.vendor);
-    const bi = VENDOR_PRIORITY.indexOf(b.vendor);
+    const ai = getVendorPriority().indexOf(a.vendor);
+    const bi = getVendorPriority().indexOf(b.vendor);
     const av = ai===-1?99:ai, bv = bi===-1?99:bi;
     if(av !== bv) return av - bv;
     const catCmp = (a.cat1||'').localeCompare(b.cat1||'');
@@ -5062,7 +5079,7 @@ function openWhOrderVendorPicker(){
   }
   // Sort by vendor priority
   const vendorList = Object.keys(vendorCounts).sort((a,b)=>{
-    const ai = VENDOR_PRIORITY.indexOf(a), bi = VENDOR_PRIORITY.indexOf(b);
+    const ai = getVendorPriority().indexOf(a), bi = getVendorPriority().indexOf(b);
     return (ai===-1?99:ai) - (bi===-1?99:bi);
   });
 
@@ -5409,7 +5426,7 @@ async function runQuickCaptureParse(){
   // Build inventory context for AI
   const invContext = products.filter(p=>p.active).map(p=>({
     id:p.id, name:p.name, cat1:p.cat1, vendor: (()=>{
-      for(const vp of VENDOR_PRIORITY){ if((p.vendors||[]).includes(vp)) return vp; }
+      for(const vp of getVendorPriority()){ if((p.vendors||[]).includes(vp)) return vp; }
       return p.vendors?.[0]||'';
     })(),
     ppb:p.piecesPerBox, qty:p.qty, min:p.minLevel, max:p.maxLevel
@@ -5485,7 +5502,7 @@ Match to warehouse inventory and return JSON array.`}];
       const p = products.find(x=>x.id===r.product_id);
       if(!p) return null;
       const vendor = (()=>{
-        for(const vp of VENDOR_PRIORITY){ if((p.vendors||[]).includes(vp)) return vp; }
+        for(const vp of getVendorPriority()){ if((p.vendors||[]).includes(vp)) return vp; }
         return p.vendors?.[0]||'Unassigned';
       })();
       return {
@@ -7350,6 +7367,253 @@ function renderCountResult(){
 }
 
 // ═══════════════════════════════════════════════════
+//  VENDOR MANAGEMENT
+// ═══════════════════════════════════════════════════
+function renderVendorManagement(){
+  const active = vendorsList.filter(v=>v.active).sort((a,b)=>a.sort_order-b.sort_order);
+  const inactive = vendorsList.filter(v=>!v.active).sort((a,b)=>a.name.localeCompare(b.name));
+
+  // Count items per vendor
+  function countItems(vendorName){
+    const mm = products.filter(p=>p.active && (p.vendors||[]).includes(vendorName)).length;
+    const coffee = coffeeProducts.filter(p=>p.active && (p.vendors||[]).includes(vendorName)).length;
+    return {mm, coffee};
+  }
+
+  document.getElementById('main-body').innerHTML=`
+    <div class="card" style="border-top:3px solid #0d1f4e;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div class="card-title" style="margin-bottom:0">Active Vendors (${active.length})</div>
+        <button onclick="openAddVendorModal()" class="primary-btn" style="padding:7px 16px">+ Add Vendor</button>
+      </div>
+      <div style="font-size:11px;color:#7080a0;margin-bottom:14px">Drag sort order controls which vendor is prioritized when an item has multiple vendors. Active vendors appear in dropdown menus when assigning vendors to items.</div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th style="width:40px">ORDER</th>
+            <th style="padding-left:8px;min-width:180px">VENDOR NAME</th>
+            <th>CODE</th>
+            <th>SERVES</th>
+            <th>MM ITEMS</th>
+            <th>COFFEE ITEMS</th>
+            <th>ACTIONS</th>
+          </tr></thead>
+          <tbody>
+          ${active.map((v,i)=>{
+            const c = countItems(v.name);
+            const vc = VENDOR_COLORS[v.name]||{bg:'#e8edf8',color:'#0d1f4e'};
+            return `<tr>
+              <td style="text-align:center">
+                <div style="display:flex;flex-direction:column;align-items:center;gap:2px">
+                  ${i>0?`<button onclick="moveVendor(${v.id},-1)" style="background:none;border:none;cursor:pointer;font-size:14px;color:#5060a0;padding:0">▲</button>`:'<span style="font-size:14px;color:#e0e0e0">▲</span>'}
+                  <span style="font-size:11px;font-weight:700;color:#7080a0">${v.sort_order}</span>
+                  ${i<active.length-1?`<button onclick="moveVendor(${v.id},1)" style="background:none;border:none;cursor:pointer;font-size:14px;color:#5060a0;padding:0">▼</button>`:'<span style="font-size:14px;color:#e0e0e0">▼</span>'}
+                </div>
+              </td>
+              <td style="padding-left:8px">
+                <span class="vendor-tag" style="background:${vc.bg};color:${vc.color};padding:3px 10px;font-size:11px">${v.name}</span>
+              </td>
+              <td style="font-weight:700;color:#5060a0;font-size:12px">${v.short_code||'—'}</td>
+              <td>
+                ${v.serves_mm?'<span style="background:#e8edf8;color:#0d1f4e;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700;margin-right:4px">MM</span>':''}
+                ${v.serves_coffee?'<span style="background:#f3e8ff;color:#6b2fa0;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">COFFEE</span>':''}
+              </td>
+              <td style="text-align:center;font-weight:600;color:#0d1f4e">${c.mm||'—'}</td>
+              <td style="text-align:center;font-weight:600;color:#6b2fa0">${c.coffee||'—'}</td>
+              <td>
+                <div style="display:flex;gap:6px;align-items:center">
+                  <button onclick="openEditVendorModal(${v.id})" style="background:#f4f6fa;border:1px solid #d0d5e0;border-radius:5px;padding:4px 10px;font-size:10px;font-weight:700;color:#0d1f4e;cursor:pointer">✎ Edit</button>
+                  <button onclick="toggleVendorActive(${v.id},false)" style="background:none;border:1px solid #b01c1c;border-radius:5px;padding:4px 10px;font-size:10px;font-weight:700;color:#b01c1c;cursor:pointer">Deactivate</button>
+                </div>
+              </td>
+            </tr>`;
+          }).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    ${inactive.length>0?`
+    <div class="card" style="border-top:3px solid #d0d5e0">
+      <div class="card-title">Inactive Vendors (${inactive.length})</div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th style="padding-left:8px;min-width:180px">VENDOR NAME</th>
+            <th>CODE</th>
+            <th>SERVES</th>
+            <th>ACTIONS</th>
+          </tr></thead>
+          <tbody>
+          ${inactive.map(v=>`<tr style="opacity:0.6">
+            <td style="padding-left:8px;font-weight:600;color:#7080a0">${v.name}</td>
+            <td style="font-size:12px;color:#7080a0">${v.short_code||'—'}</td>
+            <td>
+              ${v.serves_mm?'<span style="background:#f0f2f8;color:#7080a0;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700;margin-right:4px">MM</span>':''}
+              ${v.serves_coffee?'<span style="background:#f0f2f8;color:#7080a0;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">COFFEE</span>':''}
+            </td>
+            <td><button onclick="toggleVendorActive(${v.id},true)" style="background:#e8edf8;border:none;border-radius:5px;padding:5px 12px;font-size:10px;font-weight:700;color:#0d1f4e;cursor:pointer">↩ Reactivate</button></td>
+          </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`:''}
+  `;
+}
+
+function openAddVendorModal(){
+  document.getElementById('modal-container').innerHTML=`
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="width:460px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div class="modal-title">+ Add New Vendor</div>
+          <button onclick="closeModal()" style="background:none;border:none;color:#7080a0;cursor:pointer;font-size:20px">✕</button>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div><label style="font-size:11px;font-weight:700;color:#5060a0">VENDOR NAME</label>
+            <input id="nv-name" placeholder="e.g., US Foods" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:8px 12px;font-size:13px;outline:none;margin-top:4px"/></div>
+          <div><label style="font-size:11px;font-weight:700;color:#5060a0">SHORT CODE</label>
+            <input id="nv-code" placeholder="e.g., USF (3-4 chars)" maxlength="6" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:8px 12px;font-size:13px;outline:none;margin-top:4px"/></div>
+          <div style="display:flex;gap:16px;margin-top:4px">
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:#0d1f4e;cursor:pointer">
+              <input type="checkbox" id="nv-mm" style="accent-color:#0d1f4e"/> Serves MM
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:#6b2fa0;cursor:pointer">
+              <input type="checkbox" id="nv-coffee" style="accent-color:#6b2fa0"/> Serves Coffee
+            </label>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">
+          <button onclick="closeModal()" style="background:#f4f6fa;color:#5060a0;border:1px solid #d0d5e0;border-radius:7px;padding:8px 18px;font-size:12px;font-weight:700;cursor:pointer">Cancel</button>
+          <button onclick="saveNewVendor()" class="primary-btn" style="padding:8px 18px">Save Vendor</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function saveNewVendor(){
+  const name = document.getElementById('nv-name')?.value?.trim();
+  const code = document.getElementById('nv-code')?.value?.trim().toUpperCase()||'';
+  const mm = document.getElementById('nv-mm')?.checked||false;
+  const coffee = document.getElementById('nv-coffee')?.checked||false;
+  if(!name){ showToast('Enter a vendor name'); return; }
+  if(vendorsList.some(v=>v.name.toLowerCase()===name.toLowerCase())){ showToast('⚠ Vendor already exists'); return; }
+  if(!mm && !coffee){ showToast('Select at least MM or Coffee'); return; }
+
+  const maxOrder = vendorsList.reduce((m,v)=>Math.max(m,v.sort_order||0),0);
+  const newVendor = {id:Date.now(), name, short_code:code, serves_mm:mm, serves_coffee:coffee, active:true, sort_order:maxOrder+1};
+  try{
+    await sbFetch('vendors',{method:'POST',prefer:'resolution=merge-duplicates,return=minimal',body:JSON.stringify([newVendor])});
+    vendorsList.push(newVendor);
+    closeModal();
+    renderVendorManagement();
+    showToast(`✓ Vendor "${name}" added`);
+  }catch(e){ showToast('⚠ Error saving vendor'); }
+}
+
+function openEditVendorModal(vendorId){
+  const v = vendorsList.find(x=>x.id===vendorId);
+  if(!v) return;
+  document.getElementById('modal-container').innerHTML=`
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="width:460px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div class="modal-title">Edit Vendor — ${v.name}</div>
+          <button onclick="closeModal()" style="background:none;border:none;color:#7080a0;cursor:pointer;font-size:20px">✕</button>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div><label style="font-size:11px;font-weight:700;color:#5060a0">VENDOR NAME</label>
+            <input id="ev-name" value="${v.name}" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:8px 12px;font-size:13px;outline:none;margin-top:4px"/></div>
+          <div><label style="font-size:11px;font-weight:700;color:#5060a0">SHORT CODE</label>
+            <input id="ev-code" value="${v.short_code||''}" maxlength="6" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:8px 12px;font-size:13px;outline:none;margin-top:4px"/></div>
+          <div style="display:flex;gap:16px;margin-top:4px">
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:#0d1f4e;cursor:pointer">
+              <input type="checkbox" id="ev-mm" ${v.serves_mm?'checked':''} style="accent-color:#0d1f4e"/> Serves MM
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:#6b2fa0;cursor:pointer">
+              <input type="checkbox" id="ev-coffee" ${v.serves_coffee?'checked':''} style="accent-color:#6b2fa0"/> Serves Coffee
+            </label>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">
+          <button onclick="closeModal()" style="background:#f4f6fa;color:#5060a0;border:1px solid #d0d5e0;border-radius:7px;padding:8px 18px;font-size:12px;font-weight:700;cursor:pointer">Cancel</button>
+          <button onclick="saveEditVendor(${v.id})" class="primary-btn" style="padding:8px 18px">Save Changes</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function saveEditVendor(vendorId){
+  const v = vendorsList.find(x=>x.id===vendorId);
+  if(!v) return;
+  const oldName = v.name;
+  const newName = document.getElementById('ev-name')?.value?.trim();
+  const newCode = document.getElementById('ev-code')?.value?.trim().toUpperCase()||'';
+  const mm = document.getElementById('ev-mm')?.checked||false;
+  const coffee = document.getElementById('ev-coffee')?.checked||false;
+  if(!newName){ showToast('Enter a vendor name'); return; }
+  if(newName!==oldName && vendorsList.some(x=>x.name.toLowerCase()===newName.toLowerCase())){ showToast('⚠ Vendor name already exists'); return; }
+
+  v.name = newName;
+  v.short_code = newCode;
+  v.serves_mm = mm;
+  v.serves_coffee = coffee;
+  try{
+    await sbFetch(`vendors?id=eq.${vendorId}`,{method:'PATCH',prefer:'return=minimal',body:JSON.stringify({name:newName, short_code:newCode, serves_mm:mm, serves_coffee:coffee})});
+
+    // If name changed, update all product vendor arrays
+    if(newName !== oldName){
+      for(const p of products){
+        if((p.vendors||[]).includes(oldName)){
+          p.vendors = p.vendors.map(vn=>vn===oldName?newName:vn);
+          await saveProduct(p);
+        }
+      }
+      for(const p of coffeeProducts){
+        if((p.vendors||[]).includes(oldName)){
+          p.vendors = p.vendors.map(vn=>vn===oldName?newName:vn);
+          await saveCoffeeProduct(p);
+        }
+      }
+    }
+
+    closeModal();
+    renderVendorManagement();
+    showToast(`✓ Vendor updated${newName!==oldName?' — renamed from "'+oldName+'" to "'+newName+'"':''}`);
+  }catch(e){ showToast('⚠ Error saving vendor'); }
+}
+
+async function toggleVendorActive(vendorId, makeActive){
+  const v = vendorsList.find(x=>x.id===vendorId);
+  if(!v) return;
+  v.active = makeActive;
+  try{
+    await sbFetch(`vendors?id=eq.${vendorId}`,{method:'PATCH',prefer:'return=minimal',body:JSON.stringify({active:makeActive})});
+    renderVendorManagement();
+    showToast(makeActive ? `✓ "${v.name}" reactivated` : `"${v.name}" deactivated`);
+  }catch(e){ showToast('⚠ Error updating vendor'); }
+}
+
+async function moveVendor(vendorId, direction){
+  const active = vendorsList.filter(v=>v.active).sort((a,b)=>a.sort_order-b.sort_order);
+  const idx = active.findIndex(v=>v.id===vendorId);
+  if(idx<0) return;
+  const swapIdx = idx + direction;
+  if(swapIdx<0 || swapIdx>=active.length) return;
+
+  // Swap sort_order values
+  const tempOrder = active[idx].sort_order;
+  active[idx].sort_order = active[swapIdx].sort_order;
+  active[swapIdx].sort_order = tempOrder;
+
+  try{
+    await sbFetch(`vendors?id=eq.${active[idx].id}`,{method:'PATCH',prefer:'return=minimal',body:JSON.stringify({sort_order:active[idx].sort_order})});
+    await sbFetch(`vendors?id=eq.${active[swapIdx].id}`,{method:'PATCH',prefer:'return=minimal',body:JSON.stringify({sort_order:active[swapIdx].sort_order})});
+    renderVendorManagement();
+  }catch(e){ showToast('⚠ Error reordering'); }
+}
+
+// ═══════════════════════════════════════════════════
 //  USAGE / THEFT REPORT
 // ═══════════════════════════════════════════════════
 let usageReportStore = '';
@@ -8053,7 +8317,8 @@ function mobWhToggleExpand(id){
       'coffee':'Coffee Inventory','wh-orders':'WH Orders',
       'count':'WH Count','dashboard':'Dashboard',
       'restock':'Activity','order-activity':'Orders',
-      'usage-report':'Usage Report'
+      'usage-report':'Usage Report',
+      'vendor-mgmt':'Vendors'
     };
     updateMobTitle(titles[v]||'BrewBox OS');
   };
