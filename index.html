@@ -3241,7 +3241,7 @@ function renderStoreRow(item){
       <td style="padding-left:12px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:220px">${item.product_name}</td>
       <td><select id="si-cat1-${item.id}" style="background:#f4f6fa;border:1px solid #d0d5e0;border-radius:5px;padding:3px 6px;font-size:10px;outline:none">
         <option value="">—</option>
-        ${STORE_CATEGORIES.map(c=>`<option value="${c}" ${cat1===c?'selected':''}>${c}</option>`).join('')}
+        ${(item.product_source==='coffee'?COFFEE_CAT_ORDER:STORE_CATEGORIES).map(c=>`<option value="${c}" ${cat1===c?'selected':''}>${c}</option>`).join('')}
       </select></td>
       <td>${sourceBadge}</td>
       <td><input class="edit-input" id="si-qty-${item.id}" type="number" value="${item.qty}" style="width:60px"/></td>
@@ -3573,7 +3573,7 @@ async function handleStoreSelectionChange(productId, source, selectEl){
 //  STORE ORDERS
 // ═══════════════════════════════════════════════════
 let storeOrders = [];      // all store_orders rows
-let currentOrderStore = 'SM Toyota';
+let currentOrderStore = '';
 let expandedOrderIds = new Set();
 let storeOrderSubmitting = false;
 let storeOrderRecQtySet = false;
@@ -3630,9 +3630,10 @@ async function saveStoreOrder(order){
 
 // ── Render Store Orders page ──
 function renderStoreOrders(){
-  const openOrders = storeOrders.filter(o=>o.store_name===currentOrderStore && o.status==='open');
-  const closedOrders = storeOrders.filter(o=>o.store_name===currentOrderStore && o.status==='received');
-  const allStoreItems = storeInventory.filter(x=>x.store_name===currentOrderStore);
+  const hasStore = currentOrderStore && currentOrderStore !== '';
+  const openOrders = hasStore ? storeOrders.filter(o=>o.store_name===currentOrderStore && o.status==='open') : [];
+  const closedOrders = hasStore ? storeOrders.filter(o=>o.store_name===currentOrderStore && o.status==='received') : [];
+  const allStoreItems = hasStore ? storeInventory.filter(x=>x.store_name===currentOrderStore) : [];
   // When rec qty is set, only show items that need restocking
   const storeItems = storeOrderRecQtySet
     ? allStoreItems.filter(x=>x.max_level > 0 && x.qty <= x.min_level && x.qty < x.max_level)
@@ -3644,9 +3645,14 @@ function renderStoreOrders(){
       <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.8px">Store:</label>
       <select onchange="currentOrderStore=this.value;storeOrderRecQtySet=false;renderStoreOrders()"
         style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:160px">
+        <option value="" ${!hasStore?'selected':''}>— Select Store —</option>
         ${STORES.map(s=>`<option value="${s}" ${s===currentOrderStore?'selected':''}>${s}</option>`).join('')}
       </select>
     </div>
+
+    ${!hasStore?`<div class="card" style="text-align:center;padding:40px;color:#7080a0">
+      <div style="font-size:16px;margin-bottom:8px">Select a store to view orders</div>
+    </div>`:`
 
     ${openOrders.length>0?`
     <div class="card" style="margin-bottom:14px;border-top:3px solid #c9a84c">
@@ -3741,7 +3747,8 @@ function renderStoreOrders(){
         }
         return html;
       })()}`}
-    </div>`;
+    </div>`}
+  `;
 }
 
 function setRecommendedQtys(){
@@ -4168,14 +4175,30 @@ function renderStoreCount(){
 
     ${storeCountSubmitResult ? renderStoreCountResult() : ''}
 
-    ${storeCountSubmitResult ? '' : mmCatOrder.map(cat=>renderCatSection(cat, mmCatGroups[cat], storeCountSkippedCats.has(cat))).join('')}
+    ${storeCountSubmitResult || mmItems.length===0 ? '' : (function(){
+      const mmSkipped = storeCountSkippedCats.has('ALL_MM');
+      return `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${mmSkipped?'14px':'10px'};padding:8px 0;border-bottom:2px solid #0d1f4e">
+        <div style="font-size:12px;font-weight:800;color:#0d1f4e;letter-spacing:1.5px;text-transform:uppercase">MM Inventory (${mmItems.length} items)</div>
+        <button onclick="toggleStoreCountSectionSkip('ALL_MM',${JSON.stringify(mmCatOrder).replace(/"/g,'&quot;')})"
+          style="background:${mmSkipped?'#e8edf8':'#f4f6fa'};color:${mmSkipped?'#0d1f4e':'#7080a0'};border:1.5px solid ${mmSkipped?'#0d1f4e':'#d0d5e0'};border-radius:6px;padding:5px 14px;font-size:10px;font-weight:700;cursor:pointer">
+          ${mmSkipped?'↩ Include All MM':'⏭ Skip All MM'}
+        </button>
+      </div>
+      ${mmSkipped?'<div class="card" style="opacity:0.5;margin-bottom:14px;text-align:center;padding:12px;color:#7080a0;font-size:12px">MM Inventory skipped</div>'
+      :mmCatOrder.map(cat=>renderCatSection(cat, mmCatGroups[cat], storeCountSkippedCats.has(cat))).join('')}`;
+    })()}
 
-    ${storeCountSubmitResult || coffeeItems.length===0 ? '' : `
-    <div style="margin:16px 0 8px;padding:8px 0;border-top:3px solid #6b2fa0">
-      <div style="font-size:11px;font-weight:800;color:#6b2fa0;letter-spacing:1.5px;text-transform:uppercase">☕ Coffee Inventory (${coffeeItems.length} items · ${stationOrder.length} station${stationOrder.length!==1?'s':''})</div>
-    </div>`}
-
-    ${storeCountSubmitResult ? '' : stationOrder.map(stn=>{
+    ${storeCountSubmitResult || coffeeItems.length===0 ? '' : (function(){
+      const coffeeSkipped = storeCountSkippedCats.has('ALL_COFFEE');
+      return `<div style="display:flex;justify-content:space-between;align-items:center;margin:16px 0 ${coffeeSkipped?'14px':'8px'};padding:8px 0;border-top:3px solid #6b2fa0">
+        <div style="font-size:11px;font-weight:800;color:#6b2fa0;letter-spacing:1.5px;text-transform:uppercase">☕ Coffee Inventory (${coffeeItems.length} items · ${stationOrder.length} station${stationOrder.length!==1?'s':''})</div>
+        <button onclick="toggleStoreCountSectionSkip('ALL_COFFEE',${JSON.stringify(stationOrder.map(s=>'STN_'+s)).replace(/"/g,'&quot;')})"
+          style="background:${coffeeSkipped?'#f3e8ff':'#f4f6fa'};color:${coffeeSkipped?'#6b2fa0':'#7080a0'};border:1.5px solid ${coffeeSkipped?'#6b2fa0':'#d0d5e0'};border-radius:6px;padding:5px 14px;font-size:10px;font-weight:700;cursor:pointer">
+          ${coffeeSkipped?'↩ Include All Coffee':'⏭ Skip All Coffee'}
+        </button>
+      </div>
+      ${coffeeSkipped?'<div class="card" style="opacity:0.5;margin-bottom:14px;text-align:center;padding:12px;color:#7080a0;font-size:12px;border-left:3px solid #6b2fa0">Coffee Inventory skipped</div>'
+      :stationOrder.map(stn=>{
       const stnItems = coffeeByStation[stn];
       const stnLabel = getStationsForStore(storeCountStore).find(s=>s.station_name===stn)?.station_label||'';
       const skipped = storeCountSkippedCats.has('STN_'+stn);
@@ -4209,7 +4232,8 @@ function renderStoreCount(){
             </tbody>
           </table>`:''}
         </div>`;
-    }).join('')}
+    }).join('')}`;
+    })()}
   `;
 }
 
@@ -4317,6 +4341,18 @@ function toggleStoreCountSkip(source){
   renderStoreCount();
 }
 
+function toggleStoreCountSectionSkip(sectionKey, childKeys){
+  const isSkipping = !storeCountSkippedCats.has(sectionKey);
+  if(isSkipping){
+    storeCountSkippedCats.add(sectionKey);
+    for(const k of childKeys) storeCountSkippedCats.add(k);
+  } else {
+    storeCountSkippedCats.delete(sectionKey);
+    for(const k of childKeys) storeCountSkippedCats.delete(k);
+  }
+  renderStoreCount();
+}
+
 function cancelStoreCount(){
   initStoreCountState();
   renderStoreCount();
@@ -4324,7 +4360,12 @@ function cancelStoreCount(){
 
 function confirmSubmitStoreCount(){
   function isSkipped(item){
-    if(item.product_source==='coffee' && item.station_name) return storeCountSkippedCats.has('STN_'+item.station_name);
+    if(item.product_source==='coffee'){
+      if(storeCountSkippedCats.has('ALL_COFFEE')) return true;
+      if(item.station_name) return storeCountSkippedCats.has('STN_'+item.station_name);
+    } else {
+      if(storeCountSkippedCats.has('ALL_MM')) return true;
+    }
     return storeCountSkippedCats.has(getStoreItemCat1(item)||'UNCATEGORIZED');
   }
   // Validate — check missing reasons
@@ -4424,7 +4465,7 @@ async function submitStoreCount(){
   const items=storeInventory.filter(x=>x.store_name===storeCountStore);
   const toUpdate=items.filter(item=>{
     const s=storeCountState[item.id];
-    const skipped = (item.product_source==='coffee'&&item.station_name) ? storeCountSkippedCats.has('STN_'+item.station_name) : storeCountSkippedCats.has(getStoreItemCat1(item)||'UNCATEGORIZED');
+    const skipped = (item.product_source==='coffee') ? (storeCountSkippedCats.has('ALL_COFFEE') || (item.station_name && storeCountSkippedCats.has('STN_'+item.station_name))) : (storeCountSkippedCats.has('ALL_MM') || storeCountSkippedCats.has(getStoreItemCat1(item)||'UNCATEGORIZED'));
     if(!s||s.verified||skipped) return false;
     const aq=s.actualQty!==''?parseFloat(s.actualQty):null;
     return aq!==null&&aq!==item.qty&&s.reason;
@@ -5807,41 +5848,56 @@ function renderMobStoreCount(){
     </div>
 
     <div class="mob-count-page-body">
-    ${catOrder.map(cat=>{
-      const groupItems = catGroups[cat];
-      const skipped = storeCountSkippedCats.has(cat);
-      return `
-        <div class="mob-count-section-hdr">
-          <span>${cat} (${groupItems.length})</span>
-          <button class="skip-btn" onclick="toggleStoreCountSkip('${cat}');renderMobStoreCount()">
-            ${skipped?'↩ Include':'⏭ Skip'}
-          </button>
-        </div>
-        ${skipped?'<div style="font-size:12px;color:#7080a0;margin-bottom:12px;padding:8px 12px;background:#f4f6fa;border-radius:8px">Section skipped</div>'
-        :groupItems.map(item=>renderMobCountCard(item)).join('')}
-      `;
-    }).join('')}
+    ${mmItems.length>0?(function(){
+      const mmSkipped = storeCountSkippedCats.has('ALL_MM');
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;margin-bottom:8px;border-bottom:2px solid #0d1f4e">
+        <span style="font-size:12px;font-weight:800;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase">MM Inventory (${mmItems.length})</span>
+        <button class="skip-btn" onclick="toggleStoreCountSectionSkip('ALL_MM',${JSON.stringify(catOrder).replace(/"/g,'&quot;')});renderMobStoreCount()">
+          ${mmSkipped?'↩ Include All':'⏭ Skip All MM'}
+        </button>
+      </div>
+      ${mmSkipped?'<div style="font-size:12px;color:#7080a0;margin-bottom:14px;padding:10px 12px;background:#f4f6fa;border-radius:8px;text-align:center;opacity:0.5">MM Inventory skipped</div>'
+      :catOrder.map(cat=>{
+        const groupItems = catGroups[cat];
+        const skipped = storeCountSkippedCats.has(cat);
+        return `
+          <div class="mob-count-section-hdr">
+            <span>${cat} (${groupItems.length})</span>
+            <button class="skip-btn" onclick="toggleStoreCountSkip('${cat}');renderMobStoreCount()">
+              ${skipped?'↩ Include':'⏭ Skip'}
+            </button>
+          </div>
+          ${skipped?'<div style="font-size:12px;color:#7080a0;margin-bottom:12px;padding:8px 12px;background:#f4f6fa;border-radius:8px">Section skipped</div>'
+          :groupItems.map(item=>renderMobCountCard(item)).join('')}
+        `;
+      }).join('')}`;
+    })():''}
 
-    ${coffeeItems.length>0?`
-    <div style="margin:14px 0 8px;padding:10px 0;border-top:3px solid #6b2fa0">
-      <div style="font-size:11px;font-weight:800;color:#6b2fa0;letter-spacing:1.5px;text-transform:uppercase">☕ Coffee (${coffeeItems.length} items · ${stnOrder.length} station${stnOrder.length!==1?'s':''})</div>
-    </div>
-    ${stnOrder.map(stn=>{
-      const stnItems = coffeeByStation[stn];
-      const stnLabel = stations.find(s=>s.station_name===stn)?.station_label||'';
-      const skipped = storeCountSkippedCats.has('STN_'+stn);
-      return `
-        <div class="mob-count-section-hdr" style="border-left:3px solid #6b2fa0">
-          <span style="color:#6b2fa0">☕ ${stn} ${stnLabel?'('+stnLabel+')':''} (${stnItems.length})</span>
-          <button class="skip-btn" onclick="toggleStoreCountSkip('STN_${stn}');renderMobStoreCount()">
-            ${skipped?'↩ Include':'⏭ Skip'}
-          </button>
-        </div>
-        ${skipped?'<div style="font-size:12px;color:#7080a0;margin-bottom:12px;padding:8px 12px;background:#f9f0ff;border-radius:8px">Station skipped</div>'
-        :stnItems.map(item=>renderMobCountCard(item)).join('')}
-      `;
-    }).join('')}
-    `:''}
+    ${coffeeItems.length>0?(function(){
+      const coffeeSkipped = storeCountSkippedCats.has('ALL_COFFEE');
+      return `<div style="display:flex;justify-content:space-between;align-items:center;margin:14px 0 8px;padding:10px 0;border-top:3px solid #6b2fa0">
+        <span style="font-size:11px;font-weight:800;color:#6b2fa0;letter-spacing:1.5px;text-transform:uppercase">☕ Coffee (${coffeeItems.length} · ${stnOrder.length} stn${stnOrder.length!==1?'s':''})</span>
+        <button class="skip-btn" onclick="toggleStoreCountSectionSkip('ALL_COFFEE',${JSON.stringify(stnOrder.map(s=>'STN_'+s)).replace(/"/g,'&quot;')});renderMobStoreCount()">
+          ${coffeeSkipped?'↩ Include All':'⏭ Skip All Coffee'}
+        </button>
+      </div>
+      ${coffeeSkipped?'<div style="font-size:12px;color:#7080a0;margin-bottom:14px;padding:10px 12px;background:#f9f0ff;border-radius:8px;text-align:center;opacity:0.5;border-left:3px solid #6b2fa0">Coffee Inventory skipped</div>'
+      :stnOrder.map(stn=>{
+        const stnItems = coffeeByStation[stn];
+        const stnLabel = stations.find(s=>s.station_name===stn)?.station_label||'';
+        const skipped = storeCountSkippedCats.has('STN_'+stn);
+        return `
+          <div class="mob-count-section-hdr" style="border-left:3px solid #6b2fa0">
+            <span style="color:#6b2fa0">☕ ${stn} ${stnLabel?'('+stnLabel+')':''} (${stnItems.length})</span>
+            <button class="skip-btn" onclick="toggleStoreCountSkip('STN_${stn}');renderMobStoreCount()">
+              ${skipped?'↩ Include':'⏭ Skip'}
+            </button>
+          </div>
+          ${skipped?'<div style="font-size:12px;color:#7080a0;margin-bottom:12px;padding:8px 12px;background:#f9f0ff;border-radius:8px">Station skipped</div>'
+          :stnItems.map(item=>renderMobCountCard(item)).join('')}
+        `;
+      }).join('')}`;
+    })():''}
     </div>
 
     <div class="mob-count-submit">
@@ -6103,8 +6159,9 @@ async function mobInvSave(id){
 // ═══════════════════════════════════════════════════
 function renderMobStoreOrders(){
   updateMobTitle('Store Orders');
-  const openOrders = storeOrders.filter(o=>o.store_name===currentOrderStore && o.status==='open');
-  const allStoreItems = storeInventory.filter(x=>x.store_name===currentOrderStore);
+  const hasStore = currentOrderStore && currentOrderStore !== '';
+  const openOrders = hasStore ? storeOrders.filter(o=>o.store_name===currentOrderStore && o.status==='open') : [];
+  const allStoreItems = hasStore ? storeInventory.filter(x=>x.store_name===currentOrderStore) : [];
   const storeItems = storeOrderRecQtySet
     ? allStoreItems.filter(x=>x.max_level > 0 && x.qty <= x.min_level && x.qty < x.max_level)
     : allStoreItems;
@@ -6113,9 +6170,14 @@ function renderMobStoreOrders(){
   document.getElementById('main-body').innerHTML=`
     <div class="mob-order-store-bar">
       <select onchange="currentOrderStore=this.value;storeOrderRecQtySet=false;renderStoreOrders()">
+        <option value="" ${!hasStore?'selected':''}>— Select Store —</option>
         ${STORES.map(s=>`<option value="${s}" ${s===currentOrderStore?'selected':''}>${s}</option>`).join('')}
       </select>
     </div>
+
+    ${!hasStore?`<div style="text-align:center;padding:40px 20px;color:#7080a0">
+      <div style="font-size:15px;font-weight:600">Select a store to view orders</div>
+    </div>`:`
 
     ${openOrders.length>0?`
     <div style="font-size:10px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;color:#b35a00;margin-bottom:8px">
@@ -6195,7 +6257,7 @@ function renderMobStoreOrders(){
       <div class="mob-order-actions">
         <button class="mob-order-save-btn" onclick="saveNewStoreOrder()">💾 Save as Open Order</button>
       </div>
-    </div>
+    </div>`}
   `;
 }
 
