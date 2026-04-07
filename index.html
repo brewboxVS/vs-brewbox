@@ -1276,6 +1276,7 @@ function setSyncStatus(type, msg){
 //  APP INIT
 // ═══════════════════════════════════════════════════
 let storeSettings = {}; // {storeName: {free_vend: bool}}
+let storeStations = []; // [{id, store_name, station_name, station_label, active}]
 
 async function loadStoreSettings(){
   if(useSupabase){
@@ -1284,6 +1285,19 @@ async function loadStoreSettings(){
       for(const r of rows) storeSettings[r.store_name] = {free_vend: r.free_vend};
     }catch(e){}
   }
+}
+
+async function loadStoreStations(){
+  if(useSupabase){
+    try{
+      const rows = await sbFetch('store_stations?active=eq.true&order=store_name,station_name',{method:'GET',prefer:'return=representation'});
+      storeStations = rows;
+    }catch(e){ storeStations = []; }
+  }
+}
+
+function getStationsForStore(storeName){
+  return storeStations.filter(s=>s.store_name===storeName);
 }
 
 function isStoreSettings(storeName, key){
@@ -1306,6 +1320,7 @@ async function initApp(){
   await loadWhOrders();
   await loadSalesImportHistory();
   await loadStoreSettings();
+  await loadStoreStations();
   hideLoading();
   setView('dashboard');
 }
@@ -3154,6 +3169,7 @@ function renderStoreInventory(){
         <button onclick="storeSourceFilter='mm';storeCategoryFilters.clear();renderStoreInventory()" style="padding:5px 12px;border:none;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer;${storeSourceFilter==='mm'?'background:#0d1f4e;color:#fff':'background:transparent;color:#5060a0'}">MM (${mmItems.length})</button>
         <button onclick="storeSourceFilter='coffee';storeCategoryFilters.clear();renderStoreInventory()" style="padding:5px 12px;border:none;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer;${storeSourceFilter==='coffee'?'background:#6b2fa0;color:#fff':'background:transparent;color:#6b2fa0'}">☕ Coffee (${coffeeItems.length})</button>
       </div>`:''}
+      ${getStationsForStore(currentStore).length>0?`<button onclick="openManageStationsModal()" style="background:#f4f6fa;color:#6b2fa0;border:1.5px solid #6b2fa0;border-radius:7px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer">⚙ Stations</button>`:''}
       <button class="primary-btn" onclick="openImportStoreItemModal()" style="margin-left:auto">+ Import Item</button>
     </div>
 
@@ -3188,6 +3204,15 @@ function renderStoreInventory(){
         <button onclick="storeEditingRows.clear();renderStoreInventory()" style="background:transparent;color:#b01c1c;border:1.5px solid #b01c1c;border-radius:6px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer">✕ Cancel</button>
       </div>
     </div>`:''}
+    ${storeSourceFilter==='coffee' && getStationsForStore(currentStore).length>0 ? (function(){
+      // Coffee view: group by station
+      const stations = getStationsForStore(currentStore);
+      return stations.map(stn=>{
+        const stnItems = filtered.filter(x=>x.station_name===stn.station_name);
+        if(stnItems.length===0) return '';
+        return '<div class="card" style="margin-bottom:12px;border-left:3px solid #6b2fa0"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="display:flex;align-items:center;gap:8px"><span style="font-size:13px;font-weight:700;color:#6b2fa0">'+stn.station_name+'</span><span style="font-size:11px;color:#7080a0">'+(stn.station_label||'')+' · '+stnItems.length+' items</span></div></div><div class="inv-table-wrap"><div style="overflow-x:auto"><table><thead><tr><th style="padding-left:12px;min-width:200px">ITEM NAME</th><th>CATEGORY</th><th>QTY</th><th>MIN</th><th>MAX</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody>'+stnItems.map(item=>renderStoreRow(item)).join('')+'</tbody></table></div></div></div>';
+      }).join('');
+    })() : `
     <div class="inv-table-wrap"><div style="overflow-x:auto"><table>
         <thead><tr>
           <th style="padding-left:12px;min-width:200px">ITEM NAME</th>
@@ -3200,7 +3225,7 @@ function renderStoreInventory(){
         ${filtered.map(item=>renderStoreRow(item)).join('')}
         </tbody>
       </table>
-    </div></div></div>`}
+    </div></div></div>`}`}
   `;
 }
 
@@ -3373,37 +3398,151 @@ async function confirmImportStoreItems(){
     const [source, idStr] = cb.value.split('_');
     const productId = parseInt(idStr);
 
-    // Dedup guard — skip if this product already exists at this store
-    const alreadyExists = storeInventory.some(x=>x.store_name===currentStore && x.product_id===productId && x.product_source===source);
-    if(alreadyExists) continue;
-
     const warehouseArr = source==='coffee' ? coffeeProducts : products;
     const p = warehouseArr.find(x=>x.id===productId);
     if(!p) continue;
 
-    const newItem = {
-      id: Date.now() + Math.floor(Math.random()*100000),
-      store_name: currentStore,
-      product_id: productId,
-      product_source: source,
-      product_name: p.name,
-      cat1: p.cat1 || '',
-      qty: 0, min_level: 0, max_level: 0, active: true
-    };
-    storeInventory.push(newItem);
-    await saveStoreItem(newItem);
+    if(source === 'coffee'){
+      // Coffee items: create one row per station
+      const stations = getStationsForStore(currentStore);
+      const stationList = stations.length > 0 ? stations : [{station_name:''}];
+      for(const stn of stationList){
+        const alreadyExists = storeInventory.some(x=>x.store_name===currentStore && x.product_id===productId && x.product_source===source && x.station_name===stn.station_name);
+        if(alreadyExists) continue;
+        const newItem = {
+          id: Date.now() + Math.floor(Math.random()*100000),
+          store_name: currentStore,
+          product_id: productId,
+          product_source: source,
+          product_name: p.name,
+          cat1: p.cat1 || '',
+          station_name: stn.station_name,
+          qty: 0, min_level: 0, max_level: 0, active: true
+        };
+        storeInventory.push(newItem);
+        await saveStoreItem(newItem);
+        added++;
+      }
+    } else {
+      // MM items: single row (no station)
+      const alreadyExists = storeInventory.some(x=>x.store_name===currentStore && x.product_id===productId && x.product_source===source);
+      if(alreadyExists) continue;
+      const newItem = {
+        id: Date.now() + Math.floor(Math.random()*100000),
+        store_name: currentStore,
+        product_id: productId,
+        product_source: source,
+        product_name: p.name,
+        cat1: p.cat1 || '',
+        station_name: '',
+        qty: 0, min_level: 0, max_level: 0, active: true
+      };
+      storeInventory.push(newItem);
+      await saveStoreItem(newItem);
+      added++;
+    }
 
     // Update warehouse product's stores array
     p.stores = [...new Set([...(p.stores||[]), currentStore])];
     if(source==='coffee') await saveCoffeeProduct(p);
     else await saveProduct(p);
-    added++;
   }
 
   _importingStoreItems = false;
   closeModal();
   renderStoreInventory();
   showToast(`${added} item${added!==1?'s':''} added to ${currentStore}`);
+}
+
+// ── Station Management Modal ──
+function openManageStationsModal(){
+  const stations = getStationsForStore(currentStore);
+  document.getElementById('modal-container').innerHTML=`
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="width:500px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <div class="modal-title">⚙ Manage Stations — ${currentStore}</div>
+          <button onclick="closeModal()" style="background:none;border:none;color:#7080a0;cursor:pointer;font-size:20px">✕</button>
+        </div>
+        <div id="station-list">
+          ${stations.map(s=>`
+          <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid #e8ecf4;border-radius:8px;margin-bottom:8px">
+            <div style="flex:1">
+              <div style="font-size:13px;font-weight:700;color:#6b2fa0">${s.station_name}</div>
+              <div style="font-size:11px;color:#7080a0">${s.station_label||'No label'} · ${storeInventory.filter(x=>x.store_name===currentStore&&x.station_name===s.station_name&&x.product_source==='coffee').length} items</div>
+            </div>
+            <button onclick="removeStation(${s.id},'${s.station_name}')" style="background:none;border:1px solid #b01c1c;color:#b01c1c;border-radius:6px;padding:4px 10px;font-size:10px;font-weight:700;cursor:pointer">✕ Remove</button>
+          </div>`).join('')}
+        </div>
+        <div style="border-top:1px solid #e8ecf4;padding-top:12px;margin-top:8px">
+          <div style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;margin-bottom:8px">Add New Station</div>
+          <div style="display:flex;gap:8px">
+            <input id="new-station-name" placeholder="Short name (e.g., L3B)" style="flex:1;border:1.5px solid #d0d5e0;border-radius:7px;padding:8px 12px;font-size:13px;outline:none"/>
+            <input id="new-station-label" placeholder="Label (e.g., Level 3 Breakroom)" style="flex:2;border:1.5px solid #d0d5e0;border-radius:7px;padding:8px 12px;font-size:13px;outline:none"/>
+            <button onclick="addStation()" style="background:#6b2fa0;color:#fff;border:none;border-radius:7px;padding:8px 16px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">+ Add</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function addStation(){
+  const name = document.getElementById('new-station-name')?.value?.trim();
+  const label = document.getElementById('new-station-label')?.value?.trim()||'';
+  if(!name){ showToast('Enter a station name'); return; }
+  if(getStationsForStore(currentStore).some(s=>s.station_name===name)){ showToast('Station already exists'); return; }
+
+  const newStation = {id:Date.now(), store_name:currentStore, station_name:name, station_label:label, active:true};
+  try{
+    await sbFetch('store_stations',{method:'POST',prefer:'resolution=merge-duplicates,return=minimal',body:JSON.stringify([newStation])});
+    storeStations.push(newStation);
+
+    // Auto-add existing coffee items to the new station
+    const existingCoffee = storeInventory.filter(x=>x.store_name===currentStore && x.product_source==='coffee');
+    // Get unique product_ids (may have multiple stations already)
+    const uniqueProducts = [...new Set(existingCoffee.map(x=>x.product_id))];
+    let addedItems = 0;
+    for(const pid of uniqueProducts){
+      const template = existingCoffee.find(x=>x.product_id===pid);
+      if(!template) continue;
+      const newItem = {
+        id: Date.now() + Math.floor(Math.random()*100000) + addedItems,
+        store_name: currentStore,
+        product_id: pid,
+        product_source: 'coffee',
+        product_name: template.product_name,
+        cat1: template.cat1||'',
+        station_name: name,
+        qty: 0, min_level: 0, max_level: 0, active: true
+      };
+      storeInventory.push(newItem);
+      await saveStoreItem(newItem);
+      addedItems++;
+    }
+
+    openManageStationsModal();
+    showToast(`Station "${name}" added with ${addedItems} coffee items`);
+  }catch(e){ showToast('Error adding station'); }
+}
+
+async function removeStation(stationId, stationName){
+  const itemCount = storeInventory.filter(x=>x.store_name===currentStore&&x.station_name===stationName&&x.product_source==='coffee').length;
+  if(!confirm(`Remove station "${stationName}"? This will delete ${itemCount} inventory row${itemCount!==1?'s':''} for this station.`)) return;
+
+  try{
+    // Delete station inventory rows
+    if(useSupabase){
+      await sbFetch(`store_inventory?store_name=eq.${encodeURIComponent(currentStore)}&station_name=eq.${encodeURIComponent(stationName)}&product_source=eq.coffee`,{method:'DELETE',prefer:''});
+    }
+    storeInventory = storeInventory.filter(x=>!(x.store_name===currentStore && x.station_name===stationName && x.product_source==='coffee'));
+
+    // Delete station record
+    await sbFetch(`store_stations?id=eq.${stationId}`,{method:'DELETE',prefer:''});
+    storeStations = storeStations.filter(s=>s.id!==stationId);
+
+    openManageStationsModal();
+    showToast(`Station "${stationName}" removed`);
+  }catch(e){ showToast('Error removing station'); }
 }
 
 // ── Stores multiselect column in warehouse rows ──
@@ -3574,7 +3713,32 @@ function renderStoreOrders(){
         }
 
         html += renderSection(mmItems, STORE_CATEGORIES, coffeeItems.length>0?'MM Inventory':'', '#0d1f4e');
-        html += renderSection(coffeeItems, COFFEE_CAT_ORDER, '☕ Coffee Inventory', '#6b2fa0');
+
+        // Coffee: group by station
+        if(coffeeItems.length > 0){
+          const stations = getStationsForStore(currentOrderStore);
+          const coffeeByStation = {};
+          for(const item of coffeeItems){
+            const stn = item.station_name || 'Unassigned';
+            if(!coffeeByStation[stn]) coffeeByStation[stn] = [];
+            coffeeByStation[stn].push(item);
+          }
+          const stnOrder = stations.map(s=>s.station_name).filter(s=>coffeeByStation[s]);
+          for(const s of Object.keys(coffeeByStation)) if(!stnOrder.includes(s)) stnOrder.push(s);
+
+          html += '<div style="margin:16px 0 8px;padding:8px 0;border-top:3px solid #6b2fa0"><div style="font-size:11px;font-weight:800;color:#6b2fa0;letter-spacing:1.5px;text-transform:uppercase">☕ Coffee Inventory ('+coffeeItems.length+' items · '+stnOrder.length+' station'+(stnOrder.length!==1?'s':'')+')</div></div>';
+
+          for(const stn of stnOrder){
+            const stnItems = coffeeByStation[stn].sort((a,b)=>a.product_name.localeCompare(b.product_name));
+            const stnLabel = stations.find(s=>s.station_name===stn)?.station_label||'';
+            html += '<div style="margin-bottom:16px;border-left:3px solid #6b2fa0;padding-left:8px"><div style="font-size:11px;font-weight:800;color:#6b2fa0;padding:6px 0;margin-bottom:4px">'+stn+(stnLabel?' — '+stnLabel:'')+' ('+stnItems.length+' items)</div><div style="overflow-x:auto"><table><thead><tr><th style="padding-left:8px;min-width:200px">ITEM</th><th>QTY ON HAND</th><th>MIN</th><th>MAX</th><th>WAREHOUSE QTY</th><th style="min-width:100px">ORDER QTY</th></tr></thead><tbody>'+stnItems.map(item=>{
+              const wh = coffeeProducts.find(p=>p.id===item.product_id);
+              const whQty = wh ? wh.qty : 0;
+              const recQty = storeOrderRecQtySet ? Math.min(Math.max(0, item.max_level - item.qty), Math.max(0, whQty)) : 0;
+              return '<tr><td style="padding-left:8px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:220px">'+item.product_name+'</td><td style="font-weight:700;color:'+qtyColor(item.qty,item.min_level,item.max_level)+'">'+item.qty+'</td><td>'+item.min_level+'</td><td style="color:#7080a0">'+item.max_level+'</td><td style="color:#5060a0">'+whQty+'</td><td><input type="number" id="oq-'+item.id+'" min="0" placeholder="—" value="'+(recQty>0?recQty:'')+'" style="width:75px;background:#f4f6fa;border:1.5px solid '+(recQty>0?'#c9a84c':'#d0d5e0')+';border-radius:5px;padding:4px 7px;font-size:12px;font-weight:700;color:#0d1f4e;outline:none"/></td></tr>';
+            }).join('')+'</tbody></table></div></div>';
+          }
+        }
         return html;
       })()}`}
     </div>`;
@@ -3601,6 +3765,7 @@ async function saveNewStoreOrder(){
         product_id: item.product_id,
         product_source: item.product_source,
         product_name: item.product_name,
+        station_name: item.station_name||'',
         order_qty: qty,
         current_store_qty: item.qty,
         store_min: item.min_level,
@@ -3933,15 +4098,17 @@ function renderStoreCount(){
   const mmCatOrder = [...STORE_CATEGORIES, 'UNCATEGORIZED'].filter(c=>mmCatGroups[c]);
   for(const c of mmCatOrder) mmCatGroups[c].sort((a,b)=>a.product_name.localeCompare(b.product_name));
 
-  // Group Coffee by category
-  const coffeeCatGroups = {};
+  // Group Coffee by station
+  const coffeeByStation = {};
   for(const item of coffeeItems){
-    const cat = getStoreItemCat1(item) || 'UNCATEGORIZED';
-    if(!coffeeCatGroups[cat]) coffeeCatGroups[cat] = [];
-    coffeeCatGroups[cat].push(item);
+    const stn = item.station_name || 'Unassigned';
+    if(!coffeeByStation[stn]) coffeeByStation[stn] = [];
+    coffeeByStation[stn].push(item);
   }
-  const coffeeCatOrder = [...COFFEE_CAT_ORDER, 'UNCATEGORIZED'].filter(c=>coffeeCatGroups[c]);
-  for(const c of coffeeCatOrder) coffeeCatGroups[c].sort((a,b)=>a.product_name.localeCompare(b.product_name));
+  const stationOrder = getStationsForStore(storeCountStore).map(s=>s.station_name).filter(s=>coffeeByStation[s]);
+  // Add any unmatched stations
+  for(const s of Object.keys(coffeeByStation)) if(!stationOrder.includes(s)) stationOrder.push(s);
+  for(const s of stationOrder) coffeeByStation[s].sort((a,b)=>a.product_name.localeCompare(b.product_name));
 
   // Helper to render a category section
   function renderCatSection(cat, groupItems, skipped){
@@ -4005,10 +4172,44 @@ function renderStoreCount(){
 
     ${storeCountSubmitResult || coffeeItems.length===0 ? '' : `
     <div style="margin:16px 0 8px;padding:8px 0;border-top:3px solid #6b2fa0">
-      <div style="font-size:11px;font-weight:800;color:#6b2fa0;letter-spacing:1.5px;text-transform:uppercase">☕ Coffee Inventory (${coffeeItems.length} items)</div>
+      <div style="font-size:11px;font-weight:800;color:#6b2fa0;letter-spacing:1.5px;text-transform:uppercase">☕ Coffee Inventory (${coffeeItems.length} items · ${stationOrder.length} station${stationOrder.length!==1?'s':''})</div>
     </div>`}
 
-    ${storeCountSubmitResult ? '' : coffeeCatOrder.map(cat=>renderCatSection(cat, coffeeCatGroups[cat], storeCountSkippedCats.has(cat))).join('')}
+    ${storeCountSubmitResult ? '' : stationOrder.map(stn=>{
+      const stnItems = coffeeByStation[stn];
+      const stnLabel = getStationsForStore(storeCountStore).find(s=>s.station_name===stn)?.station_label||'';
+      const skipped = storeCountSkippedCats.has('STN_'+stn);
+      const stnVerified = stnItems.filter(x=>storeCountState[x.id]&&(storeCountState[x.id].verified||(storeCountState[x.id].actualQty!==''&&storeCountState[x.id].reason!==''))).length;
+      return `
+        <div class="card" style="margin-bottom:12px;border-left:3px solid #6b2fa0;${skipped?'opacity:0.5':''}">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:${skipped?'0':'10px'}">
+            <div style="display:flex;align-items:center;gap:10px">
+              <div class="card-title" style="margin-bottom:0;color:#6b2fa0">☕ ${stn}</div>
+              <span style="font-size:10px;color:#7080a0">${stnLabel?stnLabel+' · ':''}${!skipped?stnVerified+'/'+stnItems.length+' verified':''}</span>
+            </div>
+            <button onclick="toggleStoreCountSkip('STN_${stn}')"
+              style="background:${skipped?'#f3e8ff':'#f4f6fa'};color:${skipped?'#6b2fa0':'#7080a0'};border:1.5px solid ${skipped?'#6b2fa0':'#d0d5e0'};border-radius:6px;padding:4px 12px;font-size:10px;font-weight:700;cursor:pointer">
+              ${skipped?'↩ Include Station':'⏭ Skip Station'}
+            </button>
+          </div>
+          ${skipped?'<div style="font-size:11px;color:#7080a0;padding:4px 0">This station is skipped.</div>':''}
+          ${!skipped?`
+          <table>
+            <thead><tr>
+              <th style="min-width:180px;padding-left:8px">ITEM</th>
+              <th>CURRENT QTY</th>
+              <th>✓ CORRECT</th>
+              <th>ACTUAL QTY</th>
+              <th>DIFFERENCE</th>
+              <th>REASON</th>
+              <th>VERIFIED QTY</th>
+            </tr></thead>
+            <tbody>
+            ${stnItems.map(item=>renderStoreCountRow(item)).join('')}
+            </tbody>
+          </table>`:''}
+        </div>`;
+    }).join('')}
   `;
 }
 
@@ -4122,11 +4323,15 @@ function cancelStoreCount(){
 }
 
 function confirmSubmitStoreCount(){
+  function isSkipped(item){
+    if(item.product_source==='coffee' && item.station_name) return storeCountSkippedCats.has('STN_'+item.station_name);
+    return storeCountSkippedCats.has(getStoreItemCat1(item)||'UNCATEGORIZED');
+  }
   // Validate — check missing reasons
   const items = storeInventory.filter(x=>x.store_name===storeCountStore);
   const missing = items.filter(item=>{
     const s = storeCountState[item.id];
-    if(!s||s.verified||storeCountSkippedCats.has(getStoreItemCat1(item)||'UNCATEGORIZED')) return false;
+    if(!s||s.verified||isSkipped(item)) return false;
     const aq = s.actualQty!==''?parseFloat(s.actualQty):null;
     return aq!==null && aq!==item.qty && !s.reason;
   });
@@ -4137,13 +4342,13 @@ function confirmSubmitStoreCount(){
 
   const toUpdate = items.filter(item=>{
     const s = storeCountState[item.id];
-    if(!s||s.verified||storeCountSkippedCats.has(getStoreItemCat1(item)||'UNCATEGORIZED')) return false;
+    if(!s||s.verified||isSkipped(item)) return false;
     const aq = s.actualQty!==''?parseFloat(s.actualQty):null;
     return aq!==null && aq!==item.qty && s.reason;
   });
   const unresolved = items.filter(item=>{
     const s = storeCountState[item.id];
-    if(!s||s.verified||storeCountSkippedCats.has(getStoreItemCat1(item)||'UNCATEGORIZED')) return false;
+    if(!s||s.verified||isSkipped(item)) return false;
     const aq = s.actualQty!==''?parseFloat(s.actualQty):null;
     return aq===null;
   });
@@ -4219,7 +4424,8 @@ async function submitStoreCount(){
   const items=storeInventory.filter(x=>x.store_name===storeCountStore);
   const toUpdate=items.filter(item=>{
     const s=storeCountState[item.id];
-    if(!s||s.verified||storeCountSkippedCats.has(getStoreItemCat1(item)||'UNCATEGORIZED')) return false;
+    const skipped = (item.product_source==='coffee'&&item.station_name) ? storeCountSkippedCats.has('STN_'+item.station_name) : storeCountSkippedCats.has(getStoreItemCat1(item)||'UNCATEGORIZED');
+    if(!s||s.verified||skipped) return false;
     const aq=s.actualQty!==''?parseFloat(s.actualQty):null;
     return aq!==null&&aq!==item.qty&&s.reason;
   });
@@ -5448,26 +5654,27 @@ async function exportStoreOrderToSheet(orderId){
     const fileName = `${storeName.replace(/\s+/g,'_')}_Store_Order_${new Date(order.created_at).toISOString().slice(0,10)}_${orderId.toString().slice(-6)}.xlsx`;
 
     // Build data rows
-    const headers = ['Item Name','Category','Source','Qty on Hand','Min','Max','Order Qty'];
+    const headers = ['Item Name','Category','Source','Station','Qty on Hand','Min','Max','Order Qty'];
     const rows = [];
     for(const item of order.items){
-      const si = storeInventory.find(x=>x.product_id===item.product_id && x.store_name===storeName);
+      const si = storeInventory.find(x=>x.product_id===item.product_id && x.store_name===storeName && (item.station_name ? x.station_name===item.station_name : true));
       const cat = si ? getStoreItemCat1(si) : '';
       rows.push([
         item.product_name,
         cat || '',
         (item.product_source || 'mm').toUpperCase(),
+        item.station_name || '',
         item.current_store_qty ?? 0,
         item.store_min ?? 0,
         item.store_max ?? 0,
         item.order_qty
       ]);
     }
-    // Sort by category then name
-    rows.sort((a,b)=> a[1].localeCompare(b[1]) || a[0].localeCompare(b[0]));
+    // Sort by station then category then name
+    rows.sort((a,b)=> a[3].localeCompare(b[3]) || a[1].localeCompare(b[1]) || a[0].localeCompare(b[0]));
     // Add totals row
     const totalUnits = order.items.reduce((s,i)=>s+(i.order_qty||0),0);
-    rows.push(['TOTAL','','','','','',totalUnits]);
+    rows.push(['TOTAL','','','','','','',totalUnits]);
 
     // Create workbook
     const wb = XLSX.utils.book_new();
@@ -5479,6 +5686,7 @@ async function exportStoreOrderToSheet(orderId){
       {wch:35}, // Item Name
       {wch:14}, // Category
       {wch:8},  // Source
+      {wch:14}, // Station
       {wch:12}, // Qty on Hand
       {wch:6},  // Min
       {wch:6},  // Max
@@ -5554,9 +5762,11 @@ document.addEventListener('click', e=>{
 
 function renderMobStoreCount(){
   updateMobTitle('Store Count');
-  const items = storeInventory.filter(x=>x.store_name===storeCountStore);
-  const total = items.length;
-  const verified = items.filter(item=>{
+  const allItems = storeInventory.filter(x=>x.store_name===storeCountStore);
+  const mmItems = allItems.filter(x=>x.product_source!=='coffee');
+  const coffeeItems = allItems.filter(x=>x.product_source==='coffee');
+  const total = allItems.length;
+  const verified = allItems.filter(item=>{
     const s = storeCountState[item.id];
     if(!s) return false;
     if(s.verified) return true;
@@ -5565,15 +5775,27 @@ function renderMobStoreCount(){
     return false;
   }).length;
 
-  // Group by category
+  // Group MM by category
   const catGroups = {};
-  for(const item of items){
+  for(const item of mmItems){
     const cat = getStoreItemCat1(item) || 'UNCATEGORIZED';
     if(!catGroups[cat]) catGroups[cat] = [];
     catGroups[cat].push(item);
   }
   const catOrder = [...STORE_CATEGORIES, 'UNCATEGORIZED'].filter(c=>catGroups[c]);
   for(const c of catOrder) catGroups[c].sort((a,b)=>a.product_name.localeCompare(b.product_name));
+
+  // Group coffee by station
+  const coffeeByStation = {};
+  for(const item of coffeeItems){
+    const stn = item.station_name||'Unassigned';
+    if(!coffeeByStation[stn]) coffeeByStation[stn] = [];
+    coffeeByStation[stn].push(item);
+  }
+  const stations = getStationsForStore(storeCountStore);
+  const stnOrder = stations.map(s=>s.station_name).filter(s=>coffeeByStation[s]);
+  for(const s of Object.keys(coffeeByStation)) if(!stnOrder.includes(s)) stnOrder.push(s);
+  for(const s of stnOrder) coffeeByStation[s].sort((a,b)=>a.product_name.localeCompare(b.product_name));
 
   document.getElementById('main-body').innerHTML=`
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
@@ -5599,6 +5821,27 @@ function renderMobStoreCount(){
         :groupItems.map(item=>renderMobCountCard(item)).join('')}
       `;
     }).join('')}
+
+    ${coffeeItems.length>0?`
+    <div style="margin:14px 0 8px;padding:10px 0;border-top:3px solid #6b2fa0">
+      <div style="font-size:11px;font-weight:800;color:#6b2fa0;letter-spacing:1.5px;text-transform:uppercase">☕ Coffee (${coffeeItems.length} items · ${stnOrder.length} station${stnOrder.length!==1?'s':''})</div>
+    </div>
+    ${stnOrder.map(stn=>{
+      const stnItems = coffeeByStation[stn];
+      const stnLabel = stations.find(s=>s.station_name===stn)?.station_label||'';
+      const skipped = storeCountSkippedCats.has('STN_'+stn);
+      return `
+        <div class="mob-count-section-hdr" style="border-left:3px solid #6b2fa0">
+          <span style="color:#6b2fa0">☕ ${stn} ${stnLabel?'('+stnLabel+')':''} (${stnItems.length})</span>
+          <button class="skip-btn" onclick="toggleStoreCountSkip('STN_${stn}');renderMobStoreCount()">
+            ${skipped?'↩ Include':'⏭ Skip'}
+          </button>
+        </div>
+        ${skipped?'<div style="font-size:12px;color:#7080a0;margin-bottom:12px;padding:8px 12px;background:#f9f0ff;border-radius:8px">Station skipped</div>'
+        :stnItems.map(item=>renderMobCountCard(item)).join('')}
+      `;
+    }).join('')}
+    `:''}
     </div>
 
     <div class="mob-count-submit">
@@ -5719,24 +5962,35 @@ let mobInvEditingIds = new Set();
 
 function renderMobStoreInventory(){
   updateMobTitle('Store Inventory');
-  const storeItems = storeInventory.filter(x=>x.store_name===currentStore);
+  const allStoreItems = storeInventory.filter(x=>x.store_name===currentStore);
+  const mmItems = allStoreItems.filter(x=>x.product_source!=='coffee');
+  const coffeeItems = allStoreItems.filter(x=>x.product_source==='coffee');
+  const hasBoth = mmItems.length > 0 && coffeeItems.length > 0;
+  const storeItems = storeSourceFilter==='mm'?mmItems:storeSourceFilter==='coffee'?coffeeItems:allStoreItems;
+
   const filtered = storeItems.filter(x=>{
     const ms = x.product_name.toLowerCase().includes(storeSearchTerm.toLowerCase());
     const cat = getStoreItemCat1(x);
     const matchCat = storeCategoryFilters.size===0 || storeCategoryFilters.has(cat);
     return ms && matchCat;
   }).sort((a,b)=>a.product_name.localeCompare(b.product_name));
-  const outCount = storeItems.filter(x=>x.qty<=0).length;
+  const outCount = allStoreItems.filter(x=>x.qty<=0).length;
   const storeCats = [...new Set(storeItems.map(x=>getStoreItemCat1(x)).filter(Boolean))].sort();
 
   document.getElementById('main-body').innerHTML=`
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
-      <select onchange="currentStore=this.value;storeSearchTerm='';storeCategoryFilters.clear();mobInvEditingIds=new Set();renderStoreInventory()"
+      <select onchange="currentStore=this.value;storeSearchTerm='';storeCategoryFilters.clear();storeSourceFilter='all';mobInvEditingIds=new Set();renderStoreInventory()"
         style="flex:1;padding:10px 12px;border:1.5px solid #0d1f4e;border-radius:8px;font-size:14px;font-weight:700;color:#0d1f4e;background:#fff;outline:none">
         ${STORES.map(s=>`<option value="${s}" ${s===currentStore?'selected':''}>${s}</option>`).join('')}
       </select>
       <button class="primary-btn" onclick="openImportStoreItemModal()" style="padding:10px 12px;white-space:nowrap">+ Add</button>
     </div>
+
+    ${hasBoth?`<div style="display:flex;gap:4px;background:#f4f6fa;border-radius:7px;padding:3px;margin-bottom:8px">
+      <button onclick="storeSourceFilter='all';storeCategoryFilters.clear();renderStoreInventory()" style="flex:1;padding:7px;border:none;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;${storeSourceFilter==='all'?'background:#0d1f4e;color:#fff':'background:transparent;color:#5060a0'}">All</button>
+      <button onclick="storeSourceFilter='mm';storeCategoryFilters.clear();renderStoreInventory()" style="flex:1;padding:7px;border:none;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;${storeSourceFilter==='mm'?'background:#0d1f4e;color:#fff':'background:transparent;color:#5060a0'}">MM</button>
+      <button onclick="storeSourceFilter='coffee';storeCategoryFilters.clear();renderStoreInventory()" style="flex:1;padding:7px;border:none;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;${storeSourceFilter==='coffee'?'background:#6b2fa0;color:#fff':'background:transparent;color:#6b2fa0'}">☕ Coffee</button>
+    </div>`:''}
 
     <input class="search-input" id="store-search-input" placeholder="Search items…" value="${storeSearchTerm}"
       oninput="storeSearchTerm=this.value;renderWithSearchFocus(renderStoreInventory,'store-search-input')"
@@ -5744,21 +5998,39 @@ function renderMobStoreInventory(){
 
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;overflow-x:auto">
       <button class="cat-btn${storeCategoryFilters.size===0?' active':''}" onclick="storeCategoryFilters.clear();renderStoreInventory()" style="font-size:11px;padding:5px 10px">ALL</button>
-      ${STORE_CATEGORIES.filter(c=>storeCats.includes(c)).map(c=>`<button class="cat-btn${storeCategoryFilters.has(c)?' active':''}" onclick="(function(){if(storeCategoryFilters.has('${c}')){storeCategoryFilters.delete('${c}')}else{storeCategoryFilters.add('${c}')};renderStoreInventory()})()" style="font-size:11px;padding:5px 10px">${c}</button>`).join('')}
+      ${[...STORE_CATEGORIES,...COFFEE_CAT_ORDER].filter(c=>storeCats.includes(c)).map(c=>`<button class="cat-btn${storeCategoryFilters.has(c)?' active':''}" onclick="(function(){if(storeCategoryFilters.has('${c}')){storeCategoryFilters.delete('${c}')}else{storeCategoryFilters.add('${c}')};renderStoreInventory()})()" style="font-size:11px;padding:5px 10px">${c}</button>`).join('')}
     </div>
 
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px">
-      <div class="stat-card" style="padding:8px 10px"><div class="stat-val" style="font-size:18px">${storeItems.length}</div><div class="stat-label">SKUs</div></div>
+      <div class="stat-card" style="padding:8px 10px"><div class="stat-val" style="font-size:18px">${allStoreItems.length}</div><div class="stat-label">SKUs</div></div>
       <div class="stat-card" style="padding:8px 10px;border-top-color:#1a3266"><div class="stat-val" style="font-size:18px;color:#1a3266">${filtered.length}</div><div class="stat-label">Shown</div></div>
       <div class="stat-card" style="padding:8px 10px;border-top-color:#b01c1c"><div class="stat-val" style="font-size:18px;color:#b01c1c">${outCount}</div><div class="stat-label">Out</div></div>
     </div>
 
     ${filtered.length===0?`<div style="text-align:center;padding:40px 20px;color:#7080a0">
       <div style="font-size:32px;margin-bottom:10px">📦</div>
-      <div style="font-size:15px;font-weight:600;margin-bottom:6px">No items yet</div>
+      <div style="font-size:15px;font-weight:600;margin-bottom:6px">No items</div>
       <div style="font-size:13px">Tap "+ Add" to import warehouse items</div>
     </div>`
-    :filtered.map(item=>renderMobInvCard(item)).join('')}
+    : storeSourceFilter==='coffee' && getStationsForStore(currentStore).length>0 ? (function(){
+      // Coffee view: group by station
+      const stations = getStationsForStore(currentStore);
+      const byStation = {};
+      for(const item of filtered){
+        const stn = item.station_name||'Unassigned';
+        if(!byStation[stn]) byStation[stn]=[];
+        byStation[stn].push(item);
+      }
+      const stnOrder = stations.map(s=>s.station_name).filter(s=>byStation[s]);
+      for(const s of Object.keys(byStation)) if(!stnOrder.includes(s)) stnOrder.push(s);
+
+      return stnOrder.map(stn=>{
+        const stnItems = byStation[stn];
+        const stnLabel = stations.find(s=>s.station_name===stn)?.station_label||'';
+        return '<div style="margin-bottom:12px"><div style="font-size:12px;font-weight:800;color:#6b2fa0;padding:10px 12px;background:#f9f0ff;border-radius:8px;margin-bottom:6px;border-left:3px solid #6b2fa0">☕ '+stn+(stnLabel?' — '+stnLabel:'')+' ('+stnItems.length+')</div>'+stnItems.map(item=>renderMobInvCard(item)).join('')+'</div>';
+      }).join('');
+    })()
+    : filtered.map(item=>renderMobInvCard(item)).join('')}
   `;
 }
 
@@ -5769,6 +6041,7 @@ function renderMobInvCard(item){
     ? '<span style="background:#f3e8ff;color:#6b2fa0;border-radius:4px;padding:2px 7px;font-size:10px;font-weight:700">COFFEE</span>'
     : '<span style="background:#e8edf8;color:#0d1f4e;border-radius:4px;padding:2px 7px;font-size:10px;font-weight:700">MM</span>';
   const catBadge = cat1 ? `<span style="background:#f0f2f8;color:#5060a0;border-radius:4px;padding:2px 7px;font-size:10px;font-weight:600">${cat1}</span>` : '';
+  const stnBadge = item.station_name && item.product_source==='coffee' ? `<span style="background:#f9f0ff;color:#6b2fa0;border-radius:4px;padding:2px 7px;font-size:10px;font-weight:600">${item.station_name}</span>` : '';
   const isNA = item.qty<=0 && !item.min_level && !item.max_level;
   const qtyClass = isNA?'na':item.qty<=0?'out':(item.max_level>0 ? (item.qty<item.max_level*0.75?'low':'ok') : (item.min_level>0&&item.qty<=item.min_level?'low':'ok'));
   const statusLabel = isNA?'N/A':item.qty<=0?'OUT':(item.max_level>0 ? (item.qty<item.max_level*0.75?'LOW':'OK') : (item.min_level>0&&item.qty<=item.min_level?'LOW':'OK'));
@@ -5776,7 +6049,7 @@ function renderMobInvCard(item){
 
   if(isEditing){
     return `<div class="mob-inv-card editing" id="mic-${item.id}">
-      <div style="font-size:14px;font-weight:700;color:#0d1f4e;margin-bottom:10px;line-height:1.3">${item.product_name} ${srcBadge} ${catBadge}</div>
+      <div style="font-size:14px;font-weight:700;color:#0d1f4e;margin-bottom:10px;line-height:1.3">${item.product_name} ${srcBadge} ${catBadge} ${stnBadge}</div>
       <div class="mob-inv-edit-row"><label>QTY</label><input type="number" id="mie-qty-${item.id}" value="${item.qty}" min="0" style="font-size:18px"/></div>
       <div class="mob-inv-edit-row"><label>MIN</label><input type="number" id="mie-min-${item.id}" value="${item.min_level}" min="0"/></div>
       <div class="mob-inv-edit-row"><label>MAX</label><input type="number" id="mie-max-${item.id}" value="${item.max_level}" min="0"/></div>
@@ -5790,7 +6063,7 @@ function renderMobInvCard(item){
   return `<div class="mob-inv-card" id="mic-${item.id}">
     <div class="mob-inv-card-top">
       <div class="mob-inv-card-name">${item.product_name}</div>
-      <div style="display:flex;gap:4px;align-items:center">${catBadge} ${srcBadge}</div>
+      <div style="display:flex;gap:4px;align-items:center">${catBadge} ${srcBadge} ${stnBadge}</div>
     </div>
     <div class="mob-inv-card-meta">
       <span>Qty: <span class="qty-val ${qtyClass}">${item.qty}</span></span>
@@ -5881,15 +6154,43 @@ function renderMobStoreOrders(){
               const wh = item.product_source==='coffee'
                 ? coffeeProducts.find(p=>p.id===item.product_id)
                 : products.find(p=>p.id===item.product_id);
-              const recQty = storeOrderRecQtySet ? Math.min(Math.max(0, item.max_level - item.qty), Math.max(0, whQty)) : 0;
+              const whQ = wh?.qty||0;
+              const recQty = storeOrderRecQtySet ? Math.min(Math.max(0, item.max_level - item.qty), Math.max(0, whQ)) : 0;
               return '<div class="mob-new-order-item"><div class="item-info"><div class="name">'+item.product_name+'</div><div class="meta">On hand: <strong>'+item.qty+'</strong> · WH: '+(wh?.qty??'—')+'</div></div><input type="number" class="item-qty-input" id="moq-'+item.id+'" min="0" placeholder="0" value="'+(recQty>0?recQty:'')+'"/></div>';
             }).join('');
           }).join('');
           return s;
         }
 
+        function renderMobCoffeeStations(items){
+          if(items.length===0) return '';
+          const stations = getStationsForStore(currentOrderStore);
+          const byStation = {};
+          for(const item of items){
+            const stn = item.station_name||'Unassigned';
+            if(!byStation[stn]) byStation[stn]=[];
+            byStation[stn].push(item);
+          }
+          const stnOrder = stations.map(s=>s.station_name).filter(s=>byStation[s]);
+          for(const s of Object.keys(byStation)) if(!stnOrder.includes(s)) stnOrder.push(s);
+
+          let s = '<div style="margin:12px 0 6px;padding:8px 0;border-top:3px solid #6b2fa0"><div style="font-size:10px;font-weight:800;color:#6b2fa0;letter-spacing:1.2px;text-transform:uppercase">☕ Coffee ('+items.length+' items · '+stnOrder.length+' station'+(stnOrder.length!==1?'s':'')+')</div></div>';
+          for(const stn of stnOrder){
+            const stnItems = byStation[stn].sort((a,b)=>a.product_name.localeCompare(b.product_name));
+            const stnLabel = stations.find(x=>x.station_name===stn)?.station_label||'';
+            s += '<div style="font-size:11px;font-weight:800;color:#6b2fa0;padding:8px 12px;background:#f9f0ff;border-radius:6px;margin-bottom:4px;margin-top:8px;border-left:3px solid #6b2fa0">'+stn+(stnLabel?' — '+stnLabel:'')+' ('+stnItems.length+')</div>';
+            s += stnItems.map(item=>{
+              const wh = coffeeProducts.find(p=>p.id===item.product_id);
+              const whQ = wh?.qty||0;
+              const recQty = storeOrderRecQtySet ? Math.min(Math.max(0, item.max_level - item.qty), Math.max(0, whQ)) : 0;
+              return '<div class="mob-new-order-item"><div class="item-info"><div class="name">'+item.product_name+'</div><div class="meta">On hand: <strong>'+item.qty+'</strong> · WH: '+(wh?.qty??'—')+'</div></div><input type="number" class="item-qty-input" id="moq-'+item.id+'" min="0" placeholder="0" value="'+(recQty>0?recQty:'')+'"/></div>';
+            }).join('');
+          }
+          return s;
+        }
+
         return renderMobSection(mmSI, STORE_CATEGORIES, coffeeSI.length>0?'MM Inventory':'', '#0d1f4e')
-             + renderMobSection(coffeeSI, COFFEE_CAT_ORDER, '☕ Coffee Inventory', '#6b2fa0');
+             + renderMobCoffeeStations(coffeeSI);
       })()}
       <div class="mob-order-actions">
         <button class="mob-order-save-btn" onclick="saveNewStoreOrder()">💾 Save as Open Order</button>
