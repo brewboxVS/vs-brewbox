@@ -6734,34 +6734,42 @@ async function confirmSalesImport(store){
     : 'unknown period';
   let updated = 0;
 
-  for(const item of inStore){
-    const si = storeInventory.find(x=>x.store_name===store&&x.product_id===item.product.id&&x.product_source==='mm');
-    if(!si) continue;
-    si.qty = Math.max(0, si.qty - item.unitsSold);
-    await saveStoreItem(si);
-    const entry = {id:Date.now()+Math.random(),date:new Date().toISOString().slice(0,10),product:item.product.name,qty:-item.unitsSold,by:`Sales - ${store} (${dateLabel})`};
-    restockLog=[entry,...restockLog];
-    await saveRestock(entry);
-    updated++;
+  try{
+    for(const item of inStore){
+      const si = storeInventory.find(x=>x.store_name===store&&x.product_id===item.product.id&&x.product_source==='mm');
+      if(!si) continue;
+      si.qty = Math.max(0, si.qty - item.unitsSold);
+      try{ await saveStoreItem(si); }catch(e){}
+      const entry = {id:Date.now()+Math.random(),date:new Date().toISOString().slice(0,10),product:item.product.name,qty:-item.unitsSold,by:`Sales - ${store} (${dateLabel})`};
+      restockLog=[entry,...restockLog];
+      try{ await saveRestock(entry); }catch(e){}
+      updated++;
+    }
+
+    try{
+      await saveSalesImportRecord({id:Date.now(),store_name:store,last_sale_ts:maxTs?maxTs.toISOString():new Date().toISOString(),imported_at:new Date().toISOString(),item_count:updated,units_sold:newRowCount});
+    }catch(e){}
+    const summary = {id:Date.now()+Math.random(),date:new Date().toISOString().slice(0,10),product:`Sales Import - ${store} (${newRowCount} transactions, ${updated} items updated)`,qty:-inStore.reduce((s,x)=>s+x.unitsSold,0),by:`Sales - ${store} (${dateLabel})`};
+    restockLog=[summary,...restockLog];
+    try{ await saveRestock(summary); }catch(e){}
+  }catch(e){
+    console.error('Sales import error for '+store, e);
   }
 
-  await saveSalesImportRecord({id:Date.now(),store_name:store,last_sale_ts:maxTs?maxTs.toISOString():new Date().toISOString(),imported_at:new Date().toISOString(),item_count:updated,units_sold:newRowCount});
-  const summary = {id:Date.now()+Math.random(),date:new Date().toISOString().slice(0,10),product:`Sales Import - ${store} (${newRowCount} transactions, ${updated} items updated)`,qty:-inStore.reduce((s,x)=>s+x.unitsSold,0),by:`Sales - ${store} (${dateLabel})`};
-  restockLog=[summary,...restockLog];
-  await saveRestock(summary);
-
-  // Mark this store done in UI without clearing other stores
+  // Always update the card UI — even if saves had errors
   delete window._siConfirmData[store];
   const card = document.getElementById('si-card-'+storeKey);
-  if(card) card.innerHTML = `<div style="display:flex;align-items:center;gap:10px;padding:8px 0"><span style="font-size:20px">\u2705</span><div><div style="font-size:13px;font-weight:700;color:#1a7a45">${store} - saved</div><div style="font-size:11px;color:#7080a0">${updated} items updated, ${dateLabel}</div></div></div>`;
+  if(card) card.innerHTML = `<div style="display:flex;align-items:center;gap:10px;padding:8px 0"><span style="font-size:20px">\u2705</span><div><div style="font-size:13px;font-weight:700;color:#1a7a45">${store} — saved</div><div style="font-size:11px;color:#7080a0">${updated} items updated, ${dateLabel}</div></div></div>`;
 
   showToast(`\u2713 ${updated} items updated for ${store}`);
-  updateSidebar();
-  const tracker = document.getElementById('si-store-tracker');
-  if(tracker) tracker.innerHTML = renderStoreTrackerHTML();
+  try{
+    updateSidebar();
+    const tracker = document.getElementById('si-store-tracker');
+    if(tracker) tracker.innerHTML = renderStoreTrackerHTML();
+  }catch(e){}
 
   // Only reset file state when ALL stores are done
-  if(Object.keys(window._siConfirmData).length===0){
+  if(!window._siConfirmData || Object.keys(window._siConfirmData).length===0){
     _salesRows=null; window._siConfirmData=null;
     const s=document.getElementById('si-file-status');
     const p=document.getElementById('si-parse-btn');
