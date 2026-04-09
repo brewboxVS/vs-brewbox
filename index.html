@@ -8319,8 +8319,15 @@ function renderInsightsWidgets(){
   // ── Sales by category ──
   const catSales = {};
   for(const r of sales){
-    // Normalize category - strip location suffixes
-    let cat = (r.category||'').replace(/\s*-\s*(LEFT|RIGHT|BACK|FRONT).*$/i,'').trim().toUpperCase();
+    // Use warehouse product cat1 as canonical category for matched items
+    let cat = '';
+    if(r.product_id){
+      const wh = products.find(p=>p.id===r.product_id);
+      cat = wh?.cat1 || '';
+    }
+    // Fall back to sales_data category (for vending/unmatched), strip location suffixes
+    if(!cat) cat = (r.category||'').replace(/\s*-\s*(LEFT|RIGHT|BACK|FRONT).*$/i,'').trim();
+    cat = cat.toUpperCase();
     if(!cat) cat = 'UNCATEGORIZED';
     if(!catSales[cat]) catSales[cat] = {units:0, revenue:0};
     catSales[cat].units++;
