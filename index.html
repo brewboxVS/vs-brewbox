@@ -1325,6 +1325,17 @@ function getStoreNegReasons(storeName){
   return [isFV?'Consumption':'Theft/Walkoff','Complimentary','Spoilage','Return to Warehouse','Manual Decrease'];
 }
 
+let vendingPriceMap = []; // loaded from DB
+
+async function loadVendingPriceMap(){
+  if(useSupabase){
+    try{
+      const rows = await sbFetch('vending_price_map?order=machine_type,base_price',{method:'GET',prefer:'return=representation'});
+      vendingPriceMap = rows;
+    }catch(e){ vendingPriceMap = []; }
+  }
+}
+
 async function initApp(){
   document.getElementById('setup-screen').style.display='none';
   document.getElementById('app').style.display='flex';
@@ -1338,6 +1349,7 @@ async function initApp(){
   await loadStoreSettings();
   await loadStoreStations();
   await loadVendors();
+  await loadVendingPriceMap();
   hideLoading();
   setView('dashboard');
 }
@@ -6433,7 +6445,7 @@ function renderSalesImport(){
     fi = document.createElement('input');
     fi.type = 'file';
     fi.id = 'si-file-input';
-    fi.accept = '.csv,.xlsx,.xls';
+    fi.accept = '.csv,.xlsx,.xls,.html,.htm';
     fi.style.cssText = 'position:fixed;top:-200px;left:-200px;width:1px;height:1px;opacity:0';
     fi.addEventListener('change', function(){ handleSalesFileUpload(this); });
     document.body.appendChild(fi);
@@ -6454,7 +6466,7 @@ function renderSalesImport(){
           style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;border:2px dashed #d0d5e0;border-radius:8px;padding:22px;cursor:pointer;background:#f4f6fa;transition:border-color .2s;margin-bottom:12px"
           onmouseover="this.style.borderColor='#0d1f4e'" onmouseout="this.style.borderColor='#d0d5e0'">
           <span style="font-size:28px">📊</span>
-          <span style="font-size:12px;color:#7080a0;text-align:center">Click to upload CSV or XLSX<br>Cantaloupe Item Sales report</span>
+          <span style="font-size:12px;color:#7080a0;text-align:center">Click to upload sales report<br>Cantaloupe CSV/XLSX or Seed Live HTML</span>
         </div>
 
         <div id="si-file-status" style="display:none;font-size:12px;color:#1a7a45;font-weight:600;margin-bottom:10px;padding:8px 12px;background:#e6f4ee;border-radius:7px"></div>
@@ -6503,6 +6515,14 @@ function handleSalesFileUpload(input){
 
   const reader = new FileReader();
   const isCSV = file.name.toLowerCase().endsWith('.csv');
+  const isHTML = file.name.toLowerCase().endsWith('.html') || file.name.toLowerCase().endsWith('.htm');
+
+  if(isHTML){
+    // Seed Live vending report
+    reader.onload = e => { handleVendingReportUpload(file.name, e.target.result); };
+    reader.readAsText(file);
+    return;
+  }
 
   const processRows = (rows) => {
     try{
@@ -6580,6 +6600,326 @@ function parseCSVToRows(text){
     cols.push(cur.trim());
     return cols;
   });
+}
+
+// ── Vending Report (Seed Live HTML) ──
+let _vendingTxns = null;
+
+function parseVendingHTML(html){
+  // Parse transactions from Seed Live HTML report
+  const txns = [];
+  let currentDevice = '', currentAsset = '';
+
+  // Extract device/asset pairs and transactions using regex
+  const assetRe = /Asset\s*#:\s*<span[^>]*><span>([^<]+)<\/span>/g;
+  const deviceRe = /Device:\s*<span[^>]*>\s*<span>([^<]+)<\/span>/g;
+  
+  // Simpler approach: split by device sections
+  const sections = html.split(/groupHeaderRow2/);
+  
+  for(const section of sections){
+    // Find asset name
+    const assetMatch = section.match(/Asset\s*#:[^<]*<span[^>]*>\s*<span>([^<]+)/);
+    if(assetMatch) currentAsset = assetMatch[1].trim();
+    
+    // Find transaction rows: trans_id, date, payment_type, $amount, [card_ref], details
+    const rowRe = /(\d{8,})[^"]*"[^"]*"[^,]*,\s*([^"]*\d{4}\s+\d+:\d+:\d+\s*(?:AM|PM)?)/g;
+    // Better approach - find all td cells
+    const tdRe = /<td[^>]*>([\s\S]*?)<\/td>/g;
+    const allCells = [];
+    let m;
+    while((m = tdRe.exec(section)) !== null){
+      const text = m[1].replace(/<[^>]+>/g,'').replace(/\n/g,'').trim();
+      if(text) allCells.push(text);
+    }
+    
+    // Process cells to find transactions
+    for(let i=0; i<allCells.length; i++){
+      const cell = allCells[i];
+      // Transaction ID is 11 digits
+      if(/^\d{11}$/.test(cell)){
+        const transId = cell;
+        const dateStr = allCells[i+1]||'';
+        const payType = allCells[i+2]||'';
+        const amountStr = allCells[i+3]||'';
+        
+        // Parse amount
+        const amtMatch = amountStr.match(/\$([\d.]+)/);
+        if(!amtMatch) continue;
+        const totalPrice = parseFloat(amtMatch[1]);
+        
+        // Parse details to get base price
+        // Details can be in cell i+4 or i+5
+        let details = '';
+        for(let j=i+4; j<Math.min(i+7, allCells.length); j++){
+          if(allCells[j] && allCells[j].includes('$') && allCells[j].includes('(')){ details = allCells[j]; break; }
+          if(allCells[j] && allCells[j].match(/^\d{4,6}$/)){ continue; } // card ref
+          if(allCells[j] && allCells[j].includes('(')){ details = allCells[j]; break; }
+        }
+        
+        let basePrice = totalPrice;
+        const baseMatch = details.match(/\(\$?([\d.]+)\)/);
+        if(baseMatch) basePrice = parseFloat(baseMatch[1]);
+        
+        // Parse date
+        const dateMatch = dateStr.match(/(\d{2}\/\d{2}\/\d{4}\s+\d+:\d+:\d+\s*(?:AM|PM)?)/);
+        let saleTs = null;
+        if(dateMatch){
+          try{ saleTs = new Date(dateMatch[1]); }catch(e){}
+        }
+        
+        // Two-tier pricing fee
+        const twoTierMatch = details.match(/Two-Tier[^(]*\(\$?([\d.]+)\)/i);
+        const fee = twoTierMatch ? parseFloat(twoTierMatch[1]) : 0;
+        
+        if(saleTs && !isNaN(saleTs.getTime())){
+          txns.push({
+            device: currentAsset,
+            transId,
+            saleTs,
+            totalPrice,
+            basePrice,
+            fee,
+            payType
+          });
+        }
+      }
+    }
+  }
+  return txns;
+}
+
+function getMachineType(deviceName){
+  const d = deviceName.toLowerCase();
+  if(d.includes('combo')) return 'combo';
+  if(d.includes('bev')) return 'beverage';
+  if(d.includes('snack')) return 'snack';
+  return 'snack'; // default
+}
+
+function inferVendingCategory(machineType, basePrice, saleDate){
+  const dateStr = saleDate instanceof Date ? saleDate.toISOString().slice(0,10) : saleDate;
+  const match = vendingPriceMap.find(m=>
+    m.machine_type === machineType &&
+    parseFloat(m.base_price) === basePrice &&
+    m.effective_from <= dateStr &&
+    (!m.effective_to || m.effective_to >= dateStr)
+  );
+  return match ? match.inferred_category : `UNKNOWN ($${basePrice.toFixed(2)})`;
+}
+
+function handleVendingReportUpload(fileName, htmlContent){
+  const statusEl = document.getElementById('si-file-status');
+  const parseBtn = document.getElementById('si-parse-btn');
+
+  statusEl.textContent = `⏳ Parsing vending report…`;
+  statusEl.style.display = 'block';
+  statusEl.style.background = '#e8edf8';
+  statusEl.style.color = '#0d1f4e';
+
+  try{
+    const txns = parseVendingHTML(htmlContent);
+    if(txns.length === 0){
+      statusEl.textContent = '⚠ No transactions found in this file. Make sure it is a Seed Live Sales Activity report.';
+      statusEl.style.background = '#fde8e8';
+      statusEl.style.color = '#b01c1c';
+      return;
+    }
+
+    // Enrich with machine type and category
+    for(const t of txns){
+      t.machineType = getMachineType(t.device);
+      t.category = inferVendingCategory(t.machineType, t.basePrice, t.saleTs);
+    }
+
+    _vendingTxns = txns;
+    _salesRows = null; // clear any Cantaloupe data
+
+    // Summary
+    const devices = [...new Set(txns.map(t=>t.device))];
+    const totalRev = txns.reduce((s,t)=>s+t.totalPrice,0);
+    const dates = txns.map(t=>t.saleTs);
+    const minDate = new Date(Math.min(...dates));
+    const maxDate = new Date(Math.max(...dates));
+
+    statusEl.textContent = `✓ ${fileName} — ${txns.length} transactions, ${devices.length} machines, $${totalRev.toFixed(2)} revenue`;
+    statusEl.style.background = '#e6f4ee';
+    statusEl.style.color = '#1a7a45';
+
+    parseBtn.disabled = false;
+    parseBtn.style.opacity = '1';
+    parseBtn.textContent = '🔍 Preview SR Honda Vending';
+    parseBtn.onclick = () => previewVendingImport();
+  }catch(e){
+    statusEl.textContent = '⚠ Error parsing file: ' + e.message;
+    statusEl.style.background = '#fde8e8';
+    statusEl.style.color = '#b01c1c';
+  }
+}
+
+function previewVendingImport(){
+  if(!_vendingTxns || _vendingTxns.length===0) return;
+
+  const store = 'SR Honda';
+  const lastTs = getLastImportTs(store);
+  const lastTsDate = lastTs ? new Date(lastTs) : null;
+
+  // Filter out already-imported transactions
+  let newTxns = _vendingTxns;
+  let skipped = 0;
+  if(lastTsDate){
+    newTxns = _vendingTxns.filter(t=>{
+      if(t.saleTs <= lastTsDate){ skipped++; return false; }
+      return true;
+    });
+  }
+
+  if(newTxns.length === 0){
+    document.getElementById('si-preview-area').innerHTML = `
+      <div class="card" style="border-top:3px solid #e65100;text-align:center;padding:30px;color:#7080a0">
+        <div style="font-size:16px;margin-bottom:8px">No new transactions</div>
+        <div style="font-size:12px">${skipped} transactions already imported</div>
+      </div>`;
+    return;
+  }
+
+  const totalRev = newTxns.reduce((s,t)=>s+t.totalPrice,0);
+  const totalBase = newTxns.reduce((s,t)=>s+t.basePrice,0);
+  const totalFees = newTxns.reduce((s,t)=>s+t.fee,0);
+  const minDate = new Date(Math.min(...newTxns.map(t=>t.saleTs)));
+  const maxDate = new Date(Math.max(...newTxns.map(t=>t.saleTs)));
+  const periodStr = `${toPST(minDate.toISOString())} → ${toPST(maxDate.toISOString())}`;
+
+  // Group by machine
+  const byMachine = {};
+  for(const t of newTxns){
+    if(!byMachine[t.device]) byMachine[t.device] = {txns:[], revenue:0, type:t.machineType};
+    byMachine[t.device].txns.push(t);
+    byMachine[t.device].revenue += t.totalPrice;
+  }
+  const machineList = Object.entries(byMachine).sort((a,b)=>b[1].revenue-a[1].revenue);
+
+  // Group by inferred category
+  const byCat = {};
+  for(const t of newTxns){
+    if(!byCat[t.category]) byCat[t.category] = {units:0, revenue:0};
+    byCat[t.category].units++;
+    byCat[t.category].revenue += t.totalPrice;
+  }
+  const catList = Object.entries(byCat).sort((a,b)=>b[1].units-a[1].units);
+
+  // Store preview data for save
+  window._vendingConfirm = {txns:newTxns, maxDate};
+
+  document.getElementById('si-preview-area').innerHTML = `
+    <div class="card" style="border-top:3px solid #e65100;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+        <div>
+          <div class="card-title" style="margin-bottom:2px;color:#e65100">SR Honda — Vending Sales</div>
+          <div style="font-size:12px;color:#5060a0;font-weight:600;margin-bottom:4px">${periodStr}</div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap">
+            <span style="font-size:11px;color:#1a7a45;font-weight:700">✓ ${newTxns.length} transactions · $${totalRev.toFixed(2)}</span>
+            ${skipped>0?`<span style="font-size:11px;color:#7080a0">${skipped} already imported</span>`:''}
+          </div>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button onclick="saveVendingImport()" style="background:#1a7a45;color:#fff;border:none;border-radius:7px;padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">
+            ✓ Save Vending Data
+          </button>
+        </div>
+      </div>
+
+      <!-- Stats -->
+      <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px">
+        <div class="stat-card"><div class="stat-val">${newTxns.length}</div><div class="stat-label">Transactions</div></div>
+        <div class="stat-card" style="border-top-color:#e65100"><div class="stat-val" style="color:#e65100">${machineList.length}</div><div class="stat-label">Machines</div></div>
+        <div class="stat-card" style="border-top-color:#1a7a45"><div class="stat-val" style="color:#1a7a45">$${totalBase.toFixed(2)}</div><div class="stat-label">Base Sales</div></div>
+        <div class="stat-card" style="border-top-color:#0d1f4e"><div class="stat-val" style="color:#0d1f4e">$${totalRev.toFixed(2)}</div><div class="stat-label">Total Revenue</div></div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+        <!-- By Machine -->
+        <div>
+          <div style="font-size:10px;font-weight:700;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">By Machine</div>
+          <div style="overflow-x:auto"><table><thead><tr><th style="padding-left:4px">MACHINE</th><th>TYPE</th><th>TXNS</th><th>REVENUE</th></tr></thead><tbody>
+          ${machineList.map(([name,d])=>{
+            const typeBadge = d.type==='beverage'?'<span style="background:#e0f0ff;color:#0066cc;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700">BEV</span>'
+              :d.type==='combo'?'<span style="background:#fff3e0;color:#e65100;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700">COMBO</span>'
+              :'<span style="background:#f0e8ff;color:#6b2fa0;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700">SNACK</span>';
+            return `<tr><td style="padding-left:4px;font-weight:600;color:#0d1f4e;font-size:11px">${name}</td><td>${typeBadge}</td><td>${d.txns.length}</td><td style="font-weight:700;color:#1a7a45">$${d.revenue.toFixed(2)}</td></tr>`;
+          }).join('')}
+          </tbody></table></div>
+        </div>
+
+        <!-- By Category -->
+        <div>
+          <div style="font-size:10px;font-weight:700;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">By Category (Inferred)</div>
+          ${catList.map(([cat,d])=>{
+            const maxU = catList[0][1].units;
+            return `<div style="margin-bottom:8px">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
+                <span style="font-size:11px;font-weight:600;color:#0d1f4e">${cat}</span>
+                <span style="font-size:10px;color:#7080a0">${d.units} units · $${d.revenue.toFixed(2)}</span>
+              </div>
+              <div style="width:100%;height:6px;background:#e8ecf4;border-radius:3px;overflow:hidden">
+                <div style="width:${(d.units/maxU*100).toFixed(0)}%;height:100%;background:#e65100;border-radius:3px"></div>
+              </div>
+            </div>`;
+          }).join('')}
+          ${catList.some(([c])=>c.startsWith('UNKNOWN'))?'<div style="font-size:10px;color:#b35a00;margin-top:6px">⚠ Some prices not mapped — check Vending Price Map in settings</div>':''}
+        </div>
+      </div>
+    </div>`;
+}
+
+async function saveVendingImport(){
+  const data = window._vendingConfirm;
+  if(!data){ showToast('No data to save'); return; }
+  const {txns, maxDate} = data;
+  const store = 'SR Honda';
+
+  showToast('⏳ Saving vending data…');
+  try{
+    // Build sales_data rows
+    const BATCH = 200;
+    for(let b=0; b<txns.length; b+=BATCH){
+      const batch = txns.slice(b, b+BATCH).map((t,i)=>({
+        id: Date.now() + b + i,
+        store_name: store,
+        product_id: null,
+        product_name: null,
+        csv_item_name: `${t.device} — $${t.basePrice.toFixed(2)} (${t.category})`,
+        category: t.category,
+        sale_ts: t.saleTs.toISOString(),
+        sale_date: t.saleTs.toISOString().slice(0,10),
+        unit_price: t.basePrice,
+        tax: 0,
+        discount: 0,
+        total_price: t.totalPrice,
+        matched: false
+      }));
+      try{ await sbFetch('sales_data',{method:'POST',prefer:'resolution=merge-duplicates,return=minimal',body:JSON.stringify(batch)}); }catch(e){ console.warn('vending batch error:', e); }
+    }
+
+    // Update last_sale_ts
+    await saveSalesImportRecord({id:Date.now(),store_name:store,last_sale_ts:maxDate.toISOString(),imported_at:new Date().toISOString(),item_count:0,units_sold:txns.length});
+
+    window._vendingConfirm = null;
+    _vendingTxns = null;
+
+    document.getElementById('si-preview-area').innerHTML = `
+      <div class="card" style="border-top:3px solid #1a7a45;text-align:center;padding:20px">
+        <div style="font-size:20px;margin-bottom:8px">✅</div>
+        <div style="font-size:14px;font-weight:700;color:#1a7a45">SR Honda vending data saved</div>
+        <div style="font-size:12px;color:#7080a0;margin-top:4px">${txns.length} transactions saved to sales data</div>
+      </div>`;
+
+    showToast(`✓ ${txns.length} vending transactions saved for SR Honda`);
+    const tracker = document.getElementById('si-store-tracker');
+    if(tracker) tracker.innerHTML = renderStoreTrackerHTML();
+  }catch(e){
+    showToast('⚠ Error saving: ' + e.message);
+  }
 }
 
 function parseSalesFile(){
