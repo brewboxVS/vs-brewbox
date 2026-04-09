@@ -6776,9 +6776,10 @@ function previewVendingImport(){
 
   if(newTxns.length === 0){
     document.getElementById('si-preview-area').innerHTML = `
-      <div class="card" style="border-top:3px solid #e65100;text-align:center;padding:30px;color:#7080a0">
-        <div style="font-size:16px;margin-bottom:8px">No new transactions</div>
-        <div style="font-size:12px">${skipped} transactions already imported</div>
+      <div class="card" style="border-top:3px solid #e65100;padding:20px">
+        <div style="background:#fff3cd;border:1.5px solid #e6c200;border-radius:7px;padding:12px 16px;font-size:13px;color:#856404;font-weight:600;text-align:center">
+          ⚠️ <strong>Duplicate file — all ${skipped} transactions already imported.</strong> Nothing to save.
+        </div>
       </div>`;
     return;
   }
@@ -7071,7 +7072,8 @@ function renderSalesPreview(storeResults){
           </button>
         </div>
       </div>
-      ${skippedCount>0&&lastTsDate?`<div style="background:#e6f4ee;border-radius:7px;padding:7px 12px;margin-bottom:10px;font-size:11px;color:#1a7a45">\u2713 <strong>${skippedCount} already-imported transactions excluded</strong> \u2014 through ${toPST(lastTsDate.toISOString())}</div>`:''}
+      ${skippedCount>0&&newRowCount===0?`<div style="background:#fff3cd;border:1.5px solid #e6c200;border-radius:7px;padding:10px 14px;margin-bottom:10px;font-size:12px;color:#856404;font-weight:600">⚠️ <strong>Duplicate file — all ${skippedCount} transactions already imported.</strong> Nothing to save.</div>`
+        :skippedCount>0&&lastTsDate?`<div style="background:#e6f4ee;border-radius:7px;padding:7px 12px;margin-bottom:10px;font-size:11px;color:#1a7a45">\u2713 <strong>${skippedCount} already-imported transactions excluded</strong> \u2014 through ${toPST(lastTsDate.toISOString())}</div>`:''}
       ${inStore.length>0?`<div style="font-size:10px;font-weight:700;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Will update (${inStore.length} items)</div>
       <div style="overflow-x:auto;margin-bottom:10px"><table><thead><tr>
         <th style="padding-left:4px;min-width:180px">ITEM</th><th>SOLD</th><th>CURRENT</th><th>NEW QTY</th>
@@ -8112,8 +8114,6 @@ function renderInsights(){
       ${!hasStore?'<div class="card" style="text-align:center;padding:40px;color:#7080a0"><div style="font-size:16px;margin-bottom:8px">Select a store to view insights</div><div style="font-size:12px">Sales data from Cantaloupe imports will be analyzed here.</div></div>':''}
       ${hasStore && !insightsData?'<div class="card" style="text-align:center;padding:30px;color:#7080a0"><div style="font-size:14px">⏳ Loading insights…</div></div>':''}
       ${hasStore && insightsData ? renderInsightsWidgets() : ''}
-      ${hasStore && insightsData && insightsData.error ? `<div style="color:#b01c1c;font-size:11px;padding:8px;background:#fde8e8;border-radius:7px;margin-bottom:10px">Error: ${insightsData.error}</div>` : ''}
-      ${hasStore && insightsData ? `<div style="font-size:10px;color:#7080a0;margin-top:8px">Debug: ${insightsData.sales?.length||0} sales rows loaded, range ${insightsData.from} → ${insightsData.to}</div>` : ''}
     </div>
   `;
 }
@@ -8134,10 +8134,8 @@ async function loadInsightsData(){
     const countLogs = await sbFetch(`inventory_count_log?count_date=gte.${from}&count_date=lte.${to}${storeCountFilter}&select=product_id,product_name,difference,reason,store_name,count_date`,{method:'GET',prefer:'return=representation'});
 
     insightsData = {sales, countLogs, from, to};
-    console.log('Insights loaded:', insightsStore, 'sales:', sales.length, 'from:', from, 'to:', to);
   }catch(e){
     insightsData = {sales:[], countLogs:[], from, to, error:e.message};
-    console.error('Insights error:', e);
   }
   renderInsights();
 }
