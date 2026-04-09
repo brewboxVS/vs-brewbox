@@ -1563,6 +1563,61 @@ function renderDashboard(){
   const marginPct = totalSale > 0 ? ((totalMargin / totalSale) * 100).toFixed(1) : '0.0';
 
   document.getElementById('main-body').innerHTML=`
+    <!-- Store Inventory Widgets -->
+    ${(function(){
+      const storeData = STORES.map(store=>{
+        const items = storeInventory.filter(x=>x.store_name===store && x.max_level>0);
+        if(items.length===0) return {store, pct:0, count:0, catData:[]};
+        const pct = (items.reduce((s,x)=>s+Math.min(1,Math.max(0,x.qty)/x.max_level),0)/items.length)*100;
+        const catMap = {};
+        for(const x of items){
+          const cat = getStoreItemCat1(x)||'UNCATEGORIZED';
+          if(!catMap[cat]) catMap[cat]={sum:0,count:0};
+          catMap[cat].sum += Math.min(1,Math.max(0,x.qty)/x.max_level);
+          catMap[cat].count++;
+        }
+        const catData = Object.entries(catMap).map(([c,d])=>({cat:c,pct:(d.sum/d.count)*100,count:d.count})).sort((a,b)=>a.pct-b.pct);
+        return {store, pct, count:items.length, catData};
+      }).sort((a,b)=>a.pct-b.pct);
+
+      return storeData.map(sd=>{
+        const barColor = sd.pct>=75?'#1a7a45':sd.pct>=50?'#b35a00':'#b01c1c';
+        const storeKey = sd.store.replace(/[^a-zA-Z]/g,'');
+        const isExp = _dashStoreExpanded.has(sd.store);
+        const accent = {'SM Toyota':'#003087','Safran':'#006a4e','Exodus':'#7b1fa2','Elevated Brandz':'#c62828','SR Honda':'#e65100'}[sd.store]||'#0d1f4e';
+        return `<div class="card" style="margin-bottom:10px;border-left:3px solid ${accent};cursor:pointer" onclick="toggleDashStore('${sd.store}')">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
+              <span style="font-size:13px;font-weight:700;color:#0d1f4e">${sd.store}</span>
+              <span style="font-size:10px;color:#7080a0">${sd.count} items</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px">
+              <div style="width:120px;height:8px;background:#e8ecf4;border-radius:4px;overflow:hidden">
+                <div style="width:${Math.min(100,sd.pct)}%;height:100%;background:${barColor};border-radius:4px"></div>
+              </div>
+              <span style="font-size:14px;font-weight:800;color:${barColor};min-width:40px;text-align:right">${sd.pct.toFixed(0)}%</span>
+              <span style="font-size:14px;color:#8090b0">${isExp?'▲':'▼'}</span>
+            </div>
+          </div>
+          ${isExp?`<div style="margin-top:12px;padding-top:10px;border-top:1px solid #e8ecf4" onclick="event.stopPropagation()">
+            ${sd.catData.length===0?'<div style="font-size:11px;color:#7080a0">No items with max levels set.</div>':''}
+            ${sd.catData.map(c=>{
+              const cc = c.pct>=75?'#1a7a45':c.pct>=50?'#b35a00':'#b01c1c';
+              return `<div style="margin-bottom:8px">
+                <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
+                  <span style="font-size:11px;font-weight:600;color:#0d1f4e">${c.cat}</span>
+                  <span style="font-size:10px;color:#7080a0">${c.count} items · <strong style="color:${cc}">${c.pct.toFixed(0)}%</strong></span>
+                </div>
+                <div style="width:100%;height:6px;background:#e8ecf4;border-radius:3px;overflow:hidden">
+                  <div style="width:${Math.min(100,c.pct)}%;height:100%;background:${cc};border-radius:3px"></div>
+                </div>
+              </div>`;
+            }).join('')}
+          </div>`:''}
+        </div>`;
+      }).join('');
+    })()}
+
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
 
       <!-- LEFT: Warehouse Inventory Par % -->
@@ -1615,62 +1670,6 @@ function renderDashboard(){
       </div>
 
     </div>
-
-    <!-- Store Inventory Widgets -->
-    ${(function(){
-      const storeData = STORES.map(store=>{
-        const items = storeInventory.filter(x=>x.store_name===store && x.max_level>0);
-        if(items.length===0) return {store, pct:0, count:0, catData:[]};
-        const pct = (items.reduce((s,x)=>s+Math.min(1,Math.max(0,x.qty)/x.max_level),0)/items.length)*100;
-        // Category breakdown
-        const catMap = {};
-        for(const x of items){
-          const cat = getStoreItemCat1(x)||'UNCATEGORIZED';
-          if(!catMap[cat]) catMap[cat]={sum:0,count:0};
-          catMap[cat].sum += Math.min(1,Math.max(0,x.qty)/x.max_level);
-          catMap[cat].count++;
-        }
-        const catData = Object.entries(catMap).map(([c,d])=>({cat:c,pct:(d.sum/d.count)*100,count:d.count})).sort((a,b)=>a.pct-b.pct);
-        return {store, pct, count:items.length, catData};
-      }).sort((a,b)=>a.pct-b.pct);
-
-      return storeData.map(sd=>{
-        const barColor = sd.pct>=75?'#1a7a45':sd.pct>=50?'#b35a00':'#b01c1c';
-        const storeKey = sd.store.replace(/[^a-zA-Z]/g,'');
-        const isExp = _dashStoreExpanded.has(sd.store);
-        const accent = {'SM Toyota':'#003087','Safran':'#006a4e','Exodus':'#7b1fa2','Elevated Brandz':'#c62828','SR Honda':'#e65100'}[sd.store]||'#0d1f4e';
-        return `<div class="card" style="margin-bottom:10px;border-left:3px solid ${accent};cursor:pointer" onclick="toggleDashStore('${sd.store}')">
-          <div style="display:flex;justify-content:space-between;align-items:center">
-            <div style="display:flex;align-items:center;gap:10px;flex:1;min-width:0">
-              <span style="font-size:13px;font-weight:700;color:#0d1f4e">${sd.store}</span>
-              <span style="font-size:10px;color:#7080a0">${sd.count} items</span>
-            </div>
-            <div style="display:flex;align-items:center;gap:12px">
-              <div style="width:120px;height:8px;background:#e8ecf4;border-radius:4px;overflow:hidden">
-                <div style="width:${Math.min(100,sd.pct)}%;height:100%;background:${barColor};border-radius:4px"></div>
-              </div>
-              <span style="font-size:14px;font-weight:800;color:${barColor};min-width:40px;text-align:right">${sd.pct.toFixed(0)}%</span>
-              <span style="font-size:14px;color:#8090b0">${isExp?'▲':'▼'}</span>
-            </div>
-          </div>
-          ${isExp?`<div style="margin-top:12px;padding-top:10px;border-top:1px solid #e8ecf4" onclick="event.stopPropagation()">
-            ${sd.catData.length===0?'<div style="font-size:11px;color:#7080a0">No items with max levels set.</div>':''}
-            ${sd.catData.map(c=>{
-              const cc = c.pct>=75?'#1a7a45':c.pct>=50?'#b35a00':'#b01c1c';
-              return `<div style="margin-bottom:8px">
-                <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
-                  <span style="font-size:11px;font-weight:600;color:#0d1f4e">${c.cat}</span>
-                  <span style="font-size:10px;color:#7080a0">${c.count} items · <strong style="color:${cc}">${c.pct.toFixed(0)}%</strong></span>
-                </div>
-                <div style="width:100%;height:6px;background:#e8ecf4;border-radius:3px;overflow:hidden">
-                  <div style="width:${Math.min(100,c.pct)}%;height:100%;background:${cc};border-radius:3px"></div>
-                </div>
-              </div>`;
-            }).join('')}
-          </div>`:''}
-        </div>`;
-      }).join('');
-    })()}
   `;
 }
 
@@ -6589,6 +6588,11 @@ function parseSalesFile(){
   const nameIdx  = headers.findIndex(h=>h==='Item Name');
   const upcIdx   = headers.findIndex(h=>h==='UPC');
   const storeIdx = headers.findIndex(h=>h==='Store');
+  const priceIdx = headers.findIndex(h=>h==='Item Price');
+  const catIdx   = headers.findIndex(h=>h==='Category 1');
+  const taxIdx   = headers.findIndex(h=>h==='Tax');
+  const discIdx  = headers.findIndex(h=>h==='Discount');
+  const totalIdx = headers.findIndex(h=>h==='Total Price');
 
   // Build product lookup maps
   const upcMap = {}, nameMap = {};
@@ -6619,6 +6623,7 @@ function parseSalesFile(){
     const lastTs = getLastImportTs(store);
     const lastTsDate = lastTs ? new Date(lastTs) : null;
     const itemCounts = {}, unmatchedCounts = {};
+    const txnRows = [];
     let newRowCount=0, skippedCount=0;
     let minTs=null, maxTs=null;
 
@@ -6628,7 +6633,6 @@ function parseSalesFile(){
       const ts = parseCantaloupeDate(String(row[dateIdx]));
       if(!ts) continue;
 
-      // Filter by store
       if(storeIdx !== -1){
         const mapped = cantaloupeToStore(String(row[storeIdx]||'').trim());
         if(mapped !== store) continue;
@@ -6642,9 +6646,21 @@ function parseSalesFile(){
       const name = String(row[nameIdx]||'').trim();
       const rawUPC = upcIdx !== -1 ? cleanUPC(row[upcIdx]) : '';
       const cleanU = rawUPC.replace(/\D/g,'');
+      const unitPrice = priceIdx!==-1 ? parseFloat(String(row[priceIdx]||'0').replace(/[^0-9.\-]/g,''))||0 : 0;
+      const taxVal = taxIdx!==-1 ? parseFloat(String(row[taxIdx]||'0').replace(/[^0-9.\-]/g,''))||0 : 0;
+      const discVal = discIdx!==-1 ? parseFloat(String(row[discIdx]||'0').replace(/[^0-9.\-]/g,''))||0 : 0;
+      const totalVal = totalIdx!==-1 ? parseFloat(String(row[totalIdx]||'0').replace(/[^0-9.\-]/g,''))||0 : 0;
+      const cat = catIdx!==-1 ? String(row[catIdx]||'').trim() : '';
+
       let product = null;
       if(cleanU && upcMap[cleanU]) product = upcMap[cleanU];
       if(!product && nameMap[name.toLowerCase()]) product = nameMap[name.toLowerCase()];
+
+      txnRows.push({
+        store_name:store, product_id:product?product.id:null, product_name:product?product.name:null,
+        csv_item_name:name, category:cat, sale_ts:ts.toISOString(), sale_date:ts.toISOString().slice(0,10),
+        unit_price:unitPrice, tax:taxVal, discount:discVal, total_price:totalVal, matched:!!product
+      });
 
       if(product){
         if(!itemCounts[product.id]){
@@ -6653,7 +6669,11 @@ function parseSalesFile(){
         }
         itemCounts[product.id].unitsSold++;
       } else {
-        unmatchedCounts[name] = (unmatchedCounts[name]||0)+1;
+        if(!unmatchedCounts[name]) unmatchedCounts[name] = {unitsSold:0, upc:rawUPC||'', price:'', cat:''};
+        unmatchedCounts[name].unitsSold++;
+        if(!unmatchedCounts[name].upc && rawUPC) unmatchedCounts[name].upc = rawUPC;
+        if(!unmatchedCounts[name].price && priceIdx!==-1) unmatchedCounts[name].price = String(row[priceIdx]||'').trim();
+        if(!unmatchedCounts[name].cat && catIdx!==-1) unmatchedCounts[name].cat = cat;
       }
     }
 
@@ -6664,9 +6684,9 @@ function parseSalesFile(){
       newStoreQty:x.storeItem?Math.max(0,x.storeItem.qty-x.unitsSold):null
     }));
     matched.sort((a,b)=>(b.inStoreInventory?1:0)-(a.inStoreInventory?1:0)||a.product.name.localeCompare(b.product.name));
-    const unmatched = Object.entries(unmatchedCounts).map(([n,c])=>({csvName:n,unitsSold:c}));
+    const unmatched = Object.entries(unmatchedCounts).map(([n,d])=>({csvName:n, unitsSold:d.unitsSold, upc:d.upc, price:d.price, cat:d.cat}));
 
-    storeResults[store] = {matched, unmatched, minTs, maxTs, newRowCount, skippedCount, lastTsDate};
+    storeResults[store] = {matched, unmatched, txnRows, minTs, maxTs, newRowCount, skippedCount, lastTsDate};
   }
 
   renderSalesPreview(storeResults);
@@ -6696,11 +6716,18 @@ function renderSalesPreview(storeResults){
             ${unmatched.length>0?`<span style="font-size:11px;color:#b01c1c">${unmatched.length} unmatched</span>`:''}
           </div>
         </div>
-        <button id="si-confirm-btn-${storeKey}" onclick="confirmSalesImport('${store}')"
-          ${inStore.length===0?'disabled style="opacity:0.5"':''}
-          style="background:#1a7a45;color:#fff;border:none;border-radius:7px;padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">
-          \u2713 Apply ${inStore.length} Updates
-        </button>
+        <div style="display:flex;gap:6px;align-items:center">
+          <button id="si-confirm-btn-${storeKey}" onclick="confirmSalesImport('${store}')"
+            ${inStore.length===0?'disabled style="opacity:0.5"':''}
+            style="background:#1a7a45;color:#fff;border:none;border-radius:7px;padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">
+            \u2713 Apply ${inStore.length} Updates
+          </button>
+          <button id="si-backfill-btn-${storeKey}" onclick="backfillSalesImport('${store}')"
+            ${newRowCount===0?'disabled style="opacity:0.5"':''}
+            style="background:#0d1f4e;color:#fff;border:none;border-radius:7px;padding:9px 12px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap" title="Save transaction data only — does not adjust store inventory quantities">
+            💾 Save Data Only
+          </button>
+        </div>
       </div>
       ${skippedCount>0&&lastTsDate?`<div style="background:#e6f4ee;border-radius:7px;padding:7px 12px;margin-bottom:10px;font-size:11px;color:#1a7a45">\u2713 <strong>${skippedCount} already-imported transactions excluded</strong> \u2014 through ${toPST(lastTsDate.toISOString())}</div>`:''}
       ${inStore.length>0?`<div style="font-size:10px;font-weight:700;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Will update (${inStore.length} items)</div>
@@ -6715,7 +6742,7 @@ function renderSalesPreview(storeResults){
       </tr>`).join('')}
       </tbody></table></div>`:''}
       ${notInStore.length>0?`<details style="margin-bottom:6px"><summary style="font-size:11px;font-weight:700;color:#7080a0;cursor:pointer;padding:4px 0">Not in ${store} inventory (${notInStore.length} - no action)</summary><div style="margin-top:6px;font-size:11px;color:#7080a0">${notInStore.map(x=>`<div>${x.product.name} - ${x.unitsSold} sold</div>`).join('')}</div></details>`:''}
-      ${unmatched.length>0?`<details><summary style="font-size:11px;font-weight:700;color:#b01c1c;cursor:pointer;padding:4px 0">\u26a0 Unmatched (${unmatched.length})</summary><div style="margin-top:6px;font-size:11px;color:#b01c1c">${unmatched.map(x=>`<div>${x.csvName} - ${x.unitsSold}</div>`).join('')}</div></details>`:''}
+      ${unmatched.length>0?`<details open><summary style="font-size:11px;font-weight:700;color:#b01c1c;cursor:pointer;padding:4px 0">\u26a0 Unmatched (${unmatched.length}) — not found in warehouse inventory</summary><div style="margin-top:6px;overflow-x:auto"><table><thead><tr><th style="padding-left:4px;min-width:180px">CSV ITEM NAME</th><th>UPC</th><th>CATEGORY</th><th>PRICE</th><th>UNITS SOLD</th></tr></thead><tbody>${unmatched.map(x=>`<tr><td style="padding-left:4px;font-weight:600;color:#b01c1c;white-space:normal;max-width:220px">${x.csvName}</td><td style="font-size:11px;color:#5060a0">${x.upc||'—'}</td><td style="font-size:11px;color:#5060a0">${x.cat||'—'}</td><td style="font-size:11px;color:#0d1f4e">${x.price||'—'}</td><td style="font-weight:700;color:#b01c1c">${x.unitsSold}</td></tr>`).join('')}</tbody></table></div></details>`:''}
     </div>`;
   }).join('');
 }
@@ -6727,7 +6754,7 @@ async function confirmSalesImport(store){
 
   const data = window._siConfirmData&&window._siConfirmData[store];
   if(!data){ showToast('No data found for '+store); return; }
-  const {matched, minTs, maxTs, newRowCount} = data;
+  const {matched, txnRows, minTs, maxTs, newRowCount} = data;
   const inStore = matched.filter(x=>x.inStoreInventory);
   const dateLabel = minTs&&maxTs
     ? `${minTs.toLocaleDateString('en-US',{month:'short',day:'numeric'})} - ${maxTs.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`
@@ -6752,6 +6779,20 @@ async function confirmSalesImport(store){
     const summary = {id:Date.now()+Math.random(),date:new Date().toISOString().slice(0,10),product:`Sales Import - ${store} (${newRowCount} transactions, ${updated} items updated)`,qty:-inStore.reduce((s,x)=>s+x.unitsSold,0),by:`Sales - ${store} (${dateLabel})`};
     restockLog=[summary,...restockLog];
     try{ await saveRestock(summary); }catch(e){}
+
+    // Bulk insert transaction rows into sales_data
+    if(txnRows && txnRows.length > 0 && useSupabase){
+      try{
+        const BATCH = 200;
+        for(let b=0; b<txnRows.length; b+=BATCH){
+          const batch = txnRows.slice(b, b+BATCH).map((r,i)=>({
+            id: Date.now() + b + i,
+            ...r
+          }));
+          await sbFetch('sales_data',{method:'POST',prefer:'resolution=merge-duplicates,return=minimal',body:JSON.stringify(batch)});
+        }
+      }catch(e){ console.warn('Could not save sales_data:', e); }
+    }
   }catch(e){
     console.error('Sales import error for '+store, e);
   }
@@ -6769,6 +6810,59 @@ async function confirmSalesImport(store){
   }catch(e){}
 
   // Only reset file state when ALL stores are done
+  if(!window._siConfirmData || Object.keys(window._siConfirmData).length===0){
+    _salesRows=null; window._siConfirmData=null;
+    const s=document.getElementById('si-file-status');
+    const p=document.getElementById('si-parse-btn');
+    if(s){s.textContent='\u2713 All stores imported';s.style.background='#e6f4ee';s.style.color='#1a7a45';}
+    if(p){p.disabled=true;p.style.opacity='0.4';p.textContent='\u{1F50D} Preview New Transactions';}
+  }
+}
+
+async function backfillSalesImport(store){
+  const storeKey = store.replace(/\s+/g,'_');
+  const btn = document.getElementById('si-backfill-btn-'+storeKey);
+  if(btn){ btn.disabled=true; btn.textContent='\u23f3 Saving data...'; btn.style.opacity='0.6'; }
+
+  const data = window._siConfirmData&&window._siConfirmData[store];
+  if(!data){ showToast('No data found for '+store); return; }
+  const {txnRows, minTs, maxTs, newRowCount} = data;
+  const dateLabel = minTs&&maxTs
+    ? `${minTs.toLocaleDateString('en-US',{month:'short',day:'numeric'})} - ${maxTs.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`
+    : 'unknown period';
+
+  try{
+    // Save transaction rows to sales_data only — no qty adjustments
+    if(txnRows && txnRows.length > 0 && useSupabase){
+      const BATCH = 200;
+      for(let b=0; b<txnRows.length; b+=BATCH){
+        const batch = txnRows.slice(b, b+BATCH).map((r,i)=>({
+          id: Date.now() + b + i,
+          ...r
+        }));
+        try{ await sbFetch('sales_data',{method:'POST',prefer:'resolution=merge-duplicates,return=minimal',body:JSON.stringify(batch)}); }catch(e){ console.warn('sales_data batch error:', e); }
+      }
+    }
+
+    // Update last_sale_ts
+    try{
+      await saveSalesImportRecord({id:Date.now(),store_name:store,last_sale_ts:maxTs?maxTs.toISOString():new Date().toISOString(),imported_at:new Date().toISOString(),item_count:0,units_sold:newRowCount});
+    }catch(e){}
+  }catch(e){
+    console.error('Backfill error for '+store, e);
+  }
+
+  // Update card UI
+  delete window._siConfirmData[store];
+  const card = document.getElementById('si-card-'+storeKey);
+  if(card) card.innerHTML = `<div style="display:flex;align-items:center;gap:10px;padding:8px 0"><span style="font-size:20px">\u{1F4BE}</span><div><div style="font-size:13px;font-weight:700;color:#0d1f4e">${store} — sales data saved</div><div style="font-size:11px;color:#7080a0">${newRowCount} transactions saved, ${dateLabel} (no qty adjustment)</div></div></div>`;
+
+  showToast(`\u{1F4BE} ${newRowCount} transactions saved for ${store} (data only)`);
+  try{
+    const tracker = document.getElementById('si-store-tracker');
+    if(tracker) tracker.innerHTML = renderStoreTrackerHTML();
+  }catch(e){}
+
   if(!window._siConfirmData || Object.keys(window._siConfirmData).length===0){
     _salesRows=null; window._siConfirmData=null;
     const s=document.getElementById('si-file-status');
