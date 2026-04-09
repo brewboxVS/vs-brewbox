@@ -601,6 +601,7 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
       <div id="reports-nav">
         <button class="nav-btn" id="reports-toggle" onclick="toggleReportsMenu()">📊 &nbsp;<span>Reports</span><span class="nav-arrow" id="reports-arrow">›</span></button>
         <div id="reports-submenu" style="display:none">
+          <button class="nav-btn nav-sub" onclick="setView('insights')">📈 &nbsp;<span>Insights Dashboard</span></button>
           <button class="nav-btn nav-sub" onclick="setView('usage-report')">📋 &nbsp;<span>Usage / Theft Report</span></button>
         </div>
       </div>
@@ -1405,7 +1406,7 @@ function updateSidebar(){
   if(currentView==='store-inventory'||currentView==='store-orders'||currentView==='store-count') openStoresMenu();
   // Auto-open import submenu when on import views
   if(currentView==='orders') openImportMenu();
-  if(currentView==='usage-report') { openReportsMenu(); document.querySelector('.nav-btn[onclick*="usage-report"]')?.classList.add('active'); }
+  if(currentView==='usage-report'||currentView==='insights') { openReportsMenu(); document.querySelector('.nav-btn[onclick*="'+currentView+'"]')?.classList.add('active'); }
 }
 
 function toggleWarehouseMenu(){
@@ -1485,7 +1486,7 @@ function openStoresMenu(){
 
 function setView(v){
   currentView=v;
-  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log','sales-import':'Sales Import',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log','usage-report':'Usage / Theft Report','vendor-mgmt':'Vendor Management'};
+  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log','sales-import':'Sales Import',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log','usage-report':'Usage / Theft Report','vendor-mgmt':'Vendor Management','insights':'Insights Dashboard'};
   if(v==='count' && Object.keys(countState).length===0) initCountState();
   if(v==='store-count' && Object.keys(storeCountState).length===0) initStoreCountState();
   document.getElementById('page-title').textContent=titles[v]||v;
@@ -1517,6 +1518,7 @@ function render(){
   else if(currentView==='count') renderCount();
   else if(currentView==='wh-orders') renderWhOrders();
   else if(currentView==='usage-report') renderUsageReport();
+  else if(currentView==='insights') renderInsights();
   else if(currentView==='vendor-mgmt') renderVendorManagement();
   else renderRestock();
 }
@@ -7716,6 +7718,311 @@ async function moveVendor(vendorId, direction){
 }
 
 // ═══════════════════════════════════════════════════
+//  INSIGHTS DASHBOARD
+// ═══════════════════════════════════════════════════
+let insightsStore = '';
+let insightsRange = '30'; // '30','60','90','ytd','custom'
+let insightsFrom = '';
+let insightsTo = '';
+let insightsData = null;
+
+function getInsightsDateRange(){
+  const now = new Date();
+  const to = now.toISOString().slice(0,10);
+  let from;
+  if(insightsRange==='custom') return {from:insightsFrom, to:insightsTo};
+  if(insightsRange==='ytd') from = now.getFullYear()+'-01-01';
+  else from = new Date(now - parseInt(insightsRange)*86400000).toISOString().slice(0,10);
+  return {from, to};
+}
+
+function renderInsights(){
+  const hasStore = insightsStore && insightsStore !== '';
+  const {from,to} = getInsightsDateRange();
+  if(!insightsFrom) insightsFrom = from;
+  if(!insightsTo) insightsTo = to;
+
+  document.getElementById('main-body').innerHTML=`
+    <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase">Store:</label>
+        <select id="ins-store" onchange="insightsStore=this.value;insightsData=null;loadInsightsData()"
+          style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:160px">
+          <option value="">— Select Store —</option>
+          <option value="ALL" ${insightsStore==='ALL'?'selected':''}>📊 All Stores (Compare)</option>
+          ${STORES.map(s=>`<option value="${s}" ${s===insightsStore?'selected':''}>${s}</option>`).join('')}
+        </select>
+      </div>
+      <div style="display:flex;gap:4px;background:#f4f6fa;border-radius:7px;padding:3px">
+        ${[['30','30 Days'],['60','60 Days'],['90','90 Days'],['ytd','YTD'],['custom','Custom']].map(([k,l])=>
+          `<button onclick="insightsRange='${k}';insightsData=null;${k!=='custom'?'loadInsightsData()':'renderInsights()'}"
+            style="padding:5px 10px;border:none;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer;${insightsRange===k?'background:#0d1f4e;color:#fff':'background:transparent;color:#5060a0'}">${l}</button>`
+        ).join('')}
+      </div>
+      ${insightsRange==='custom'?`
+      <div style="display:flex;align-items:center;gap:6px">
+        <input type="date" value="${insightsFrom}" onchange="insightsFrom=this.value" style="border:1.5px solid #d0d5e0;border-radius:7px;padding:6px 10px;font-size:12px;outline:none"/>
+        <span style="color:#7080a0">→</span>
+        <input type="date" value="${insightsTo}" onchange="insightsTo=this.value" style="border:1.5px solid #d0d5e0;border-radius:7px;padding:6px 10px;font-size:12px;outline:none"/>
+        <button onclick="insightsData=null;loadInsightsData()" class="primary-btn" style="padding:6px 14px;font-size:11px">Go</button>
+      </div>`:''}
+    </div>
+
+    <div id="insights-body">
+      ${!hasStore?'<div class="card" style="text-align:center;padding:40px;color:#7080a0"><div style="font-size:16px;margin-bottom:8px">Select a store to view insights</div><div style="font-size:12px">Sales data from Cantaloupe imports will be analyzed here.</div></div>':''}
+      ${hasStore && !insightsData?'<div class="card" style="text-align:center;padding:30px;color:#7080a0"><div style="font-size:14px">⏳ Loading insights…</div></div>':''}
+      ${hasStore && insightsData ? renderInsightsWidgets() : ''}
+    </div>
+  `;
+}
+
+async function loadInsightsData(){
+  if(!insightsStore) return;
+  renderInsights(); // show loading
+  const {from,to} = getInsightsDateRange();
+  const isAll = insightsStore === 'ALL';
+  const storeFilter = isAll ? '' : `&store_name=eq.${encodeURIComponent(insightsStore)}`;
+
+  try{
+    // Sales data
+    const sales = await sbFetch(`sales_data?sale_date=gte.${from}&sale_date=lte.${to}${storeFilter}&matched=eq.true&select=product_id,product_name,csv_item_name,category,store_name,unit_price,tax,discount,total_price`,{method:'GET',prefer:'return=representation'});
+
+    // Theft/consumption data from inventory_count_log
+    const storeCountFilter = isAll ? '' : `&store_name=eq.${encodeURIComponent(insightsStore)}`;
+    const countLogs = await sbFetch(`inventory_count_log?count_date=gte.${from}&count_date=lte.${to}${storeCountFilter}&select=product_id,product_name,difference,reason,store_name,count_date`,{method:'GET',prefer:'return=representation'});
+
+    insightsData = {sales, countLogs, from, to};
+  }catch(e){
+    insightsData = {sales:[], countLogs:[], from, to, error:e.message};
+  }
+  renderInsights();
+}
+
+function renderInsightsWidgets(){
+  const {sales, countLogs, from, to} = insightsData;
+  const isAll = insightsStore === 'ALL';
+  const isFV = !isAll && isStoreSettings(insightsStore, 'free_vend');
+  const lossLabel = isFV ? 'Consumption' : 'Theft/Walkoff';
+  const lossReasons = isFV ? ['Consumption'] : ['Theft/Walkoff'];
+
+  // ── Aggregate sales ──
+  const totalRevenue = sales.reduce((s,r)=>s+parseFloat(r.total_price||0),0);
+  const totalGross = sales.reduce((s,r)=>s+parseFloat(r.unit_price||0),0);
+  const totalTax = sales.reduce((s,r)=>s+parseFloat(r.tax||0),0);
+  const totalUnits = sales.length;
+  const uniqueItems = new Set(sales.map(r=>r.product_id)).size;
+
+  // COGS from warehouse unit_cost
+  let totalCOGS = 0;
+  for(const r of sales){
+    const wh = products.find(p=>p.id===r.product_id);
+    totalCOGS += wh ? wh.unitCost : 0;
+  }
+  const grossMargin = totalGross - totalCOGS;
+  const marginPct = totalGross > 0 ? ((grossMargin/totalGross)*100).toFixed(1) : '0.0';
+
+  // ── Sales by category ──
+  const catSales = {};
+  for(const r of sales){
+    // Normalize category - strip location suffixes
+    let cat = (r.category||'').replace(/\s*-\s*(LEFT|RIGHT|BACK|FRONT).*$/i,'').trim().toUpperCase();
+    if(!cat) cat = 'UNCATEGORIZED';
+    if(!catSales[cat]) catSales[cat] = {units:0, revenue:0};
+    catSales[cat].units++;
+    catSales[cat].revenue += parseFloat(r.total_price||0);
+  }
+  const catList = Object.entries(catSales).map(([c,d])=>({cat:c,...d})).sort((a,b)=>b.units-a.units);
+
+  // ── Top sellers ──
+  const itemSales = {};
+  for(const r of sales){
+    const key = r.product_id;
+    if(!itemSales[key]) itemSales[key] = {name:r.product_name||r.csv_item_name, units:0, revenue:0, productId:key};
+    itemSales[key].units++;
+    itemSales[key].revenue += parseFloat(r.total_price||0);
+  }
+  const topSellers = Object.values(itemSales).sort((a,b)=>b.units-a.units).slice(0,15);
+
+  // ── Slow movers (in store inventory but low/zero sales) ──
+  const storeItems = isAll ? storeInventory : storeInventory.filter(x=>x.store_name===insightsStore);
+  const mmStoreItems = storeItems.filter(x=>x.product_source==='mm');
+  const slowMovers = mmStoreItems.filter(si=>{
+    const sold = itemSales[si.product_id];
+    return !sold || sold.units <= 1;
+  }).map(si=>({
+    name: si.product_name,
+    store: si.store_name,
+    qty: si.qty,
+    unitsSold: itemSales[si.product_id]?.units || 0
+  })).sort((a,b)=>a.unitsSold-b.unitsSold).slice(0,15);
+
+  // ── Theft / Consumption losses ──
+  const lossLogs = countLogs.filter(r=>lossReasons.includes((r.reason||'').trim()) && parseFloat(r.difference)<0);
+  const lossItems = {};
+  for(const r of lossLogs){
+    const key = r.product_name;
+    if(!lossItems[key]) lossItems[key] = {name:key, units:0, productId:r.product_id};
+    lossItems[key].units += Math.abs(parseFloat(r.difference));
+  }
+  const lossList = Object.values(lossItems).map(item=>{
+    const wh = products.find(p=>p.id===item.productId);
+    const avgPrice = itemSales[item.productId] ? itemSales[item.productId].revenue / itemSales[item.productId].units : (wh?.salePrice||0);
+    const cost = (wh?.unitCost||0) * item.units;
+    const lostRevenue = avgPrice * item.units;
+    return {...item, cost, lostRevenue};
+  }).sort((a,b)=>b.lostRevenue-a.lostRevenue);
+  const totalLossCost = lossList.reduce((s,r)=>s+r.cost,0);
+  const totalLostRevenue = lossList.reduce((s,r)=>s+r.lostRevenue,0);
+  const totalLossUnits = lossList.reduce((s,r)=>s+r.units,0);
+
+  // ── Cross-store comparison (only for ALL) ──
+  let crossStoreHTML = '';
+  if(isAll){
+    const storeStats = {};
+    for(const r of sales){
+      if(!storeStats[r.store_name]) storeStats[r.store_name] = {units:0, revenue:0, gross:0};
+      storeStats[r.store_name].units++;
+      storeStats[r.store_name].revenue += parseFloat(r.total_price||0);
+      storeStats[r.store_name].gross += parseFloat(r.unit_price||0);
+    }
+    const storeList = Object.entries(storeStats).map(([s,d])=>({store:s,...d})).sort((a,b)=>b.revenue-a.revenue);
+    const maxRev = storeList.length>0?storeList[0].revenue:1;
+    crossStoreHTML = `<div class="card" style="border-top:3px solid #0d1f4e;margin-bottom:14px">
+      <div class="card-title" style="margin-bottom:12px">Store Comparison</div>
+      ${storeList.map(s=>{
+        const accent = {'SM Toyota':'#003087','Safran':'#006a4e','Exodus':'#7b1fa2','Elevated Brandz':'#c62828','SR Honda':'#e65100'}[s.store]||'#0d1f4e';
+        const pct = (s.revenue/maxRev*100);
+        return `<div style="margin-bottom:14px">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px">
+            <span style="font-size:13px;font-weight:700;color:${accent}">${s.store}</span>
+            <span style="font-size:12px;color:#5060a0">${s.units} units · <strong style="color:#0d1f4e">$${s.revenue.toFixed(2)}</strong></span>
+          </div>
+          <div style="width:100%;height:10px;background:#e8ecf4;border-radius:5px;overflow:hidden">
+            <div style="width:${pct.toFixed(0)}%;height:100%;background:${accent};border-radius:5px"></div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }
+
+  return `
+    <!-- Scorecard -->
+    <div class="stats-grid" style="grid-template-columns:repeat(${isAll?4:6},1fr);margin-bottom:14px">
+      <div class="stat-card"><div class="stat-val">${totalUnits}</div><div class="stat-label">Units Sold</div></div>
+      <div class="stat-card"><div class="stat-val">${uniqueItems}</div><div class="stat-label">Unique Items</div></div>
+      <div class="stat-card" style="border-top-color:#1a7a45"><div class="stat-val" style="color:#1a7a45">$${totalGross.toFixed(0)}</div><div class="stat-label">Gross Sales</div></div>
+      <div class="stat-card" style="border-top-color:#0d1f4e"><div class="stat-val" style="color:#0d1f4e">$${totalRevenue.toFixed(0)}</div><div class="stat-label">Total Revenue</div><div class="stat-sub">incl. tax</div></div>
+      ${!isAll?`<div class="stat-card" style="border-top-color:#1a7a45"><div class="stat-val" style="color:#1a7a45">$${grossMargin.toFixed(0)}</div><div class="stat-label">Gross Margin</div><div class="stat-sub">${marginPct}%</div></div>
+      <div class="stat-card" style="border-top-color:#b01c1c"><div class="stat-val" style="color:#b01c1c">${totalLossUnits}</div><div class="stat-label">${isFV?'Consumed':'Stolen'}</div><div class="stat-sub">$${totalLostRevenue.toFixed(0)} lost</div></div>`:''}
+    </div>
+
+    ${crossStoreHTML}
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+      <!-- Sales by Category -->
+      <div class="card" style="border-top:3px solid #0d1f4e">
+        <div class="card-title" style="margin-bottom:12px">Sales by Category (Units)</div>
+        ${catList.length===0?'<div style="color:#7080a0;font-size:12px">No sales data.</div>':''}
+        ${catList.map(c=>{
+          const maxUnits = catList[0].units;
+          const pct = (c.units/maxUnits*100);
+          return `<div style="margin-bottom:10px">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
+              <span style="font-size:11px;font-weight:600;color:#0d1f4e">${c.cat}</span>
+              <span style="font-size:10px;color:#7080a0">${c.units} units · $${c.revenue.toFixed(0)}</span>
+            </div>
+            <div style="width:100%;height:7px;background:#e8ecf4;border-radius:4px;overflow:hidden">
+              <div style="width:${pct.toFixed(0)}%;height:100%;background:#0d1f4e;border-radius:4px"></div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+
+      <!-- Top Sellers -->
+      <div class="card" style="border-top:3px solid #1a7a45">
+        <div class="card-title" style="margin-bottom:10px">Top Sellers</div>
+        ${topSellers.length===0?'<div style="color:#7080a0;font-size:12px">No sales data.</div>':''}
+        <div style="overflow-x:auto"><table><thead><tr>
+          <th style="padding-left:4px;min-width:180px">ITEM</th><th>UNITS</th><th>REVENUE</th>
+        </tr></thead><tbody>
+        ${topSellers.map((item,i)=>`<tr>
+          <td style="padding-left:4px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:200px"><span style="color:#7080a0;font-size:10px;margin-right:4px">${i+1}.</span>${item.name}</td>
+          <td style="font-weight:700;color:#0d1f4e">${item.units}</td>
+          <td style="font-weight:700;color:#1a7a45">$${item.revenue.toFixed(2)}</td>
+        </tr>`).join('')}
+        </tbody></table></div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+      <!-- Slow Movers -->
+      <div class="card" style="border-top:3px solid #b35a00">
+        <div class="card-title" style="margin-bottom:10px">Slow Movers / Dead Stock</div>
+        <div style="font-size:10px;color:#7080a0;margin-bottom:8px">Items in store inventory with 0-1 sales in this period</div>
+        ${slowMovers.length===0?'<div style="color:#1a7a45;font-size:12px">✓ All items are selling</div>':''}
+        ${slowMovers.length>0?`<div style="overflow-x:auto"><table><thead><tr>
+          <th style="padding-left:4px;min-width:180px">ITEM</th>${isAll?'<th>STORE</th>':''}<th>QTY</th><th>SOLD</th>
+        </tr></thead><tbody>
+        ${slowMovers.map(item=>`<tr>
+          <td style="padding-left:4px;font-weight:600;color:#b35a00;white-space:normal;max-width:200px">${item.name}</td>
+          ${isAll?`<td style="font-size:10px;color:#5060a0">${item.store}</td>`:''}
+          <td>${item.qty}</td>
+          <td style="font-weight:700;color:${item.unitsSold===0?'#b01c1c':'#b35a00'}">${item.unitsSold}</td>
+        </tr>`).join('')}
+        </tbody></table></div>`:''}
+      </div>
+
+      <!-- Theft / Consumption Losses -->
+      <div class="card" style="border-top:3px solid #b01c1c">
+        <div class="card-title" style="margin-bottom:10px">${isFV?'Consumption':'Theft/Walkoff'} Losses</div>
+        ${lossList.length===0?`<div style="color:#1a7a45;font-size:12px">✓ No ${isFV?'consumption':'theft'} recorded in this period</div>`:''}
+        ${lossList.length>0?`
+        <div style="display:flex;gap:16px;margin-bottom:10px">
+          <div><span style="font-size:10px;color:#7080a0">Units Lost</span><div style="font-size:16px;font-weight:800;color:#b01c1c">${totalLossUnits}</div></div>
+          <div><span style="font-size:10px;color:#7080a0">Cost Value</span><div style="font-size:16px;font-weight:800;color:#b01c1c">$${totalLossCost.toFixed(2)}</div></div>
+          <div><span style="font-size:10px;color:#7080a0">Lost Revenue</span><div style="font-size:16px;font-weight:800;color:#b01c1c">$${totalLostRevenue.toFixed(2)}</div></div>
+        </div>
+        <div style="overflow-x:auto"><table><thead><tr>
+          <th style="padding-left:4px;min-width:180px">ITEM</th><th>UNITS</th><th>COST</th><th>LOST REV</th>
+        </tr></thead><tbody>
+        ${lossList.map(item=>`<tr>
+          <td style="padding-left:4px;font-weight:600;color:#b01c1c;white-space:normal;max-width:200px">${item.name}</td>
+          <td style="font-weight:700">${item.units}</td>
+          <td style="color:#5060a0">$${item.cost.toFixed(2)}</td>
+          <td style="font-weight:700;color:#b01c1c">$${item.lostRevenue.toFixed(2)}</td>
+        </tr>`).join('')}
+        </tbody></table></div>`:''}
+      </div>
+    </div>
+
+    ${!isAll && topSellers.length>0?`
+    <!-- Net Margin by Item -->
+    <div class="card" style="border-top:3px solid #1a7a45">
+      <div class="card-title" style="margin-bottom:10px">Net Margin Analysis — Top Items</div>
+      <div style="font-size:10px;color:#7080a0;margin-bottom:8px">Revenue minus COGS minus ${isFV?'consumption':'theft'} losses = net margin per item</div>
+      <div style="overflow-x:auto"><table><thead><tr>
+        <th style="padding-left:4px;min-width:180px">ITEM</th><th>UNITS SOLD</th><th>REVENUE</th><th>COGS</th><th>${isFV?'CONSUMED':'STOLEN'}</th><th>NET MARGIN</th>
+      </tr></thead><tbody>
+      ${topSellers.slice(0,15).map(item=>{
+        const wh = products.find(p=>p.id===item.productId);
+        const cogs = (wh?.unitCost||0) * item.units;
+        const loss = lossItems[item.name] ? lossItems[item.name].units * (wh?.unitCost||0) : 0;
+        const netMargin = item.revenue - cogs - loss;
+        return `<tr>
+          <td style="padding-left:4px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:200px">${item.name}</td>
+          <td>${item.units}</td>
+          <td style="color:#1a7a45;font-weight:600">$${item.revenue.toFixed(2)}</td>
+          <td style="color:#5060a0">$${cogs.toFixed(2)}</td>
+          <td style="color:#b01c1c">${loss>0?'-$'+loss.toFixed(2):'—'}</td>
+          <td style="font-weight:700;color:${netMargin>=0?'#1a7a45':'#b01c1c'}">$${netMargin.toFixed(2)}</td>
+        </tr>`;
+      }).join('')}
+      </tbody></table></div>
+    </div>`:''}
+  `;
+}
+
+// ═══════════════════════════════════════════════════
 //  USAGE / THEFT REPORT
 // ═══════════════════════════════════════════════════
 let usageReportStore = '';
@@ -8420,7 +8727,8 @@ function mobWhToggleExpand(id){
       'count':'WH Count','dashboard':'Dashboard',
       'restock':'Activity','order-activity':'Orders',
       'usage-report':'Usage Report',
-      'vendor-mgmt':'Vendors'
+      'vendor-mgmt':'Vendors',
+      'insights':'Insights'
     };
     updateMobTitle(titles[v]||'BrewBox OS');
   };
