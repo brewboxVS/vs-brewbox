@@ -8112,6 +8112,8 @@ function renderInsights(){
       ${!hasStore?'<div class="card" style="text-align:center;padding:40px;color:#7080a0"><div style="font-size:16px;margin-bottom:8px">Select a store to view insights</div><div style="font-size:12px">Sales data from Cantaloupe imports will be analyzed here.</div></div>':''}
       ${hasStore && !insightsData?'<div class="card" style="text-align:center;padding:30px;color:#7080a0"><div style="font-size:14px">⏳ Loading insights…</div></div>':''}
       ${hasStore && insightsData ? renderInsightsWidgets() : ''}
+      ${hasStore && insightsData && insightsData.error ? `<div style="color:#b01c1c;font-size:11px;padding:8px;background:#fde8e8;border-radius:7px;margin-bottom:10px">Error: ${insightsData.error}</div>` : ''}
+      ${hasStore && insightsData ? `<div style="font-size:10px;color:#7080a0;margin-top:8px">Debug: ${insightsData.sales?.length||0} sales rows loaded, range ${insightsData.from} → ${insightsData.to}</div>` : ''}
     </div>
   `;
 }
@@ -8125,15 +8127,17 @@ async function loadInsightsData(){
 
   try{
     // Sales data
-    const sales = await sbFetch(`sales_data?sale_date=gte.${from}&sale_date=lte.${to}${storeFilter}&matched=eq.true&select=product_id,product_name,csv_item_name,category,store_name,unit_price,tax,discount,total_price`,{method:'GET',prefer:'return=representation'});
+    const sales = await sbFetch(`sales_data?sale_date=gte.${from}&sale_date=lte.${to}${storeFilter}&select=product_id,product_name,csv_item_name,category,store_name,unit_price,tax,discount,total_price`,{method:'GET',prefer:'return=representation'});
 
     // Theft/consumption data from inventory_count_log
     const storeCountFilter = isAll ? '' : `&store_name=eq.${encodeURIComponent(insightsStore)}`;
     const countLogs = await sbFetch(`inventory_count_log?count_date=gte.${from}&count_date=lte.${to}${storeCountFilter}&select=product_id,product_name,difference,reason,store_name,count_date`,{method:'GET',prefer:'return=representation'});
 
     insightsData = {sales, countLogs, from, to};
+    console.log('Insights loaded:', insightsStore, 'sales:', sales.length, 'from:', from, 'to:', to);
   }catch(e){
     insightsData = {sales:[], countLogs:[], from, to, error:e.message};
+    console.error('Insights error:', e);
   }
   renderInsights();
 }
@@ -8174,14 +8178,27 @@ function renderInsightsWidgets(){
   const catList = Object.entries(catSales).map(([c,d])=>({cat:c,...d})).sort((a,b)=>b.units-a.units);
 
   // ── Top sellers ──
+  const hasProductData = sales.some(r=>r.product_id !== null);
   const itemSales = {};
   for(const r of sales){
+    if(!r.product_id) continue; // skip vending (no product match)
     const key = r.product_id;
     if(!itemSales[key]) itemSales[key] = {name:r.product_name||r.csv_item_name, units:0, revenue:0, productId:key};
     itemSales[key].units++;
     itemSales[key].revenue += parseFloat(r.total_price||0);
   }
   const topSellers = Object.values(itemSales).sort((a,b)=>b.units-a.units).slice(0,15);
+
+  // ── Machine breakdown (for vending stores) ──
+  const machineData = {};
+  for(const r of sales){
+    if(r.product_id) continue; // only vending txns
+    const machine = (r.csv_item_name||'').split(' — ')[0] || 'Unknown';
+    if(!machineData[machine]) machineData[machine] = {units:0, revenue:0};
+    machineData[machine].units++;
+    machineData[machine].revenue += parseFloat(r.total_price||0);
+  }
+  const machineList = Object.entries(machineData).map(([m,d])=>({machine:m,...d})).sort((a,b)=>b.revenue-a.revenue);
 
   // ── Slow movers (in store inventory but low/zero sales) ──
   const storeItems = isAll ? storeInventory : storeInventory.filter(x=>x.store_name===insightsStore);
@@ -8278,8 +8295,9 @@ function renderInsightsWidgets(){
         }).join('')}
       </div>
 
-      <!-- Top Sellers -->
+      <!-- Top Sellers / Machine Breakdown -->
       <div class="card" style="border-top:3px solid #1a7a45">
+        ${hasProductData?`
         <div class="card-title" style="margin-bottom:10px">Top Sellers</div>
         ${topSellers.length===0?'<div style="color:#7080a0;font-size:12px">No sales data.</div>':''}
         <div style="overflow-x:auto"><table><thead><tr>
@@ -8290,13 +8308,20 @@ function renderInsightsWidgets(){
           <td style="font-weight:700;color:#0d1f4e">${item.units}</td>
           <td style="font-weight:700;color:#1a7a45">$${item.revenue.toFixed(2)}</td>
         </tr>`).join('')}
-        </tbody></table></div>
+        </tbody></table></div>`
+        :`<div class="card-title" style="margin-bottom:10px">Revenue by Machine</div>
+        ${machineList.length===0?'<div style="color:#7080a0;font-size:12px">No vending data.</div>':''}
+        ${machineList.map(m=>{
+          const maxRev = machineList[0].revenue||1;
+          return '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px"><span style="font-size:11px;font-weight:600;color:#0d1f4e">'+m.machine+'</span><span style="font-size:10px;color:#7080a0">'+m.units+' txns · <strong style="color:#1a7a45">$'+m.revenue.toFixed(2)+'</strong></span></div><div style="width:100%;height:7px;background:#e8ecf4;border-radius:4px;overflow:hidden"><div style="width:'+(m.revenue/maxRev*100).toFixed(0)+'%;height:100%;background:#e65100;border-radius:4px"></div></div></div>';
+        }).join('')}`}
       </div>
     </div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
       <!-- Slow Movers -->
       <div class="card" style="border-top:3px solid #b35a00">
+        ${hasProductData?`
         <div class="card-title" style="margin-bottom:10px">Slow Movers / Dead Stock</div>
         <div style="font-size:10px;color:#7080a0;margin-bottom:8px">Items in store inventory with 0-1 sales in this period</div>
         ${slowMovers.length===0?'<div style="color:#1a7a45;font-size:12px">✓ All items are selling</div>':''}
@@ -8309,7 +8334,15 @@ function renderInsightsWidgets(){
           <td>${item.qty}</td>
           <td style="font-weight:700;color:${item.unitsSold===0?'#b01c1c':'#b35a00'}">${item.unitsSold}</td>
         </tr>`).join('')}
-        </tbody></table></div>`:''}
+        </tbody></table></div>`:''}`
+        :`<div class="card-title" style="margin-bottom:10px">Vending Revenue Summary</div>
+        <div style="font-size:11px;color:#7080a0;margin-bottom:10px">Item-level tracking not available for vending machines. Revenue is tracked by machine and price category.</div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap">
+          <div><span style="font-size:10px;color:#7080a0">Total Machines</span><div style="font-size:18px;font-weight:800;color:#e65100">${machineList.length}</div></div>
+          <div><span style="font-size:10px;color:#7080a0">Avg Revenue/Machine</span><div style="font-size:18px;font-weight:800;color:#0d1f4e">$${machineList.length>0?(totalRevenue/machineList.length).toFixed(2):'0'}</div></div>
+          <div><span style="font-size:10px;color:#7080a0">Avg Txns/Machine</span><div style="font-size:18px;font-weight:800;color:#0d1f4e">${machineList.length>0?(totalUnits/machineList.length).toFixed(1):'0'}</div></div>
+        </div>`}
+      </div>
       </div>
 
       <!-- Theft / Consumption Losses -->
