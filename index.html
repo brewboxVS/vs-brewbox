@@ -8144,8 +8144,125 @@ function renderInsightsWidgets(){
   const {sales, countLogs, from, to} = insightsData;
   const isAll = insightsStore === 'ALL';
   const isFV = !isAll && isStoreSettings(insightsStore, 'free_vend');
-  const lossLabel = isFV ? 'Consumption' : 'Theft/Walkoff';
-  const lossReasons = isFV ? ['Consumption'] : ['Theft/Walkoff'];
+
+  // ════════════════════════════════════════════
+  //  FREE VEND MODEL (e.g., Elevated Brandz)
+  //  Revenue = consumption from inventory counts
+  //  Invoice value = units consumed × sale_price
+  // ════════════════════════════════════════════
+  if(isFV){
+    const consumptionLogs = countLogs.filter(r=>(r.reason||'').trim()==='Consumption' && parseFloat(r.difference)<0);
+    
+    // Aggregate consumption by item
+    const itemConsumption = {};
+    for(const r of consumptionLogs){
+      const key = r.product_id || r.product_name;
+      if(!itemConsumption[key]) itemConsumption[key] = {name:r.product_name, units:0, productId:r.product_id};
+      itemConsumption[key].units += Math.abs(parseFloat(r.difference));
+    }
+    const consumedItems = Object.values(itemConsumption).map(item=>{
+      const wh = products.find(p=>p.id===item.productId);
+      const salePrice = wh?.salePrice || 0;
+      const unitCost = wh?.unitCost || 0;
+      const cat1 = wh?.cat1 || '';
+      return {...item, salePrice, unitCost, cat1, invoiceValue: salePrice * item.units, cogs: unitCost * item.units};
+    }).sort((a,b)=>b.units-a.units);
+    
+    const totalUnits = consumedItems.reduce((s,i)=>s+i.units,0);
+    const uniqueItems = consumedItems.length;
+    const totalInvoice = consumedItems.reduce((s,i)=>s+i.invoiceValue,0);
+    const totalCOGS = consumedItems.reduce((s,i)=>s+i.cogs,0);
+    const grossMargin = totalInvoice - totalCOGS;
+    const marginPct = totalInvoice > 0 ? ((grossMargin/totalInvoice)*100).toFixed(1) : '0.0';
+    const taxRate = 0.109; // 10.9%
+    const totalTax = totalInvoice * taxRate;
+    const totalWithTax = totalInvoice + totalTax;
+
+    // By category
+    const catData = {};
+    for(const item of consumedItems){
+      const cat = item.cat1 || 'UNCATEGORIZED';
+      if(!catData[cat]) catData[cat] = {units:0, invoice:0};
+      catData[cat].units += item.units;
+      catData[cat].invoice += item.invoiceValue;
+    }
+    const catList = Object.entries(catData).map(([c,d])=>({cat:c,...d})).sort((a,b)=>b.units-a.units);
+
+    // Slow movers
+    const storeItems = storeInventory.filter(x=>x.store_name===insightsStore && x.product_source==='mm');
+    const slowMovers = storeItems.filter(si=>{
+      const consumed = itemConsumption[si.product_id];
+      return !consumed || consumed.units <= 1;
+    }).map(si=>({
+      name: si.product_name, qty: si.qty,
+      unitsConsumed: itemConsumption[si.product_id]?.units || 0
+    })).sort((a,b)=>a.unitsConsumed-b.unitsConsumed).slice(0,15);
+
+    return `
+      <!-- Free Vend Scorecard -->
+      <div style="background:#c62828;color:#fff;border-radius:8px;padding:8px 14px;margin-bottom:14px;font-size:12px;font-weight:600">
+        🏪 Free Vend Account — Revenue is based on consumption (invoiced monthly)
+      </div>
+      <div class="stats-grid" style="grid-template-columns:repeat(6,1fr);margin-bottom:14px">
+        <div class="stat-card"><div class="stat-val">${totalUnits}</div><div class="stat-label">Units Consumed</div></div>
+        <div class="stat-card"><div class="stat-val">${uniqueItems}</div><div class="stat-label">Unique Items</div></div>
+        <div class="stat-card" style="border-top-color:#1a7a45"><div class="stat-val" style="color:#1a7a45">$${totalInvoice.toFixed(0)}</div><div class="stat-label">Invoice (Pre-Tax)</div></div>
+        <div class="stat-card" style="border-top-color:#5060a0"><div class="stat-val" style="color:#5060a0">$${totalTax.toFixed(0)}</div><div class="stat-label">Tax (10.9%)</div></div>
+        <div class="stat-card" style="border-top-color:#0d1f4e"><div class="stat-val" style="color:#0d1f4e">$${totalWithTax.toFixed(0)}</div><div class="stat-label">Invoice Total</div></div>
+        <div class="stat-card" style="border-top-color:#1a7a45"><div class="stat-val" style="color:#1a7a45">$${grossMargin.toFixed(0)}</div><div class="stat-label">Gross Margin</div><div class="stat-sub">${marginPct}%</div></div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+        <!-- Consumption by Category -->
+        <div class="card" style="border-top:3px solid #c62828">
+          <div class="card-title" style="margin-bottom:12px">Consumption by Category</div>
+          ${catList.length===0?'<div style="color:#7080a0;font-size:12px">No consumption data in this period.</div>':''}
+          ${catList.map(c=>{
+            const maxUnits = catList[0].units;
+            const pct = (c.units/maxUnits*100);
+            return '<div style="margin-bottom:10px"><div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px"><span style="font-size:11px;font-weight:600;color:#0d1f4e">'+c.cat+'</span><span style="font-size:10px;color:#7080a0">'+c.units+' units · $'+c.invoice.toFixed(0)+'</span></div><div style="width:100%;height:7px;background:#e8ecf4;border-radius:4px;overflow:hidden"><div style="width:'+pct.toFixed(0)+'%;height:100%;background:#c62828;border-radius:4px"></div></div></div>';
+          }).join('')}
+        </div>
+
+        <!-- Most Consumed Items -->
+        <div class="card" style="border-top:3px solid #1a7a45">
+          <div class="card-title" style="margin-bottom:10px">Most Consumed Items</div>
+          ${consumedItems.length===0?'<div style="color:#7080a0;font-size:12px">No consumption data.</div>':''}
+          <div style="overflow-x:auto"><table><thead><tr>
+            <th style="padding-left:4px;min-width:180px">ITEM</th><th>UNITS</th><th>INVOICE</th>
+          </tr></thead><tbody>
+          ${consumedItems.slice(0,15).map((item,i)=>'<tr><td style="padding-left:4px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:200px"><span style="color:#7080a0;font-size:10px;margin-right:4px">'+(i+1)+'.</span>'+item.name+'</td><td style="font-weight:700;color:#0d1f4e">'+item.units+'</td><td style="font-weight:700;color:#1a7a45">$'+item.invoiceValue.toFixed(2)+'</td></tr>').join('')}
+          </tbody></table></div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+        <!-- Slow Movers -->
+        <div class="card" style="border-top:3px solid #b35a00">
+          <div class="card-title" style="margin-bottom:10px">Low Consumption Items</div>
+          <div style="font-size:10px;color:#7080a0;margin-bottom:8px">Items in store with 0-1 units consumed this period</div>
+          ${slowMovers.length===0?'<div style="color:#1a7a45;font-size:12px">✓ All items being consumed</div>':''}
+          ${slowMovers.length>0?'<div style="overflow-x:auto"><table><thead><tr><th style="padding-left:4px;min-width:180px">ITEM</th><th>QTY</th><th>CONSUMED</th></tr></thead><tbody>'+slowMovers.map(item=>'<tr><td style="padding-left:4px;font-weight:600;color:#b35a00;white-space:normal;max-width:200px">'+item.name+'</td><td>'+item.qty+'</td><td style="font-weight:700;color:'+(item.unitsConsumed===0?'#b01c1c':'#b35a00')+'">'+item.unitsConsumed+'</td></tr>').join('')+'</tbody></table></div>':''}
+        </div>
+
+        <!-- Margin by Item -->
+        <div class="card" style="border-top:3px solid #1a7a45">
+          <div class="card-title" style="margin-bottom:10px">Margin by Item</div>
+          <div style="font-size:10px;color:#7080a0;margin-bottom:8px">Invoice value minus COGS per item</div>
+          ${consumedItems.length===0?'<div style="color:#7080a0;font-size:12px">No data.</div>':''}
+          ${consumedItems.length>0?'<div style="overflow-x:auto"><table><thead><tr><th style="padding-left:4px;min-width:180px">ITEM</th><th>UNITS</th><th>INVOICE</th><th>COGS</th><th>MARGIN</th></tr></thead><tbody>'+consumedItems.slice(0,15).map(item=>{
+            const margin = item.invoiceValue - item.cogs;
+            return '<tr><td style="padding-left:4px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:200px">'+item.name+'</td><td>'+item.units+'</td><td style="color:#1a7a45;font-weight:600">$'+item.invoiceValue.toFixed(2)+'</td><td style="color:#5060a0">$'+item.cogs.toFixed(2)+'</td><td style="font-weight:700;color:'+(margin>=0?'#1a7a45':'#b01c1c')+'">$'+margin.toFixed(2)+'</td></tr>';
+          }).join('')+'</tbody></table></div>':''}
+        </div>
+      </div>
+    `;
+  }
+
+  // ════════════════════════════════════════════
+  //  STANDARD MODEL (Cantaloupe / Vending)
+  // ════════════════════════════════════════════
+  const lossReasons = ['Theft/Walkoff'];
 
   // ── Aggregate sales ──
   const totalRevenue = sales.reduce((s,r)=>s+parseFloat(r.total_price||0),0);
@@ -8268,7 +8385,7 @@ function renderInsightsWidgets(){
       <div class="stat-card" style="border-top-color:#1a7a45"><div class="stat-val" style="color:#1a7a45">$${totalGross.toFixed(0)}</div><div class="stat-label">Gross Sales</div></div>
       <div class="stat-card" style="border-top-color:#0d1f4e"><div class="stat-val" style="color:#0d1f4e">$${totalRevenue.toFixed(0)}</div><div class="stat-label">Total Revenue</div><div class="stat-sub">incl. tax</div></div>
       ${!isAll?`<div class="stat-card" style="border-top-color:#1a7a45"><div class="stat-val" style="color:#1a7a45">$${grossMargin.toFixed(0)}</div><div class="stat-label">Gross Margin</div><div class="stat-sub">${marginPct}%</div></div>
-      <div class="stat-card" style="border-top-color:#b01c1c"><div class="stat-val" style="color:#b01c1c">${totalLossUnits}</div><div class="stat-label">${isFV?'Consumed':'Stolen'}</div><div class="stat-sub">$${totalLostRevenue.toFixed(0)} lost</div></div>`:''}
+      <div class="stat-card" style="border-top-color:#b01c1c"><div class="stat-val" style="color:#b01c1c">${totalLossUnits}</div><div class="stat-label">Stolen</div><div class="stat-sub">$${totalLostRevenue.toFixed(0)} lost</div></div>`:''}
     </div>
 
     ${crossStoreHTML}
@@ -8345,8 +8462,8 @@ function renderInsightsWidgets(){
 
       <!-- Theft / Consumption Losses -->
       <div class="card" style="border-top:3px solid #b01c1c">
-        <div class="card-title" style="margin-bottom:10px">${isFV?'Consumption':'Theft/Walkoff'} Losses</div>
-        ${lossList.length===0?`<div style="color:#1a7a45;font-size:12px">✓ No ${isFV?'consumption':'theft'} recorded in this period</div>`:''}
+        <div class="card-title" style="margin-bottom:10px">Theft/Walkoff Losses</div>
+        ${lossList.length===0?`<div style="color:#1a7a45;font-size:12px">✓ No theft recorded in this period</div>`:''}
         ${lossList.length>0?`
         <div style="display:flex;gap:16px;margin-bottom:10px">
           <div><span style="font-size:10px;color:#7080a0">Units Lost</span><div style="font-size:16px;font-weight:800;color:#b01c1c">${totalLossUnits}</div></div>
@@ -8370,9 +8487,9 @@ function renderInsightsWidgets(){
     <!-- Net Margin by Item -->
     <div class="card" style="border-top:3px solid #1a7a45">
       <div class="card-title" style="margin-bottom:10px">Net Margin Analysis — Top Items</div>
-      <div style="font-size:10px;color:#7080a0;margin-bottom:8px">Revenue minus COGS minus ${isFV?'consumption':'theft'} losses = net margin per item</div>
+      <div style="font-size:10px;color:#7080a0;margin-bottom:8px">Revenue minus COGS minus theft losses = net margin per item</div>
       <div style="overflow-x:auto"><table><thead><tr>
-        <th style="padding-left:4px;min-width:180px">ITEM</th><th>UNITS SOLD</th><th>REVENUE</th><th>COGS</th><th>${isFV?'CONSUMED':'STOLEN'}</th><th>NET MARGIN</th>
+        <th style="padding-left:4px;min-width:180px">ITEM</th><th>UNITS SOLD</th><th>REVENUE</th><th>COGS</th><th>STOLEN</th><th>NET MARGIN</th>
       </tr></thead><tbody>
       ${topSellers.slice(0,15).map(item=>{
         const wh = products.find(p=>p.id===item.productId);
