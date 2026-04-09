@@ -3240,13 +3240,14 @@ function renderStoreInventory(){
       return stations.map(stn=>{
         const stnItems = filtered.filter(x=>x.station_name===stn.station_name);
         if(stnItems.length===0) return '';
-        return '<div class="card" style="margin-bottom:12px;border-left:3px solid #6b2fa0"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="display:flex;align-items:center;gap:8px"><span style="font-size:13px;font-weight:700;color:#6b2fa0">'+stn.station_name+'</span><span style="font-size:11px;color:#7080a0">'+(stn.station_label||'')+' · '+stnItems.length+' items</span></div></div><div class="inv-table-wrap"><div style="overflow-x:auto"><table><thead><tr><th style="padding-left:12px;min-width:200px">ITEM NAME</th><th>CATEGORY</th><th>SOURCE</th><th>QTY</th><th>MIN</th><th>MAX</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody>'+stnItems.map(item=>renderStoreRow(item)).join('')+'</tbody></table></div></div></div>';
+        return '<div class="card" style="margin-bottom:12px;border-left:3px solid #6b2fa0"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><div style="display:flex;align-items:center;gap:8px"><span style="font-size:13px;font-weight:700;color:#6b2fa0">'+stn.station_name+'</span><span style="font-size:11px;color:#7080a0">'+(stn.station_label||'')+' · '+stnItems.length+' items</span></div></div><div class="inv-table-wrap"><div style="overflow-x:auto"><table><thead><tr><th style="padding-left:12px;min-width:200px">ITEM NAME</th><th>CATEGORY</th><th>STORE CAT</th><th>SOURCE</th><th>QTY</th><th>MIN</th><th>MAX</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody>'+stnItems.map(item=>renderStoreRow(item)).join('')+'</tbody></table></div></div></div>';
       }).join('');
     })() : `
     <div class="inv-table-wrap"><div style="overflow-x:auto"><table>
         <thead><tr>
           <th style="padding-left:12px;min-width:200px">ITEM NAME</th>
           <th>CATEGORY</th>
+          <th>STORE CAT</th>
           <th>SOURCE</th>
           <th>QTY</th><th>MIN</th><th>MAX</th>
           <th>STATUS</th><th>ACTIONS</th>
@@ -3262,17 +3263,23 @@ function renderStoreInventory(){
 function renderStoreRow(item){
   const isEditing = storeEditingRows.has(item.id);
   const cat1 = getStoreItemCat1(item);
+  const storeCat = item.store_cat || '';
   const sourceBadge = item.product_source==='coffee'
     ? '<span style="background:#f3e8ff;color:#6b2fa0;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">COFFEE</span>'
     : '<span style="background:#e8edf8;color:#0d1f4e;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">MM</span>';
 
   if(isEditing){
+    // Build datalist of existing store_cats for this store
+    const dlId = 'dl-scat-'+currentStore.replace(/\s+/g,'');
+    const existingCats = [...new Set(storeInventory.filter(x=>x.store_name===currentStore&&x.store_cat).map(x=>x.store_cat))].sort();
     return `<tr class="editing-row" id="store-row-${item.id}">
       <td style="padding-left:12px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:220px">${item.product_name}</td>
       <td><select id="si-cat1-${item.id}" style="background:#f4f6fa;border:1px solid #d0d5e0;border-radius:5px;padding:3px 6px;font-size:10px;outline:none">
         <option value="">—</option>
         ${(item.product_source==='coffee'?COFFEE_CAT_ORDER:STORE_CATEGORIES).map(c=>`<option value="${c}" ${cat1===c?'selected':''}>${c}</option>`).join('')}
       </select></td>
+      <td><input id="si-scat-${item.id}" list="${dlId}" value="${storeCat}" placeholder="—" style="width:120px;background:#f4f6fa;border:1px solid #d0d5e0;border-radius:5px;padding:3px 6px;font-size:10px;outline:none"/>
+        <datalist id="${dlId}">${existingCats.map(c=>`<option value="${c}">`).join('')}</datalist></td>
       <td>${sourceBadge}</td>
       <td><input class="edit-input" id="si-qty-${item.id}" type="number" value="${item.qty}" style="width:60px"/></td>
       <td><input class="edit-input" id="si-min-${item.id}" type="number" value="${item.min_level}" style="width:50px"/></td>
@@ -3285,6 +3292,7 @@ function renderStoreRow(item){
   return `<tr id="store-row-${item.id}">
     <td style="padding-left:12px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:220px">${item.product_name}</td>
     <td><span style="font-size:10px;color:#5060a0">${cat1||'—'}</span></td>
+    <td><span style="font-size:10px;color:#7080a0">${storeCat||'—'}</span></td>
     <td>${sourceBadge}</td>
     <td style="font-weight:700;color:${qtyColor(item.qty,item.min_level,item.max_level)}">${item.qty}</td>
     <td>${item.min_level}</td>
@@ -3312,6 +3320,8 @@ async function saveAllStoreEdits(){
     item.max_level=parseFloat(document.getElementById('si-max-'+id)?.value)||0;
     const cat1El=document.getElementById('si-cat1-'+id);
     if(cat1El) item.cat1=cat1El.value||'';
+    const scatEl=document.getElementById('si-scat-'+id);
+    if(scatEl) item.store_cat=scatEl.value||'';
     toSave.push(item);
     saved++;
   }
@@ -3331,6 +3341,8 @@ async function saveStoreRowEdit(id, silent=false){
   item.max_level = parseFloat(document.getElementById('si-max-'+id)?.value)||0;
   const cat1El = document.getElementById('si-cat1-'+id);
   if(cat1El) item.cat1 = cat1El.value||'';
+  const scatEl = document.getElementById('si-scat-'+id);
+  if(scatEl) item.store_cat = scatEl.value||'';
   if(!silent){ storeEditingRows.delete(id); renderStoreInventory(); }
   await saveStoreItem(item);
   if(!silent) showToast('Store item updated');
@@ -3723,11 +3735,11 @@ function renderStoreOrders(){
           if(items.length===0) return '';
           const catGroups = {};
           for(const item of items){
-            const cat = getStoreItemCat1(item) || 'UNCATEGORIZED';
+            const cat = item.store_cat || getStoreItemCat1(item) || 'UNCATEGORIZED';
             if(!catGroups[cat]) catGroups[cat] = [];
             catGroups[cat].push(item);
           }
-          const catOrder = [...catList, 'UNCATEGORIZED'].filter(c=>catGroups[c]);
+          const catOrder = Object.keys(catGroups).sort((a,b)=>a.localeCompare(b));
           for(const c of catOrder) catGroups[c].sort((a,b)=>a.product_name.localeCompare(b.product_name));
 
           let s = label ? '<div style="margin:16px 0 8px;padding:8px 0;border-top:3px solid '+borderColor+'"><div style="font-size:11px;font-weight:800;color:'+borderColor+';letter-spacing:1.5px;text-transform:uppercase">'+label+' ('+items.length+' items)</div></div>' : '';
@@ -5233,20 +5245,18 @@ function exportWhOrderExcel(order){
   const doExport = ()=>{
     const orderDate = new Date(order.created_at).toISOString().slice(0,10);
     const fileName = `Warehouse_Order_${orderDate}_${order.id.toString().slice(-6)}.xlsx`;
-    const headers = ['Item Name','Category','Vendor','Qty on Hand','Min','Max','Pcs/Case','Rec. Cases','Qty to Add'];
+    const headers = ['Item Name','Category','Vendor','Cases Ordered'];
     const rows = order.items.map(item=>[
       item.product_name, item.cat1||'', item.vendor||'',
-      item.current_qty, item.min_level, item.max_level,
-      item.pieces_per_box, item.rec_cases, item.rec_cases * item.pieces_per_box
+      item.rec_cases
     ]);
-    rows.push(['TOTAL','','','','','','',
-      order.items.reduce((s,i)=>s+i.rec_cases,0),
-      order.items.reduce((s,i)=>s+i.rec_cases*i.pieces_per_box,0)
+    rows.push(['TOTAL','','',
+      order.items.reduce((s,i)=>s+i.rec_cases,0)
     ]);
 
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
-    ws['!cols'] = [{wch:35},{wch:12},{wch:22},{wch:10},{wch:6},{wch:6},{wch:10},{wch:10},{wch:10}];
+    ws['!cols'] = [{wch:35},{wch:14},{wch:22},{wch:12}];
     XLSX.utils.book_append_sheet(wb, ws, 'Warehouse Order');
     XLSX.writeFile(wb, fileName);
   };
@@ -5724,28 +5734,26 @@ async function exportStoreOrderToSheet(orderId){
     const orderDate = new Date(order.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
     const fileName = `${storeName.replace(/\s+/g,'_')}_Store_Order_${new Date(order.created_at).toISOString().slice(0,10)}_${orderId.toString().slice(-6)}.xlsx`;
 
-    // Build data rows
-    const headers = ['Item Name','Category','Source','Station','Qty on Hand','Min','Max','Order Qty'];
+    // Build data rows — slim export for packing
+    const headers = ['Item Name','Category','Store Category','Station','Order Qty'];
     const rows = [];
     for(const item of order.items){
       const si = storeInventory.find(x=>x.product_id===item.product_id && x.store_name===storeName && (item.station_name ? x.station_name===item.station_name : true));
       const cat = si ? getStoreItemCat1(si) : '';
+      const storeCat = si?.store_cat || '';
       rows.push([
         item.product_name,
         cat || '',
-        (item.product_source || 'mm').toUpperCase(),
+        storeCat || '',
         item.station_name || '',
-        item.current_store_qty ?? 0,
-        item.store_min ?? 0,
-        item.store_max ?? 0,
         item.order_qty
       ]);
     }
-    // Sort by station then category then name
-    rows.sort((a,b)=> a[3].localeCompare(b[3]) || a[1].localeCompare(b[1]) || a[0].localeCompare(b[0]));
+    // Sort by store category then category then name
+    rows.sort((a,b)=> a[2].localeCompare(b[2]) || a[1].localeCompare(b[1]) || a[0].localeCompare(b[0]));
     // Add totals row
     const totalUnits = order.items.reduce((s,i)=>s+(i.order_qty||0),0);
-    rows.push(['TOTAL','','','','','','',totalUnits]);
+    rows.push(['TOTAL','','','',totalUnits]);
 
     // Create workbook
     const wb = XLSX.utils.book_new();
@@ -5756,11 +5764,8 @@ async function exportStoreOrderToSheet(orderId){
     ws['!cols'] = [
       {wch:35}, // Item Name
       {wch:14}, // Category
-      {wch:8},  // Source
+      {wch:22}, // Store Category
       {wch:14}, // Station
-      {wch:12}, // Qty on Hand
-      {wch:6},  // Min
-      {wch:6},  // Max
       {wch:10}  // Order Qty
     ];
 
@@ -7044,9 +7049,10 @@ async function parseSalesFile(){
       if(product){
         if(!itemCounts[product.id]){
           const si = storeInventory.find(x=>x.store_name===store&&x.product_id===product.id&&x.product_source==='mm');
-          itemCounts[product.id] = {product, unitsSold:0, storeItem:si};
+          itemCounts[product.id] = {product, unitsSold:0, storeItem:si, cantaloupeCat:cat};
         }
         itemCounts[product.id].unitsSold++;
+        if(!itemCounts[product.id].cantaloupeCat && cat) itemCounts[product.id].cantaloupeCat = cat;
       } else {
         if(!unmatchedCounts[name]) unmatchedCounts[name] = {unitsSold:0, upc:rawUPC||'', price:'', cat:''};
         unmatchedCounts[name].unitsSold++;
@@ -7142,6 +7148,16 @@ async function confirmSalesImport(store){
   let updated = 0;
 
   try{
+    // Auto-populate store_cat from Cantaloupe categories for items that don't have one
+    for(const item of matched){
+      if(!item.cantaloupeCat || !item.inStoreInventory) continue;
+      const si = storeInventory.find(x=>x.store_name===store&&x.product_id===item.product.id&&x.product_source==='mm');
+      if(si && !si.store_cat){
+        si.store_cat = item.cantaloupeCat;
+        try{ await saveStoreItem(si); }catch(e){}
+      }
+    }
+
     for(const item of inStore){
       const si = storeInventory.find(x=>x.store_name===store&&x.product_id===item.product.id&&x.product_source==='mm');
       if(!si) continue;
@@ -7206,12 +7222,24 @@ async function backfillSalesImport(store){
 
   const data = window._siConfirmData&&window._siConfirmData[store];
   if(!data){ showToast('No data found for '+store); return; }
-  const {txnRows, minTs, maxTs, newRowCount} = data;
+  const {matched, txnRows, minTs, maxTs, newRowCount} = data;
   const dateLabel = minTs&&maxTs
     ? `${minTs.toLocaleDateString('en-US',{month:'short',day:'numeric'})} - ${maxTs.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`
     : 'unknown period';
 
   try{
+    // Auto-populate store_cat from Cantaloupe categories
+    if(matched){
+      for(const item of matched){
+        if(!item.cantaloupeCat || !item.inStoreInventory) continue;
+        const si = storeInventory.find(x=>x.store_name===store&&x.product_id===item.product.id&&x.product_source==='mm');
+        if(si && !si.store_cat){
+          si.store_cat = item.cantaloupeCat;
+          try{ await saveStoreItem(si); }catch(e){}
+        }
+      }
+    }
+
     // Save transaction rows to sales_data only — no qty adjustments
     if(txnRows && txnRows.length > 0 && useSupabase){
       const BATCH = 200;
