@@ -603,6 +603,7 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
         <div id="reports-submenu" style="display:none">
           <button class="nav-btn nav-sub" onclick="setView('insights')">📈 &nbsp;<span>Insights Dashboard</span></button>
           <button class="nav-btn nav-sub" onclick="setView('usage-report')">📋 &nbsp;<span>Usage / Theft Report</span></button>
+          <button class="nav-btn nav-sub" onclick="setView('invoices')">🧾 &nbsp;<span>Invoices</span></button>
         </div>
       </div>
     </div>
@@ -1326,6 +1327,9 @@ function getStoreNegReasons(storeName){
 }
 
 let vendingPriceMap = []; // loaded from DB
+let coffeeContracts = []; // loaded from DB
+let invoicesList = []; // loaded from DB
+let cupReadings = []; // loaded from DB
 
 async function loadVendingPriceMap(){
   if(useSupabase){
@@ -1333,6 +1337,22 @@ async function loadVendingPriceMap(){
       const rows = await sbFetch('vending_price_map?order=machine_type,base_price',{method:'GET',prefer:'return=representation'});
       vendingPriceMap = rows;
     }catch(e){ vendingPriceMap = []; }
+  }
+}
+
+async function loadCoffeeContracts(){
+  if(useSupabase){
+    try{ coffeeContracts = await sbFetch('coffee_contracts?active=eq.true',{method:'GET',prefer:'return=representation'}); }catch(e){ coffeeContracts=[]; }
+  }
+}
+async function loadInvoices(){
+  if(useSupabase){
+    try{ invoicesList = await sbFetch('invoices?order=invoice_date.desc&limit=100',{method:'GET',prefer:'return=representation'}); }catch(e){ invoicesList=[]; }
+  }
+}
+async function loadCupReadings(){
+  if(useSupabase){
+    try{ cupReadings = await sbFetch('cup_readings?order=reading_date.desc&limit=500',{method:'GET',prefer:'return=representation'}); }catch(e){ cupReadings=[]; }
   }
 }
 
@@ -1350,6 +1370,9 @@ async function initApp(){
   await loadStoreStations();
   await loadVendors();
   await loadVendingPriceMap();
+  await loadCoffeeContracts();
+  await loadInvoices();
+  await loadCupReadings();
   hideLoading();
   setView('dashboard');
 }
@@ -1418,7 +1441,7 @@ function updateSidebar(){
   if(currentView==='store-inventory'||currentView==='store-orders'||currentView==='store-count') openStoresMenu();
   // Auto-open import submenu when on import views
   if(currentView==='orders') openImportMenu();
-  if(currentView==='usage-report'||currentView==='insights') { openReportsMenu(); document.querySelector('.nav-btn[onclick*="'+currentView+'"]')?.classList.add('active'); }
+  if(currentView==='usage-report'||currentView==='insights'||currentView==='invoices') { openReportsMenu(); document.querySelector('.nav-btn[onclick*="'+currentView+'"]')?.classList.add('active'); }
 }
 
 function toggleWarehouseMenu(){
@@ -1498,7 +1521,7 @@ function openStoresMenu(){
 
 function setView(v){
   currentView=v;
-  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log','sales-import':'Sales Import',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log','usage-report':'Usage / Theft Report','vendor-mgmt':'Vendor Management','insights':'Insights Dashboard'};
+  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log','sales-import':'Sales Import',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log','usage-report':'Usage / Theft Report','vendor-mgmt':'Vendor Management','insights':'Insights Dashboard','invoices':'Invoices'};
   if(v==='count' && Object.keys(countState).length===0) initCountState();
   if(v==='store-count' && Object.keys(storeCountState).length===0) initStoreCountState();
   document.getElementById('page-title').textContent=titles[v]||v;
@@ -1531,6 +1554,7 @@ function render(){
   else if(currentView==='wh-orders') renderWhOrders();
   else if(currentView==='usage-report') renderUsageReport();
   else if(currentView==='insights') renderInsights();
+  else if(currentView==='invoices') renderInvoices();
   else if(currentView==='vendor-mgmt') renderVendorManagement();
   else renderRestock();
 }
@@ -8328,6 +8352,98 @@ function renderInsightsWidgets(){
   // ════════════════════════════════════════════
   const lossReasons = ['Theft/Walkoff'];
 
+  // ── Coffee Revenue (for stores with coffee contracts) ──
+  const contract = !isAll ? coffeeContracts.find(c=>c.store_name===insightsStore) : null;
+  let coffeeHTML = '';
+  let coffeeTotalRevenue = 0, coffeeTotalCOGS = 0;
+
+  if(!isAll && contract){
+    // Pull invoices for this store in the date range
+    const storeInvoices = invoicesList.filter(inv=>inv.store_name===insightsStore && inv.period_end >= from && inv.period_start <= to);
+    let cupRevenue=0, cupCount=0, supplyRevenue=0, equipRevenue=0;
+    for(const inv of storeInvoices){
+      const items = typeof inv.line_items === 'string' ? JSON.parse(inv.line_items) : (inv.line_items||[]);
+      for(const li of items){
+        if(li.desc && li.desc.toLowerCase().includes('consumption') && li.desc.toLowerCase().includes('cup')){
+          cupRevenue += parseFloat(li.amount)||0;
+          cupCount += parseInt(li.qty)||0;
+        } else if(li.desc && (li.desc.toLowerCase().includes('lease') || li.desc.toLowerCase().includes('machine') || li.desc.toLowerCase().includes('cooler') || li.desc.toLowerCase().includes('rental'))){
+          equipRevenue += parseFloat(li.amount)||0;
+        } else {
+          supplyRevenue += parseFloat(li.amount)||0;
+        }
+      }
+    }
+    coffeeTotalRevenue = cupRevenue + supplyRevenue + equipRevenue;
+
+    // Coffee COGS: all coffee items from received store orders in period
+    const coffeeOrders = storeOrders.filter(o=>o.store_name===insightsStore && o.status==='received' && o.created_at >= from && o.created_at <= to+'T23:59:59');
+    let inputCOGS = 0, supplyCOGS = 0;
+    for(const order of coffeeOrders){
+      for(const item of (order.items||[])){
+        if(item.product_source !== 'coffee') continue;
+        const qty = parseInt(item.order_qty)||0;
+        if(qty <= 0) continue;
+        const cp = coffeeProducts.find(p=>p.id===item.product_id);
+        if(!cp) continue;
+        const uc = parseFloat(cp.unitCost||cp.unit_cost||0);
+        const sp = parseFloat(cp.salePrice||cp.sale_price||0);
+        if(sp <= 1){
+          inputCOGS += uc * qty; // beans, powders, creamers — no direct revenue
+        } else {
+          supplyCOGS += uc * qty; // filter rolls, cups, etc. — has revenue
+        }
+      }
+    }
+    coffeeTotalCOGS = inputCOGS + supplyCOGS;
+    const coffeeMargin = coffeeTotalRevenue - coffeeTotalCOGS;
+    const coffeeMarginPct = coffeeTotalRevenue > 0 ? ((coffeeMargin/coffeeTotalRevenue)*100).toFixed(1) : '0.0';
+
+    if(coffeeTotalRevenue > 0 || coffeeTotalCOGS > 0){
+      coffeeHTML = `
+      <div class="card" style="border-top:3px solid #6b2fa0;margin-bottom:14px">
+        <div class="card-title" style="margin-bottom:12px;color:#6b2fa0">☕ Coffee Service Revenue</div>
+        <div class="stats-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:14px">
+          <div class="stat-card" style="border-top-color:#6b2fa0"><div class="stat-val" style="color:#6b2fa0">${cupCount.toLocaleString()}</div><div class="stat-label">Cups</div><div class="stat-sub">@ $${contract.cup_rate}/cup</div></div>
+          <div class="stat-card" style="border-top-color:#1a7a45"><div class="stat-val" style="color:#1a7a45">$${cupRevenue.toFixed(0)}</div><div class="stat-label">Cup Revenue</div></div>
+          <div class="stat-card"><div class="stat-val">$${supplyRevenue.toFixed(0)}</div><div class="stat-label">Supply Revenue</div></div>
+          <div class="stat-card"><div class="stat-val">$${equipRevenue.toFixed(0)}</div><div class="stat-label">Equipment</div></div>
+          <div class="stat-card" style="border-top-color:#0d1f4e"><div class="stat-val" style="color:#0d1f4e">$${coffeeTotalRevenue.toFixed(0)}</div><div class="stat-label">Total Coffee Rev</div></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+          <div style="background:#f4f6fa;border-radius:7px;padding:10px;text-align:center">
+            <div style="font-size:10px;color:#7080a0;margin-bottom:2px">Input COGS</div>
+            <div style="font-size:14px;font-weight:800;color:#5060a0">$${inputCOGS.toFixed(0)}</div>
+            <div style="font-size:9px;color:#7080a0">beans, powders, creamers</div>
+          </div>
+          <div style="background:#f4f6fa;border-radius:7px;padding:10px;text-align:center">
+            <div style="font-size:10px;color:#7080a0;margin-bottom:2px">Supply COGS</div>
+            <div style="font-size:14px;font-weight:800;color:#5060a0">$${supplyCOGS.toFixed(0)}</div>
+            <div style="font-size:9px;color:#7080a0">filters, cups, utensils</div>
+          </div>
+          <div style="background:${coffeeMargin>=0?'#e6f4ee':'#fde8e8'};border-radius:7px;padding:10px;text-align:center">
+            <div style="font-size:10px;color:#7080a0;margin-bottom:2px">Coffee Margin</div>
+            <div style="font-size:14px;font-weight:800;color:${coffeeMargin>=0?'#1a7a45':'#b01c1c'}">$${coffeeMargin.toFixed(0)}</div>
+            <div style="font-size:9px;color:#7080a0">${coffeeMarginPct}%</div>
+          </div>
+        </div>
+        ${storeInvoices.length===0?'<div style="font-size:11px;color:#b35a00;margin-top:10px">⚠ No invoices found for this period. Create an invoice to see coffee revenue.</div>':''}
+      </div>`;
+    } else if(storeInvoices.length===0){
+      coffeeHTML = `<div class="card" style="border-top:3px solid #6b2fa0;margin-bottom:14px;padding:16px;text-align:center">
+        <div style="font-size:13px;font-weight:700;color:#6b2fa0;margin-bottom:4px">☕ Coffee Service</div>
+        <div style="font-size:11px;color:#7080a0">No invoices for this period. Create one in Reports → Invoices to see coffee revenue here.</div>
+      </div>`;
+    }
+  }
+
+  // ── Combined totals (micromarket + coffee) ──
+  const combinedRevenue = totalGross + coffeeTotalRevenue;
+  const combinedCOGS = totalCOGS + coffeeTotalCOGS;
+  const combinedMargin = combinedRevenue - combinedCOGS;
+  const combinedMarginPct = combinedRevenue > 0 ? ((combinedMargin/combinedRevenue)*100).toFixed(1) : '0.0';
+  const hasCoffeeContract = !!contract;
+
   // ── Aggregate sales ──
   const totalRevenue = sales.reduce((s,r)=>s+parseFloat(r.total_price||0),0);
   const totalGross = sales.reduce((s,r)=>s+parseFloat(r.unit_price||0),0);
@@ -8450,14 +8566,31 @@ function renderInsightsWidgets(){
 
   return `
     <!-- Scorecard -->
+    ${!isAll && hasCoffeeContract ? `
+    <div style="font-size:10px;font-weight:700;color:#5060a0;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Micromarket Sales</div>` : ''}
     <div class="stats-grid" style="grid-template-columns:repeat(${isAll?4:6},1fr);margin-bottom:14px">
       <div class="stat-card"><div class="stat-val">${totalUnits}</div><div class="stat-label">Units Sold</div></div>
       <div class="stat-card"><div class="stat-val">${uniqueItems}</div><div class="stat-label">Unique Items</div></div>
       <div class="stat-card" style="border-top-color:#1a7a45"><div class="stat-val" style="color:#1a7a45">$${totalGross.toFixed(0)}</div><div class="stat-label">Gross Sales</div></div>
       <div class="stat-card" style="border-top-color:#0d1f4e"><div class="stat-val" style="color:#0d1f4e">$${totalRevenue.toFixed(0)}</div><div class="stat-label">Total Revenue</div><div class="stat-sub">incl. tax</div></div>
-      ${!isAll?`<div class="stat-card" style="border-top-color:#1a7a45"><div class="stat-val" style="color:#1a7a45">$${grossMargin.toFixed(0)}</div><div class="stat-label">Gross Margin</div><div class="stat-sub">${marginPct}%</div></div>
+      ${!isAll?`<div class="stat-card" style="border-top-color:#1a7a45"><div class="stat-val" style="color:#1a7a45">$${grossMargin.toFixed(0)}</div><div class="stat-label">MM Margin</div><div class="stat-sub">${marginPct}%</div></div>
       <div class="stat-card" style="border-top-color:#b01c1c"><div class="stat-val" style="color:#b01c1c">${totalLossUnits}</div><div class="stat-label">Stolen</div><div class="stat-sub">$${totalLostRevenue.toFixed(0)} lost</div></div>`:''}
     </div>
+
+    ${coffeeHTML}
+
+    ${!isAll && hasCoffeeContract && coffeeTotalRevenue > 0 ? `
+    <div class="card" style="border-top:3px solid #0d1f4e;margin-bottom:14px">
+      <div class="card-title" style="margin-bottom:10px">📊 Combined P&L Summary</div>
+      <div style="overflow-x:auto"><table><thead><tr>
+        <th style="padding-left:8px">SEGMENT</th><th style="text-align:right">REVENUE</th><th style="text-align:right">COGS</th><th style="text-align:right">MARGIN</th><th style="text-align:right">MARGIN %</th>
+      </tr></thead><tbody>
+      <tr><td style="padding-left:8px;font-weight:600">Micromarket</td><td style="text-align:right">$${totalGross.toFixed(2)}</td><td style="text-align:right">$${totalCOGS.toFixed(2)}</td><td style="text-align:right" style="color:${grossMargin>=0?'#1a7a45':'#b01c1c'}">$${grossMargin.toFixed(2)}</td><td style="text-align:right">${marginPct}%</td></tr>
+      <tr><td style="padding-left:8px;font-weight:600;color:#6b2fa0">☕ Coffee Service</td><td style="text-align:right">$${coffeeTotalRevenue.toFixed(2)}</td><td style="text-align:right">$${coffeeTotalCOGS.toFixed(2)}</td><td style="text-align:right" style="color:${(coffeeTotalRevenue-coffeeTotalCOGS)>=0?'#1a7a45':'#b01c1c'}">$${(coffeeTotalRevenue-coffeeTotalCOGS).toFixed(2)}</td><td style="text-align:right">${coffeeTotalRevenue>0?((coffeeTotalRevenue-coffeeTotalCOGS)/coffeeTotalRevenue*100).toFixed(1):'0.0'}%</td></tr>
+      ${totalLostRevenue>0?`<tr><td style="padding-left:8px;font-weight:600;color:#b01c1c">Theft Losses</td><td style="text-align:right" style="color:#b01c1c">-$${totalLostRevenue.toFixed(2)}</td><td style="text-align:right">—</td><td style="text-align:right" style="color:#b01c1c">-$${totalLostRevenue.toFixed(2)}</td><td style="text-align:right">—</td></tr>`:''}
+      <tr style="border-top:2px solid #0d1f4e"><td style="padding-left:8px;font-weight:800;font-size:12px">COMBINED</td><td style="text-align:right" style="font-weight:800;font-size:12px">$${combinedRevenue.toFixed(2)}</td><td style="text-align:right" style="font-weight:800">$${combinedCOGS.toFixed(2)}</td><td style="text-align:right" style="font-weight:800;font-size:12px;color:${combinedMargin>=0?'#1a7a45':'#b01c1c'}">$${combinedMargin.toFixed(2)}</td><td style="text-align:right" style="font-weight:800">${combinedMarginPct}%</td></tr>
+      </tbody></table></div>
+    </div>` : ''}
 
     ${crossStoreHTML}
 
@@ -8579,6 +8712,425 @@ function renderInsightsWidgets(){
       </tbody></table></div>
     </div>`:''}
   `;
+}
+
+// ═══════════════════════════════════════════════════
+//  INVOICES
+// ═══════════════════════════════════════════════════
+let invoiceEditStore = '';
+let invoiceEditMonth = '';
+let invoiceEditYear = '';
+let invoiceManualLines = [];
+
+function renderInvoices(){
+  const now = new Date();
+  if(!invoiceEditMonth) invoiceEditMonth = String(now.getMonth()+1).padStart(2,'0');
+  if(!invoiceEditYear) invoiceEditYear = String(now.getFullYear());
+  const contractStores = coffeeContracts.map(c=>c.store_name);
+
+  document.getElementById('main-body').innerHTML=`
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
+      <!-- Create Invoice -->
+      <div class="card" style="border-top:3px solid #0d1f4e">
+        <div class="card-title" style="margin-bottom:12px">🧾 Create Invoice</div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+          <div style="flex:1;min-width:140px">
+            <label style="font-size:10px;font-weight:700;color:#5060a0;text-transform:uppercase;display:block;margin-bottom:4px">Store</label>
+            <select id="inv-store" onchange="invoiceEditStore=this.value" style="width:100%;background:#fff;border:1.5px solid #d0d5e0;border-radius:7px;padding:7px 10px;font-size:13px;font-weight:600;color:#0d1f4e;outline:none">
+              <option value="">— Select —</option>
+              ${contractStores.map(s=>`<option value="${s}" ${s===invoiceEditStore?'selected':''}>${s}</option>`).join('')}
+            </select>
+          </div>
+          <div style="min-width:80px">
+            <label style="font-size:10px;font-weight:700;color:#5060a0;text-transform:uppercase;display:block;margin-bottom:4px">Month</label>
+            <select id="inv-month" onchange="invoiceEditMonth=this.value" style="width:100%;background:#fff;border:1.5px solid #d0d5e0;border-radius:7px;padding:7px 10px;font-size:13px;outline:none">
+              ${[...Array(12)].map((_,i)=>{const m=String(i+1).padStart(2,'0');const label=new Date(2026,i).toLocaleString('en-US',{month:'long'});return `<option value="${m}" ${m===invoiceEditMonth?'selected':''}>${label}</option>`;}).join('')}
+            </select>
+          </div>
+          <div style="min-width:70px">
+            <label style="font-size:10px;font-weight:700;color:#5060a0;text-transform:uppercase;display:block;margin-bottom:4px">Year</label>
+            <input id="inv-year" type="number" value="${invoiceEditYear}" onchange="invoiceEditYear=this.value" style="width:100%;background:#fff;border:1.5px solid #d0d5e0;border-radius:7px;padding:7px 10px;font-size:13px;outline:none"/>
+          </div>
+        </div>
+        <button onclick="generateInvoicePreview()" class="primary-btn" style="width:100%;padding:10px;font-size:13px">🧾 Generate Invoice</button>
+      </div>
+
+      <!-- Existing Invoices -->
+      <div class="card" style="border-top:3px solid #1a7a45">
+        <div class="card-title" style="margin-bottom:12px">📋 Invoice History</div>
+        ${invoicesList.length===0?'<div style="color:#7080a0;font-size:12px">No invoices created yet.</div>':''}
+        ${invoicesList.map(inv=>{
+          const statusColor = inv.status==='paid'?'#1a7a45':inv.status==='sent'?'#0d1f4e':'#b35a00';
+          return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #f0f2f8">
+            <div>
+              <div style="font-size:12px;font-weight:700;color:#0d1f4e">${inv.invoice_number} — ${inv.store_name}</div>
+              <div style="font-size:10px;color:#7080a0">${inv.period_start} → ${inv.period_end}</div>
+            </div>
+            <div style="display:flex;gap:6px;align-items:center">
+              <span style="font-size:12px;font-weight:700;color:#0d1f4e">$${parseFloat(inv.total).toFixed(2)}</span>
+              <span style="background:${statusColor}22;color:${statusColor};border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700;text-transform:uppercase">${inv.status}</span>
+              <button onclick="viewInvoice(${inv.id})" style="background:none;border:1px solid #d0d5e0;border-radius:5px;padding:3px 8px;font-size:10px;cursor:pointer;color:#0d1f4e">View</button>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+
+    <div id="inv-preview-area"></div>
+  `;
+}
+
+async function generateInvoicePreview(){
+  const store = document.getElementById('inv-store')?.value;
+  const month = document.getElementById('inv-month')?.value;
+  const year = document.getElementById('inv-year')?.value;
+  if(!store){ showToast('Select a store'); return; }
+
+  invoiceEditStore = store;
+  invoiceEditMonth = month;
+  invoiceEditYear = year;
+
+  const contract = coffeeContracts.find(c=>c.store_name===store);
+  if(!contract){ showToast('No coffee contract for '+store); return; }
+
+  const periodStart = `${year}-${month}-01`;
+  const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
+  const periodEnd = `${year}-${month}-${String(lastDay).padStart(2,'0')}`;
+  const monthName = new Date(parseInt(year), parseInt(month)-1).toLocaleString('en-US',{month:'long', year:'numeric'});
+
+  // Get stations for this store
+  const stations = getStationsForStore(store).filter(s=>s.station_name!=='MM');
+
+  // Get previous readings for each station
+  const stationReadings = stations.map(stn=>{
+    const prevReadings = cupReadings.filter(r=>r.store_name===store && r.station_name===stn.station_name && r.reading_date < periodStart);
+    const prev = prevReadings.length > 0 ? prevReadings[0] : null; // already sorted desc
+    const curReadings = cupReadings.filter(r=>r.store_name===store && r.station_name===stn.station_name && r.reading_date >= periodStart && r.reading_date <= periodEnd);
+    const cur = curReadings.length > 0 ? curReadings[0] : null;
+    return {station:stn, prev, cur};
+  });
+
+  // Get charged coffee supplies from received store orders in this period
+  const chargedItems = [];
+  const periodOrders = storeOrders.filter(o=>o.store_name===store && o.status==='received' && o.created_at >= periodStart && o.created_at <= periodEnd+'T23:59:59');
+  for(const order of periodOrders){
+    for(const item of (order.items||[])){
+      if(item.product_source !== 'coffee') continue;
+      const qty = parseInt(item.order_qty)||0;
+      if(qty <= 0) continue;
+      const cp = coffeeProducts.find(p=>p.id===item.product_id);
+      if(!cp) continue;
+      const sp = parseFloat(cp.salePrice||cp.sale_price||0);
+      if(sp <= 1) continue; // input item, not charged
+      // Determine taxability: non-food consumables are taxed (filter rolls, etc.)
+      const isTaxable = isNonFoodConsumable(cp.name);
+      chargedItems.push({name:cp.name, qty, rate:sp, amount:qty*sp, taxable:isTaxable, productId:cp.id});
+    }
+  }
+  // Aggregate same items across orders
+  const itemMap = {};
+  for(const ci of chargedItems){
+    if(!itemMap[ci.name]) itemMap[ci.name] = {...ci, qty:0, amount:0};
+    itemMap[ci.name].qty += ci.qty;
+    itemMap[ci.name].amount += ci.amount;
+  }
+  const aggregatedItems = Object.values(itemMap);
+
+  // Equipment fees from contract
+  const equipFees = JSON.parse(typeof contract.equipment_fees === 'string' ? contract.equipment_fees : JSON.stringify(contract.equipment_fees||[]));
+
+  invoiceManualLines = [];
+
+  const area = document.getElementById('inv-preview-area');
+  area.innerHTML = `
+    <div class="card" style="border-top:3px solid #0d1f4e;margin-bottom:14px">
+      <div class="card-title" style="margin-bottom:4px">🧾 ${store} — ${monthName}</div>
+      <div style="font-size:11px;color:#7080a0;margin-bottom:14px">Period: ${periodStart} → ${periodEnd} · Rate: $${contract.cup_rate}/cup</div>
+
+      <!-- Cup Readings -->
+      <div style="background:#f4f6fa;border-radius:8px;padding:12px;margin-bottom:14px">
+        <div style="font-size:11px;font-weight:800;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px">☕ Cup Readings by Station</div>
+        <div style="overflow-x:auto"><table><thead><tr>
+          <th style="padding-left:8px">STATION</th><th>PREV READING</th><th>CURRENT READING</th><th>CUPS CONSUMED</th>
+        </tr></thead><tbody>
+        ${stationReadings.map(sr=>{
+          const prevVal = sr.prev ? sr.prev.counter_value : 0;
+          const curVal = sr.cur ? sr.cur.counter_value : '';
+          return `<tr>
+            <td style="padding-left:8px;font-weight:600;color:#6b2fa0">${sr.station.station_name}${sr.station.station_label?' — '+sr.station.station_label:''}</td>
+            <td style="color:#7080a0">${prevVal>0?prevVal.toLocaleString():'<span style="color:#b35a00;font-size:10px">No prior reading</span>'}</td>
+            <td><input type="number" id="cup-${sr.station.station_name.replace(/\s/g,'_')}" value="${curVal}" placeholder="Enter reading" style="width:100px;background:#fff;border:1.5px solid #d0d5e0;border-radius:5px;padding:5px 8px;font-size:12px;font-weight:700;outline:none"/></td>
+            <td style="font-weight:700;color:#1a7a45" id="cups-calc-${sr.station.station_name.replace(/\s/g,'_')}">${curVal?Math.max(0,curVal-prevVal):'-'}</td>
+          </tr>`;
+        }).join('')}
+        <tr style="border-top:2px solid #d0d5e0">
+          <td style="padding-left:8px;font-weight:800;color:#0d1f4e" colspan="3">TOTAL CUPS</td>
+          <td style="font-weight:800;color:#0d1f4e;font-size:14px" id="cups-total">-</td>
+        </tr>
+        </tbody></table></div>
+        <button onclick="recalcInvoiceCups()" style="margin-top:8px;background:#0d1f4e;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:11px;font-weight:700;cursor:pointer">Recalculate</button>
+      </div>
+
+      <!-- Charged Supplies -->
+      <div style="background:#f4f6fa;border-radius:8px;padding:12px;margin-bottom:14px">
+        <div style="font-size:11px;font-weight:800;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">📦 Charged Supplies (from Store Orders)</div>
+        ${aggregatedItems.length===0?'<div style="font-size:11px;color:#7080a0">No charged coffee supplies found in received store orders for this period.</div>':''}
+        ${aggregatedItems.length>0?`<div style="overflow-x:auto"><table><thead><tr>
+          <th style="padding-left:8px">ITEM</th><th>QTY</th><th>RATE</th><th>AMOUNT</th><th>TAX</th>
+        </tr></thead><tbody>
+        ${aggregatedItems.map(ci=>`<tr>
+          <td style="padding-left:8px;font-weight:600;color:#0d1f4e">${ci.name}</td>
+          <td>${ci.qty}</td>
+          <td>$${ci.rate.toFixed(2)}</td>
+          <td style="font-weight:700">$${ci.amount.toFixed(2)}</td>
+          <td>${ci.taxable?'<span style="color:#b35a00;font-weight:700">T</span>':'—'}</td>
+        </tr>`).join('')}
+        </tbody></table></div>`:''}
+      </div>
+
+      <!-- Equipment Fees -->
+      <div style="background:#f4f6fa;border-radius:8px;padding:12px;margin-bottom:14px">
+        <div style="font-size:11px;font-weight:800;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">🔧 Equipment Fees (Monthly)</div>
+        ${equipFees.map(f=>`<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px"><span style="color:#0d1f4e;font-weight:600">${f.desc}</span><span style="font-weight:700">$${parseFloat(f.amount).toFixed(2)}</span></div>`).join('')}
+        <div style="display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid #d0d5e0;margin-top:4px;font-size:12px;font-weight:800;color:#0d1f4e"><span>Equipment Total</span><span>$${equipFees.reduce((s,f)=>s+parseFloat(f.amount),0).toFixed(2)}</span></div>
+      </div>
+
+      <!-- Manual Line Items -->
+      <div style="background:#f4f6fa;border-radius:8px;padding:12px;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div style="font-size:11px;font-weight:800;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase">✏️ Additional Line Items</div>
+          <button onclick="addManualInvoiceLine()" style="background:#0d1f4e;color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:10px;font-weight:700;cursor:pointer">+ Add Line</button>
+        </div>
+        <div id="inv-manual-lines">
+          ${invoiceManualLines.map((l,i)=>`<div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
+            <input value="${l.desc}" onchange="invoiceManualLines[${i}].desc=this.value" placeholder="Description" style="flex:2;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 8px;font-size:11px;outline:none"/>
+            <input type="number" value="${l.qty}" onchange="invoiceManualLines[${i}].qty=parseFloat(this.value)||0" placeholder="Qty" style="width:50px;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 6px;font-size:11px;outline:none"/>
+            <input type="number" step="0.01" value="${l.rate}" onchange="invoiceManualLines[${i}].rate=parseFloat(this.value)||0" placeholder="Rate" style="width:70px;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 6px;font-size:11px;outline:none"/>
+            <label style="font-size:10px;white-space:nowrap"><input type="checkbox" ${l.taxable?'checked':''} onchange="invoiceManualLines[${i}].taxable=this.checked"/> Tax</label>
+            <button onclick="invoiceManualLines.splice(${i},1);generateInvoicePreview()" style="background:none;border:none;color:#b01c1c;cursor:pointer;font-size:14px">✕</button>
+          </div>`).join('')}
+        </div>
+      </div>
+
+      <!-- Save Button -->
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button onclick="saveAndExportInvoice('${store}','${periodStart}','${periodEnd}')" class="primary-btn" style="padding:10px 24px;font-size:13px">💾 Save Invoice & Export PDF</button>
+      </div>
+    </div>
+  `;
+
+  // Wire up cup input recalculation
+  for(const sr of stationReadings){
+    const inp = document.getElementById('cup-'+sr.station.station_name.replace(/\s/g,'_'));
+    if(inp){
+      inp.addEventListener('input', ()=> recalcInvoiceCups());
+    }
+  }
+  recalcInvoiceCups();
+}
+
+function isNonFoodConsumable(name){
+  const n = name.toLowerCase();
+  return n.includes('filter') || n.includes('paper towel') || n.includes('stir stick');
+}
+
+function recalcInvoiceCups(){
+  const store = invoiceEditStore;
+  const month = invoiceEditMonth;
+  const year = invoiceEditYear;
+  const periodStart = `${year}-${month}-01`;
+  const stations = getStationsForStore(store).filter(s=>s.station_name!=='MM');
+  let total = 0;
+  for(const stn of stations){
+    const key = stn.station_name.replace(/\s/g,'_');
+    const inp = document.getElementById('cup-'+key);
+    const calcEl = document.getElementById('cups-calc-'+key);
+    if(!inp || !calcEl) continue;
+    const cur = parseInt(inp.value)||0;
+    const prevReadings = cupReadings.filter(r=>r.store_name===store && r.station_name===stn.station_name && r.reading_date < periodStart);
+    const prev = prevReadings.length > 0 ? prevReadings[0].counter_value : 0;
+    const cups = cur > 0 ? Math.max(0, cur - prev) : 0;
+    calcEl.textContent = cur > 0 ? cups.toLocaleString() : '-';
+    total += cups;
+  }
+  const totalEl = document.getElementById('cups-total');
+  if(totalEl) totalEl.textContent = total > 0 ? total.toLocaleString() : '-';
+}
+
+function addManualInvoiceLine(){
+  invoiceManualLines.push({desc:'', qty:1, rate:0, taxable:false});
+  generateInvoicePreview();
+}
+
+async function saveAndExportInvoice(store, periodStart, periodEnd){
+  const contract = coffeeContracts.find(c=>c.store_name===store);
+  if(!contract) return;
+
+  const month = invoiceEditMonth;
+  const year = invoiceEditYear;
+  const stations = getStationsForStore(store).filter(s=>s.station_name!=='MM');
+  const invoiceDate = periodEnd;
+  const invNum = contract.store_code + month + String(parseInt(periodEnd.slice(8,10))).padStart(2,'0') + year.slice(2);
+
+  // Collect cup readings
+  let totalCups = 0;
+  const newReadings = [];
+  for(const stn of stations){
+    const key = stn.station_name.replace(/\s/g,'_');
+    const inp = document.getElementById('cup-'+key);
+    if(!inp) continue;
+    const curVal = parseInt(inp.value)||0;
+    if(curVal <= 0) continue;
+    const prevReadings = cupReadings.filter(r=>r.store_name===store && r.station_name===stn.station_name && r.reading_date < periodStart);
+    const prev = prevReadings.length > 0 ? prevReadings[0].counter_value : 0;
+    totalCups += Math.max(0, curVal - prev);
+    newReadings.push({id:Date.now()+Math.random()*1000|0, store_name:store, station_name:stn.station_name, reading_date:periodEnd, counter_value:curVal, notes:`Invoice ${invNum}`});
+  }
+
+  // Build line items
+  const lineItems = [];
+
+  // Cup consumption
+  if(totalCups > 0){
+    lineItems.push({desc:contract.cup_label, qty:totalCups, rate:contract.cup_rate, amount:totalCups*contract.cup_rate, taxable:false});
+  }
+
+  // Equipment fees
+  const equipFees = JSON.parse(typeof contract.equipment_fees === 'string' ? contract.equipment_fees : JSON.stringify(contract.equipment_fees||[]));
+  for(const f of equipFees){
+    lineItems.push({desc:f.desc, qty:1, rate:parseFloat(f.amount), amount:parseFloat(f.amount), taxable:false});
+  }
+
+  // Charged supplies
+  const periodOrders = storeOrders.filter(o=>o.store_name===store && o.status==='received' && o.created_at >= periodStart && o.created_at <= periodEnd+'T23:59:59');
+  const itemMap = {};
+  for(const order of periodOrders){
+    for(const item of (order.items||[])){
+      if(item.product_source !== 'coffee') continue;
+      const qty = parseInt(item.order_qty)||0;
+      if(qty <= 0) continue;
+      const cp = coffeeProducts.find(p=>p.id===item.product_id);
+      if(!cp) continue;
+      const sp = parseFloat(cp.salePrice||cp.sale_price||0);
+      if(sp <= 1) continue;
+      if(!itemMap[cp.name]) itemMap[cp.name] = {name:cp.name, qty:0, rate:sp, taxable:isNonFoodConsumable(cp.name)};
+      itemMap[cp.name].qty += qty;
+    }
+  }
+  for(const ci of Object.values(itemMap)){
+    lineItems.push({desc:ci.name, qty:ci.qty, rate:ci.rate, amount:ci.qty*ci.rate, taxable:ci.taxable});
+  }
+
+  // Manual lines
+  for(const ml of invoiceManualLines){
+    if(!ml.desc) continue;
+    lineItems.push({desc:ml.desc, qty:ml.qty, rate:ml.rate, amount:ml.qty*ml.rate, taxable:ml.taxable});
+  }
+
+  const subtotal = lineItems.reduce((s,l)=>s+l.amount,0);
+  const taxableTotal = lineItems.filter(l=>l.taxable).reduce((s,l)=>s+l.amount,0);
+  const tax = taxableTotal * parseFloat(contract.tax_rate);
+  const total = subtotal + tax;
+
+  const invoice = {
+    id: Date.now(),
+    store_name: store,
+    invoice_number: invNum,
+    invoice_date: invoiceDate,
+    period_start: periodStart,
+    period_end: periodEnd,
+    line_items: lineItems,
+    subtotal, tax, total,
+    status: 'draft',
+    notes: ''
+  };
+
+  // Save cup readings
+  for(const r of newReadings){
+    try{ await sbFetch('cup_readings',{method:'POST',prefer:'resolution=merge-duplicates,return=minimal',body:JSON.stringify([r])}); }catch(e){}
+  }
+  cupReadings = [...newReadings, ...cupReadings];
+
+  // Save invoice
+  try{
+    await sbFetch('invoices',{method:'POST',prefer:'resolution=merge-duplicates,return=minimal',body:JSON.stringify([invoice])});
+    invoicesList.unshift(invoice);
+    showToast(`✓ Invoice ${invNum} saved — $${total.toFixed(2)}`);
+  }catch(e){
+    showToast('⚠ Error saving invoice: '+e.message);
+    return;
+  }
+
+  // Export PDF
+  exportInvoicePDF(invoice, contract);
+}
+
+async function exportInvoicePDF(invoice, contract){
+  if(!contract) contract = coffeeContracts.find(c=>c.store_name===invoice.store_name);
+  const lineItems = typeof invoice.line_items === 'string' ? JSON.parse(invoice.line_items) : invoice.line_items;
+  const monthName = new Date(invoice.period_start+'T12:00:00').toLocaleString('en-US',{month:'long', year:'numeric'});
+
+  // Build HTML for PDF
+  const html = `<!DOCTYPE html><html><head><style>
+    body{font-family:Arial,Helvetica,sans-serif;margin:40px;color:#222;font-size:12px}
+    .header{display:flex;justify-content:space-between;margin-bottom:30px}
+    .company{font-size:11px;line-height:1.6;color:#444}
+    .inv-title{font-size:22px;font-weight:bold;color:#0d1f4e;margin-bottom:4px}
+    .inv-meta{font-size:11px;color:#555;line-height:1.6}
+    table{width:100%;border-collapse:collapse;margin:16px 0}
+    th{background:#0d1f4e;color:#fff;text-align:left;padding:8px 10px;font-size:10px;letter-spacing:0.5px}
+    td{padding:7px 10px;border-bottom:1px solid #e0e0e0;font-size:11px}
+    .right{text-align:right}
+    .total-row td{font-weight:bold;font-size:12px;border-top:2px solid #0d1f4e}
+    .footer{margin-top:20px;font-size:10px;color:#777;text-align:center}
+  </style></head><body>
+    <div class="header">
+      <div>
+        <div class="inv-title">Invoice</div>
+        <div class="inv-meta">
+          <strong>Invoice #:</strong> ${invoice.invoice_number}<br>
+          <strong>Date:</strong> ${new Date(invoice.invoice_date+'T12:00:00').toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}<br>
+          <strong>Terms:</strong> ${invoice.store_name==='Safran'?'Net 30 Days':'Due on receipt'}<br>
+          ${contract?.po_number?'<strong>P.O. No.:</strong> '+contract.po_number+'<br>':''}
+        </div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-weight:bold;font-size:13px;color:#0d1f4e;margin-bottom:4px">Vendors Service</div>
+        <div class="company">25422 Trabuco Rd Suite 105-242<br>Lake Forest, CA 92630</div>
+      </div>
+    </div>
+    <div style="margin-bottom:20px">
+      <div style="font-size:10px;font-weight:bold;color:#777;text-transform:uppercase;margin-bottom:4px">Bill To</div>
+      <div style="font-weight:bold;font-size:12px">${contract?.bill_to_name||invoice.store_name}</div>
+      <div class="company">${(contract?.bill_to_address||'').replace(/\n/g,'<br>')}</div>
+    </div>
+    <table>
+      <thead><tr><th>Quantity</th><th>Description</th><th style="text-align:right">Rate</th><th style="text-align:right">Amount</th></tr></thead>
+      <tbody>
+      ${lineItems.map(l=>`<tr>
+        <td>${l.qty.toLocaleString()}</td>
+        <td>${l.desc}${l.taxable?' <span style="color:#b35a00;font-weight:bold">T</span>':''}</td>
+        <td style="text-align:right">$${parseFloat(l.rate).toFixed(2)}</td>
+        <td style="text-align:right">$${parseFloat(l.amount).toFixed(2)}</td>
+      </tr>`).join('')}
+      ${parseFloat(invoice.tax)>0?`<tr><td colspan="3" style="text-align:right" style="font-size:10px;color:#555">Sales Tax ${(parseFloat(contract?.tax_rate||0.0775)*100).toFixed(2)}%</td><td style="text-align:right">$${parseFloat(invoice.tax).toFixed(2)}</td></tr>`:''}
+      <tr class="total-row"><td colspan="2">Period of Performance - ${monthName}</td><td style="text-align:right">Total</td><td style="text-align:right" style="font-size:14px;color:#0d1f4e">$${parseFloat(invoice.total).toFixed(2)}</td></tr>
+      </tbody>
+    </table>
+    <div class="footer">Thank you for your business.</div>
+  </body></html>`;
+
+  // Open in new window for print/save as PDF
+  const win = window.open('','_blank','width=800,height=1000');
+  win.document.write(html);
+  win.document.close();
+  setTimeout(()=> win.print(), 500);
+}
+
+function viewInvoice(id){
+  const inv = invoicesList.find(i=>i.id===id);
+  if(!inv) return;
+  exportInvoicePDF(inv);
 }
 
 // ═══════════════════════════════════════════════════
@@ -9287,7 +9839,8 @@ function mobWhToggleExpand(id){
       'restock':'Activity','order-activity':'Orders',
       'usage-report':'Usage Report',
       'vendor-mgmt':'Vendors',
-      'insights':'Insights'
+      'insights':'Insights',
+      'invoices':'Invoices'
     };
     updateMobTitle(titles[v]||'BrewBox OS');
   };
