@@ -714,6 +714,33 @@ async function sbFetch(path, options={}){
   return text ? JSON.parse(text) : [];
 }
 
+// Paginated fetch for large result sets (Supabase caps at 1000 rows per request)
+async function sbFetchAll(path, options={}){
+  let all = [];
+  let offset = 0;
+  const PAGE = 1000;
+  while(true){
+    const sep = path.includes('?') ? '&' : '?';
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}${sep}offset=${offset}&limit=${PAGE}`, {
+      ...options,
+      headers:{
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`,
+        'Content-Type': 'application/json',
+        'Prefer': options.prefer || 'return=representation',
+        ...(options.headers||{})
+      }
+    });
+    if(!res.ok) break;
+    const text = await res.text();
+    const rows = text ? JSON.parse(text) : [];
+    all = all.concat(rows);
+    if(rows.length < PAGE) break;
+    offset += PAGE;
+  }
+  return all;
+}
+
 async function sbSelect(table, query=''){
   return sbFetch(`${table}?${query}&order=id`, {method:'GET', prefer:'return=representation'});
 }
@@ -6851,7 +6878,7 @@ async function previewVendingImport(){
   
   let existingSet = new Set();
   try{
-    const existing = await sbFetch(`sales_data?store_name=eq.${encodeURIComponent(store)}&sale_date=gte.${fromStr}&sale_date=lte.${toStr}&select=sale_ts,unit_price,csv_item_name&limit=50000`,{method:'GET',prefer:'return=representation'});
+    const existing = await sbFetchAll(`sales_data?store_name=eq.${encodeURIComponent(store)}&sale_date=gte.${fromStr}&sale_date=lte.${toStr}&select=sale_ts,unit_price,csv_item_name`,{method:'GET',prefer:'return=representation'});
     for(const r of existing){
       existingSet.add(`${new Date(r.sale_ts).getTime()}|${r.unit_price}|${r.csv_item_name}`);
     }
@@ -7074,7 +7101,7 @@ async function parseSalesFile(){
       if(fileMinDate && fileMaxDate){
         const fromStr = fileMinDate.toISOString().slice(0,10);
         const toStr = new Date(fileMaxDate.getTime()+86400000).toISOString().slice(0,10);
-        const existing = await sbFetch(`sales_data?store_name=eq.${encodeURIComponent(store)}&sale_date=gte.${fromStr}&sale_date=lte.${toStr}&select=sale_ts,csv_item_name,unit_price&limit=50000`,{method:'GET',prefer:'return=representation'});
+        const existing = await sbFetchAll(`sales_data?store_name=eq.${encodeURIComponent(store)}&sale_date=gte.${fromStr}&sale_date=lte.${toStr}&select=sale_ts,csv_item_name,unit_price`,{method:'GET',prefer:'return=representation'});
         for(const r of existing){
           existingSet.add(`${new Date(r.sale_ts).getTime()}|${r.csv_item_name}|${r.unit_price}`);
         }
@@ -8672,11 +8699,11 @@ async function loadInsightsData(){
 
   try{
     // Sales data
-    const sales = await sbFetch(`sales_data?sale_date=gte.${from}&sale_date=lte.${to}${storeFilter}&select=product_id,product_name,csv_item_name,category,store_name,unit_price,tax,discount,total_price&limit=50000`,{method:'GET',prefer:'return=representation'});
+    const sales = await sbFetchAll(`sales_data?sale_date=gte.${from}&sale_date=lte.${to}${storeFilter}&select=product_id,product_name,csv_item_name,category,store_name,unit_price,tax,discount,total_price`,{method:'GET',prefer:'return=representation'});
 
     // Theft/consumption data from inventory_count_log
     const storeCountFilter = isAll ? '' : `&store_name=eq.${encodeURIComponent(insightsStore)}`;
-    const countLogs = await sbFetch(`inventory_count_log?count_date=gte.${from}&count_date=lte.${to}${storeCountFilter}&select=product_id,product_name,difference,reason,store_name,count_date&limit=50000`,{method:'GET',prefer:'return=representation'});
+    const countLogs = await sbFetchAll(`inventory_count_log?count_date=gte.${from}&count_date=lte.${to}${storeCountFilter}&select=product_id,product_name,difference,reason,store_name,count_date`,{method:'GET',prefer:'return=representation'});
 
     insightsData = {sales, countLogs, from, to};
   }catch(e){
@@ -9687,7 +9714,7 @@ async function runUsageReport(){
   showToast('Loading report…');
   try{
     // Query inventory_count_log for this store and date range
-    const rows = await sbFetch(
+    const rows = await sbFetchAll(
       `inventory_count_log?store_name=eq.${encodeURIComponent(usageReportStore)}&count_date=gte.${usageReportFrom}&count_date=lte.${usageReportTo}&order=product_name`,
       {method:'GET', prefer:'return=representation'}
     );
