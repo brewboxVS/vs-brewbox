@@ -4621,6 +4621,34 @@ async function submitStoreCount(){
   }
 
   hideCountProgress();
+
+  // Log "Mark OK" (verified) items to inventory_count_log too
+  if(useSupabase){
+    const verifiedItems = items.filter(item=>{
+      const s = storeCountState[item.id];
+      const skipped = (item.product_source==='coffee') ? (storeCountSkippedCats.has('ALL_COFFEE') || (item.station_name && storeCountSkippedCats.has('STN_'+item.station_name))) : (storeCountSkippedCats.has('ALL_MM') || storeCountSkippedCats.has(getStoreItemCat1(item)||'UNCATEGORIZED'));
+      return s && s.verified && !skipped;
+    });
+    if(verifiedItems.length > 0){
+      const BATCH = 50;
+      for(let b=0; b<verifiedItems.length; b+=BATCH){
+        const batch = verifiedItems.slice(b, b+BATCH).map((item,i)=>({
+          id: Date.now()+b+i+50000,
+          product_id: item.product_id,
+          product_name: item.product_name,
+          previous_qty: item.qty,
+          new_qty: item.qty,
+          difference: 0,
+          reason: 'Verified OK',
+          store_name: storeCountStore,
+          count_date: countDate,
+          created_at: now
+        }));
+        try{ await sbFetch('inventory_count_log',{method:'POST',prefer:'resolution=merge-duplicates,return=minimal',body:JSON.stringify(batch)}); }catch(e){}
+      }
+    }
+  }
+
   storeCountState={};
   storeCountSkippedCats=new Set();
   updateSidebar();
@@ -7136,6 +7164,9 @@ function renderSalesPreview(storeResults){
       : 'No new transactions';
     const storeKey = store.replace(/\s+/g,'_');
 
+    const totalDecrementUnits = inStore.reduce((s,x)=>s+x.unitsSold,0);
+    const isHistorical = minTs && (Date.now() - minTs.getTime()) > 30*86400000;
+
     return `<div class="card" style="border-top:3px solid #0d1f4e;margin-bottom:14px" id="si-card-${storeKey}">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;margin-bottom:10px">
         <div>
@@ -7148,11 +7179,15 @@ function renderSalesPreview(storeResults){
           </div>
         </div>
         <div style="display:flex;gap:6px;align-items:center">
-          <button id="si-confirm-btn-${storeKey}" onclick="confirmSalesImport('${store}')"
+          ${isHistorical?`
+          <button disabled style="opacity:0.3;background:#888;color:#fff;border:none;border-radius:7px;padding:9px 16px;font-size:13px;font-weight:700;cursor:not-allowed;white-space:nowrap" title="Disabled for historical data older than 30 days">
+            \u2713 Apply Updates (disabled)
+          </button>`:`
+          <button id="si-confirm-btn-${storeKey}" onclick="confirmApplyUpdates('${store.replace(/'/g,"\\'")}')"
             ${inStore.length===0?'disabled style="opacity:0.5"':''}
             style="background:#1a7a45;color:#fff;border:none;border-radius:7px;padding:9px 16px;font-size:13px;font-weight:700;cursor:pointer;white-space:nowrap">
             \u2713 Apply ${inStore.length} Updates
-          </button>
+          </button>`}
           <button id="si-backfill-btn-${storeKey}" onclick="backfillSalesImport('${store}')"
             ${newRowCount===0?'disabled style="opacity:0.5"':''}
             style="background:#0d1f4e;color:#fff;border:none;border-radius:7px;padding:9px 12px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap" title="Save transaction data only — does not adjust store inventory quantities">
@@ -7160,6 +7195,7 @@ function renderSalesPreview(storeResults){
           </button>
         </div>
       </div>
+      ${isHistorical?`<div style="background:#fff3cd;border:1.5px solid #e6c200;border-radius:7px;padding:8px 12px;margin-bottom:10px;font-size:11px;color:#856404;font-weight:600">⚠️ Historical data (>30 days old) — "Apply Updates" is disabled to protect inventory. Use "Save Data Only" to save transaction data.</div>`:''}
       ${skippedCount>0&&newRowCount===0?`<div style="background:#fff3cd;border:1.5px solid #e6c200;border-radius:7px;padding:10px 14px;margin-bottom:10px;font-size:12px;color:#856404;font-weight:600">⚠️ <strong>Duplicate file — all ${skippedCount} transactions already imported.</strong> Nothing to save.</div>`
         :skippedCount>0&&lastTsDate?`<div style="background:#e6f4ee;border-radius:7px;padding:7px 12px;margin-bottom:10px;font-size:11px;color:#1a7a45">\u2713 <strong>${skippedCount} already-imported transactions excluded</strong> \u2014 through ${toPST(lastTsDate.toISOString())}</div>`:''}
       ${inStore.length>0?`<div style="font-size:10px;font-weight:700;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">Will update (${inStore.length} items)</div>
@@ -7276,6 +7312,37 @@ async function addUnmatchedToWarehouse(safeId, store){
   }catch(e){
     if(statusEl) statusEl.innerHTML = '<span style="color:#b01c1c">⚠ Error: '+e.message+'</span>';
   }
+}
+
+function confirmApplyUpdates(store){
+  const data = window._siConfirmData && window._siConfirmData[store];
+  if(!data) return;
+  const {matched, minTs, maxTs, newRowCount} = data;
+  const inStore = matched.filter(x=>x.inStoreInventory);
+  const totalUnits = inStore.reduce((s,x)=>s+x.unitsSold,0);
+  const periodStr = minTs && maxTs
+    ? `${toPST(minTs.toISOString())} → ${toPST(maxTs.toISOString())}`
+    : '';
+
+  document.getElementById('modal-container').innerHTML=`
+    <div class="modal-overlay">
+      <div class="modal" style="width:480px">
+        <div class="modal-title">⚠️ Confirm Apply Updates — ${store}</div>
+        <div style="background:#fff3cd;border:1.5px solid #e6c200;border-radius:7px;padding:10px 14px;margin-bottom:14px">
+          <div style="font-size:12px;color:#856404;line-height:1.6">
+            This will <strong>decrement store inventory</strong> for ${inStore.length} items by a total of <strong>${totalUnits.toLocaleString()} units</strong>.<br>
+            Period: ${periodStr}<br><br>
+            <strong>Only use this for current-day imports.</strong><br>
+            For historical data, use "💾 Save Data Only" instead.
+          </div>
+        </div>
+        <div style="font-size:11px;color:#5060a0;margin-bottom:14px">Are you sure you want to adjust ${store} inventory?</div>
+        <div style="display:flex;gap:10px">
+          <button onclick="closeModal();confirmSalesImport('${store.replace(/'/g,"\\'")}')" class="primary-btn" style="padding:9px 18px;background:#b01c1c">Yes, Apply ${totalUnits.toLocaleString()} Unit Decrements</button>
+          <button onclick="closeModal()" class="secondary-btn">Cancel</button>
+        </div>
+      </div>
+    </div>`;
 }
 
 async function confirmSalesImport(store){
