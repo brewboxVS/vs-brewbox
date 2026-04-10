@@ -6851,7 +6851,7 @@ async function previewVendingImport(){
   
   let existingSet = new Set();
   try{
-    const existing = await sbFetch(`sales_data?store_name=eq.${encodeURIComponent(store)}&sale_date=gte.${fromStr}&sale_date=lte.${toStr}&select=sale_ts,unit_price,csv_item_name`,{method:'GET',prefer:'return=representation'});
+    const existing = await sbFetch(`sales_data?store_name=eq.${encodeURIComponent(store)}&sale_date=gte.${fromStr}&sale_date=lte.${toStr}&select=sale_ts,unit_price,csv_item_name&limit=50000`,{method:'GET',prefer:'return=representation'});
     for(const r of existing){
       existingSet.add(`${new Date(r.sale_ts).getTime()}|${r.unit_price}|${r.csv_item_name}`);
     }
@@ -7074,7 +7074,7 @@ async function parseSalesFile(){
       if(fileMinDate && fileMaxDate){
         const fromStr = fileMinDate.toISOString().slice(0,10);
         const toStr = new Date(fileMaxDate.getTime()+86400000).toISOString().slice(0,10);
-        const existing = await sbFetch(`sales_data?store_name=eq.${encodeURIComponent(store)}&sale_date=gte.${fromStr}&sale_date=lte.${toStr}&select=sale_ts,csv_item_name,unit_price`,{method:'GET',prefer:'return=representation'});
+        const existing = await sbFetch(`sales_data?store_name=eq.${encodeURIComponent(store)}&sale_date=gte.${fromStr}&sale_date=lte.${toStr}&select=sale_ts,csv_item_name,unit_price&limit=50000`,{method:'GET',prefer:'return=representation'});
         for(const r of existing){
           existingSet.add(`${new Date(r.sale_ts).getTime()}|${r.csv_item_name}|${r.unit_price}`);
         }
@@ -8672,11 +8672,11 @@ async function loadInsightsData(){
 
   try{
     // Sales data
-    const sales = await sbFetch(`sales_data?sale_date=gte.${from}&sale_date=lte.${to}${storeFilter}&select=product_id,product_name,csv_item_name,category,store_name,unit_price,tax,discount,total_price`,{method:'GET',prefer:'return=representation'});
+    const sales = await sbFetch(`sales_data?sale_date=gte.${from}&sale_date=lte.${to}${storeFilter}&select=product_id,product_name,csv_item_name,category,store_name,unit_price,tax,discount,total_price&limit=50000`,{method:'GET',prefer:'return=representation'});
 
     // Theft/consumption data from inventory_count_log
     const storeCountFilter = isAll ? '' : `&store_name=eq.${encodeURIComponent(insightsStore)}`;
-    const countLogs = await sbFetch(`inventory_count_log?count_date=gte.${from}&count_date=lte.${to}${storeCountFilter}&select=product_id,product_name,difference,reason,store_name,count_date`,{method:'GET',prefer:'return=representation'});
+    const countLogs = await sbFetch(`inventory_count_log?count_date=gte.${from}&count_date=lte.${to}${storeCountFilter}&select=product_id,product_name,difference,reason,store_name,count_date&limit=50000`,{method:'GET',prefer:'return=representation'});
 
     insightsData = {sales, countLogs, from, to};
   }catch(e){
