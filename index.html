@@ -589,6 +589,7 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
         <button class="nav-btn" id="import-toggle" onclick="toggleImportMenu()">⬆ &nbsp;<span>Import</span><span class="nav-arrow" id="import-arrow">›</span></button>
         <div id="import-submenu" style="display:none">
           <button class="nav-btn nav-sub" onclick="setView('sales-import')">📥 &nbsp;<span>Sales Import</span></button>
+          <button class="nav-btn nav-sub" onclick="setView('hist-import')">📜 &nbsp;<span>Historical Data</span></button>
         </div>
       </div>
       <div id="activity-nav">
@@ -1449,7 +1450,7 @@ function updateSidebar(){
   if(currentView==='store-orders') document.querySelector('.nav-btn[onclick*="store-orders"]')?.classList.add('active');
   if(currentView==='store-count') document.querySelector('.nav-btn[onclick*="store-count"]')?.classList.add('active');
   if(currentView==='restock'||currentView==='order-activity') { openActivityMenu(); document.querySelector('.nav-btn[onclick*="'+currentView+'"]')?.classList.add('active'); }
-  if(currentView==='sales-import') { openImportMenu(); document.querySelector('.nav-btn[onclick*="sales-import"]')?.classList.add('active'); }
+  if(currentView==='sales-import'||currentView==='hist-import') { openImportMenu(); document.querySelector('.nav-btn[onclick*="'+currentView+'"]')?.classList.add('active'); }
   if(currentView==='orders') document.querySelector('.nav-btn[onclick*="orders"]')?.classList.add('active');
   if(currentView==='restock') document.querySelector('.nav-btn[onclick*="restock"]')?.classList.add('active');
   if(currentView==='count') document.querySelector('.nav-btn[onclick*="count"]')?.classList.add('active');
@@ -1539,7 +1540,7 @@ function openStoresMenu(){
 
 function setView(v){
   currentView=v;
-  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log','sales-import':'Sales Import',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log','usage-report':'Usage / Theft Report','vendor-mgmt':'Vendor Management','insights':'Insights Dashboard','invoices':'Invoices'};
+  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log','sales-import':'Sales Import','hist-import':'Historical Data Import',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log','usage-report':'Usage / Theft Report','vendor-mgmt':'Vendor Management','insights':'Insights Dashboard','invoices':'Invoices'};
   if(v==='count' && Object.keys(countState).length===0) initCountState();
   if(v==='store-count' && Object.keys(storeCountState).length===0) initStoreCountState();
   document.getElementById('page-title').textContent=titles[v]||v;
@@ -1567,6 +1568,7 @@ function render(){
   else if(currentView==='store-count') renderStoreCount();
   else if(currentView==='order-activity') renderOrderActivity();
   else if(currentView==='sales-import') renderSalesImport();
+  else if(currentView==='hist-import') renderHistImport();
   else if(currentView==='orders') renderOrders();
   else if(currentView==='count') renderCount();
   else if(currentView==='wh-orders') renderWhOrders();
@@ -8089,6 +8091,258 @@ function renderCountResult(){
 }
 
 // ═══════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
+//  HISTORICAL DATA IMPORT (Cantaloupe Inventory Changes)
+// ═══════════════════════════════════════════════════
+const HIST_REASON_MAP = {
+  'Manual Decrease': 'Manual Decrease',
+  'Theft': 'Theft/Walkoff',
+  'Return To Warehouse': 'Return to Warehouse',
+  'Manual Increase': 'Manual Increase',
+  'Spoilage': 'Spoilage',
+  'Comp': 'Complimentary',
+};
+const HIST_NEGATIVE = new Set(['Manual Decrease','Theft','Return To Warehouse','Spoilage','Comp']);
+const HIST_SKIP = new Set(['Receive Store Order','']);
+
+const HIST_FUZZY = {
+  "smucker's uncrustable peanut butter & strawberry": "Smucker's Uncrustable PB & Strawberry",
+  "smucker's uncrustable peanut butter & grape": "Smucker's Uncrustable PB & Grape",
+  "perfect bar dark chocolate chip peanut butter": "Perfect Bar Dark Chocolate Chip PB",
+  "hillshire genoa salame w/ cheddar cheese, 2.76oz": "Hillshire Genoa Salame w/ Cheddar Cheese",
+  "hillshire wine-infused salame w/ wht cheddar cheese, 2.76oz": "Hillshire Wine-Infused Salame w/ Wht Cheddar",
+  "celsius sparkling watermelo": "Celsius Sparkling Watermelon",
+  "herseys dipped pretzels": "Hersheys Dipped Pretzels",
+};
+
+let histImportStore = '';
+
+function renderHistImport(){
+  // Create hidden file input
+  let fi = document.getElementById('hist-file-input');
+  if(!fi){
+    fi = document.createElement('input');
+    fi.type = 'file';
+    fi.id = 'hist-file-input';
+    fi.accept = '.csv';
+    fi.style.cssText = 'position:fixed;top:-200px;left:-200px;width:1px;height:1px;opacity:0';
+    fi.addEventListener('change', function(){ handleHistFileUpload(this); });
+    document.body.appendChild(fi);
+  }
+
+  const fvStores = STORES.filter(s=>isStoreSettings(s,'free_vend'));
+
+  document.getElementById('main-body').innerHTML=`
+    <div class="card" style="border-top:3px solid #6b2fa0;margin-bottom:14px">
+      <div class="card-title" style="margin-bottom:6px">📜 Historical Data Import</div>
+      <div style="font-size:11px;color:#7080a0;margin-bottom:14px;line-height:1.6">
+        Upload Cantaloupe "Inventory Changes" CSV reports to backfill historical count data.<br>
+        Supports: Theft, Spoilage, Manual Decrease, Manual Increase, Comp, Return to Warehouse.<br>
+        "Receive Store Order" rows are skipped. For free vend stores, "Manual Decrease" maps to "Consumption".
+      </div>
+      <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;align-items:flex-end">
+        <div>
+          <label style="font-size:10px;font-weight:700;color:#5060a0;text-transform:uppercase;display:block;margin-bottom:4px">Store</label>
+          <select id="hist-store" onchange="histImportStore=this.value" style="background:#fff;border:1.5px solid #d0d5e0;border-radius:7px;padding:7px 10px;font-size:13px;font-weight:600;color:#0d1f4e;outline:none;min-width:160px">
+            <option value="">— Select Store —</option>
+            ${STORES.map(s=>`<option value="${s}" ${s===histImportStore?'selected':''}>${s}${fvStores.includes(s)?' (Free Vend)':''}</option>`).join('')}
+          </select>
+        </div>
+        <div onclick="if(!document.getElementById('hist-store').value){showToast('Select a store first');return;}document.getElementById('hist-file-input').click()"
+          style="background:#f4f6fa;border:2px dashed #b0b8d0;border-radius:8px;padding:12px 24px;cursor:pointer;text-align:center;flex:1;min-width:200px">
+          <div style="font-size:13px;font-weight:700;color:#0d1f4e">📁 Upload Inventory Changes CSV</div>
+          <div style="font-size:10px;color:#7080a0;margin-top:4px">Cantaloupe Inventory Changes report (.csv)</div>
+        </div>
+      </div>
+    </div>
+    <div id="hist-preview-area"></div>
+  `;
+}
+
+function handleHistFileUpload(input){
+  const file = input.files[0];
+  if(!file) return;
+  const store = document.getElementById('hist-store')?.value;
+  if(!store){ showToast('Select a store first'); return; }
+  histImportStore = store;
+
+  const reader = new FileReader();
+  reader.onload = function(e){
+    try{ parseHistCSV(e.target.result, store, file.name); }
+    catch(err){ showToast('⚠ Error parsing file: '+err.message); console.error(err); }
+  };
+  reader.readAsText(file);
+  input.value = '';
+}
+
+function parseHistCSV(csvText, store, fileName){
+  const lines = csvText.split(/\r?\n/);
+  const headers = lines[0].replace(/^\uFEFF/,'').split(',').map(h=>h.trim().replace(/^"|"$/g,''));
+
+  const nameIdx = headers.indexOf('Name');
+  const dateIdx = headers.indexOf('Date');
+  const typeIdx = headers.indexOf('Change Type');
+  const countIdx = headers.indexOf('Count');
+  const costIdx = headers.indexOf('Item Cost');
+  const priceIdx = headers.indexOf('Item Price');
+  const catIdx = headers.indexOf('Category 1');
+
+  if(nameIdx===-1||dateIdx===-1||typeIdx===-1||countIdx===-1){
+    showToast('⚠ Missing required columns (Name, Date, Change Type, Count)');
+    return;
+  }
+
+  const isFreeVend = isStoreSettings(store, 'free_vend');
+  const nameMap = {};
+  for(const p of products){ nameMap[p.name.toLowerCase().trim()] = p; }
+
+  const records = [];
+  const skippedTypes = {};
+  const unmatchedItems = {};
+  const reasonCounts = {};
+  let minDate = null, maxDate = null;
+
+  for(let i=1; i<lines.length; i++){
+    if(!lines[i].trim()) continue;
+    // Parse CSV line handling quoted fields
+    const row = [];
+    let cur = '', inQ = false;
+    for(const ch of lines[i]){
+      if(ch==='"'){ inQ=!inQ; continue; }
+      if(ch===','&&!inQ){ row.push(cur.trim()); cur=''; continue; }
+      cur+=ch;
+    }
+    row.push(cur.trim());
+
+    const changeType = (row[typeIdx]||'').trim();
+    if(HIST_SKIP.has(changeType)){ skippedTypes[changeType||'(empty)']=(skippedTypes[changeType||'(empty)']||0)+1; continue; }
+    if(!HIST_REASON_MAP[changeType]){ skippedTypes[changeType]=(skippedTypes[changeType]||0)+1; continue; }
+
+    const name = (row[nameIdx]||'').trim();
+    const count = parseInt(row[countIdx])||0;
+    if(!name || count===0) continue;
+
+    // Parse date
+    const dateStr = (row[dateIdx]||'').trim();
+    let dt;
+    const dm = dateStr.match(/(\d+)\/(\d+)\/(\d+)\s*(\d+):(\d+)/);
+    if(dm){ dt = new Date(parseInt(dm[3]),parseInt(dm[1])-1,parseInt(dm[2]),parseInt(dm[4]),parseInt(dm[5])); }
+    else { const dm2 = dateStr.match(/(\d+)\/(\d+)\/(\d+)/); if(dm2) dt = new Date(parseInt(dm2[3]),parseInt(dm2[1])-1,parseInt(dm2[2])); }
+    if(!dt || isNaN(dt.getTime())) continue;
+
+    if(!minDate || dt < minDate) minDate = dt;
+    if(!maxDate || dt > maxDate) maxDate = dt;
+
+    // Determine reason
+    let reason = HIST_REASON_MAP[changeType];
+    if(isFreeVend && changeType === 'Manual Decrease') reason = 'Consumption';
+
+    // Sign
+    const diff = HIST_NEGATIVE.has(changeType) ? -count : count;
+
+    // Match product
+    const lookupName = HIST_FUZZY[name.toLowerCase().trim()] || name;
+    const product = nameMap[lookupName.toLowerCase().trim()];
+    if(!product){
+      unmatchedItems[name] = (unmatchedItems[name]||0) + 1;
+      continue;
+    }
+
+    reasonCounts[reason] = (reasonCounts[reason]||0) + 1;
+
+    records.push({
+      id: Date.now() + i + Math.floor(Math.random()*1000),
+      product_id: product.id,
+      product_name: product.name,
+      previous_qty: 0,
+      new_qty: 0,
+      difference: diff,
+      reason: reason,
+      store_name: store,
+      count_date: dt.toISOString().slice(0,10),
+      created_at: dt.toISOString()
+    });
+  }
+
+  const unmatchedList = Object.entries(unmatchedItems).sort((a,b)=>b[1]-a[1]);
+  const totalSkipped = Object.values(skippedTypes).reduce((s,v)=>s+v,0);
+  const periodStr = minDate && maxDate ? `${toPST(minDate.toISOString())} → ${toPST(maxDate.toISOString())}` : 'Unknown';
+
+  // Store for import
+  window._histRecords = records;
+
+  document.getElementById('hist-preview-area').innerHTML=`
+    <div class="card" style="border-top:3px solid #6b2fa0;margin-bottom:14px">
+      <div class="card-title" style="margin-bottom:4px">${store} — ${fileName}</div>
+      <div style="font-size:11px;color:#7080a0;margin-bottom:14px">${periodStr}</div>
+
+      <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px">
+        <div class="stat-card" style="border-top-color:#1a7a45"><div class="stat-val" style="color:#1a7a45">${records.length}</div><div class="stat-label">Records to Import</div></div>
+        <div class="stat-card"><div class="stat-val">${totalSkipped}</div><div class="stat-label">Skipped</div><div class="stat-sub">Receive Store Order etc.</div></div>
+        <div class="stat-card" style="border-top-color:#b35a00"><div class="stat-val" style="color:#b35a00">${unmatchedList.length}</div><div class="stat-label">Unmatched Items</div></div>
+        <div class="stat-card"><div class="stat-val">${Object.keys(reasonCounts).length}</div><div class="stat-label">Reason Types</div></div>
+      </div>
+
+      <!-- Breakdown by reason -->
+      <div style="background:#f4f6fa;border-radius:8px;padding:12px;margin-bottom:14px">
+        <div style="font-size:11px;font-weight:800;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">Records by Reason</div>
+        ${Object.entries(reasonCounts).sort((a,b)=>b[1]-a[1]).map(([reason,count])=>{
+          const color = reason==='Consumption'?'#6b2fa0':reason==='Theft/Walkoff'?'#b01c1c':reason==='Spoilage'?'#b35a00':'#0d1f4e';
+          return `<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px"><span style="color:${color};font-weight:600">${reason}</span><span style="font-weight:700">${count}</span></div>`;
+        }).join('')}
+      </div>
+
+      ${unmatchedList.length>0?`
+      <details style="margin-bottom:14px"><summary style="font-size:11px;font-weight:700;color:#b35a00;cursor:pointer;padding:4px 0">⚠ ${unmatchedList.length} Unmatched Items (${unmatchedList.reduce((s,x)=>s+x[1],0)} records skipped)</summary>
+        <div style="margin-top:6px;background:#fff8e6;border-radius:7px;padding:8px 12px;font-size:11px;color:#856404">
+          ${unmatchedList.map(([name,count])=>`<div style="padding:2px 0">${name} <span style="color:#7080a0">(${count})</span></div>`).join('')}
+          <div style="margin-top:6px;font-size:10px;color:#7080a0">These items don't exist in warehouse inventory. Add them first to include in future imports.</div>
+        </div>
+      </details>`:''}
+
+      <button onclick="executeHistImport('${store.replace(/'/g,"\\'")}')" class="primary-btn" style="width:100%;padding:12px;font-size:14px;background:#6b2fa0">
+        📜 Import ${records.length} Records to inventory_count_log
+      </button>
+    </div>
+  `;
+}
+
+async function executeHistImport(store){
+  const records = window._histRecords;
+  if(!records || records.length===0){ showToast('No records to import'); return; }
+
+  const btn = document.querySelector('#hist-preview-area .primary-btn');
+  if(btn){ btn.disabled=true; btn.textContent='⏳ Importing...'; btn.style.opacity='0.6'; }
+
+  const CHUNK = 100;
+  let totalInserted = 0, totalSkipped = 0, errors = 0;
+
+  for(let i=0; i<records.length; i+=CHUNK){
+    const chunk = records.slice(i, i+CHUNK);
+    try{
+      const result = await sbFetch('rpc/bulk_insert_count_log',{
+        method:'POST',
+        prefer:'return=representation',
+        body:JSON.stringify({data:chunk, fuzzy:HIST_FUZZY})
+      });
+      totalInserted += result.inserted||0;
+      totalSkipped += result.skipped||0;
+    }catch(e){
+      errors++;
+      console.error('Hist import batch error:', e);
+    }
+    if(btn) btn.textContent = `⏳ Importing... ${Math.min(i+CHUNK, records.length)}/${records.length}`;
+  }
+
+  if(btn){
+    btn.textContent = `✓ Done — ${totalInserted} inserted, ${totalSkipped} skipped${errors?' ('+errors+' errors)':''}`;
+    btn.style.background = errors ? '#b35a00' : '#1a7a45';
+    btn.style.opacity = '1';
+  }
+
+  showToast(`✓ Historical import: ${totalInserted} records inserted for ${store}`);
+}
+
 //  VENDOR MANAGEMENT
 // ═══════════════════════════════════════════════════
 function renderVendorManagement(){
@@ -10015,7 +10269,8 @@ function mobWhToggleExpand(id){
       'usage-report':'Usage Report',
       'vendor-mgmt':'Vendors',
       'insights':'Insights',
-      'invoices':'Invoices'
+      'invoices':'Invoices',
+      'hist-import':'Historical Data'
     };
     updateMobTitle(titles[v]||'BrewBox OS');
   };
