@@ -1418,6 +1418,24 @@ function toggleSwitch(isOn,onclick){
   </div>`;
 }
 
+function inputChargedToggle(isInput,onclick){
+  return `<div class="toggle-wrap" onclick="${onclick}" style="cursor:pointer">
+    <div class="toggle-track${isInput?'':' on'}" style="${isInput?'background:#b35a00':'background:#0d1f4e'}"><div class="toggle-thumb"></div></div>
+    <span class="toggle-label" style="color:${isInput?'#b35a00':'#0d1f4e'};font-weight:700">${isInput?'Input':'Charged'}</span>
+  </div>`;
+}
+
+async function toggleCoffeeInput(id){
+  const p = coffeeProducts.find(x=>x.id===id);
+  if(!p) return;
+  p.isInput = !p.isInput;
+  renderCoffeeInventory();
+  if(useSupabase){
+    try{ await sbFetch('coffee_products?id=eq.'+id,{method:'PATCH',prefer:'return=minimal',body:JSON.stringify({is_input:p.isInput})}); }catch(e){}
+  }
+  showToast(`${p.name} → ${p.isInput?'Input':'Charged'}`);
+}
+
 function updateSidebar(){
   const low=getLow();
   document.getElementById('low-alert-sb').innerHTML=low.length>0
@@ -2726,7 +2744,8 @@ function rowToCoffeeProduct(row){
     cat1: row.cat1||'', cat2: row.cat2||'',
     vendors: Array.isArray(row.vendors)?row.vendors:[],
     stores: Array.isArray(row.stores)?row.stores:[],
-    active: row.active!==false
+    active: row.active!==false,
+    isInput: row.is_input===true
   };
 }
 
@@ -2736,6 +2755,7 @@ function coffeeProductToRow(p){
     min_level:p.minLevel, max_level:p.maxLevel, unit_cost:p.unitCost,
     sale_price:p.salePrice, cost_per_box:p.costPerBox, pieces_per_box:p.piecesPerBox,
     cat1:p.cat1||'', cat2:p.cat2||'', vendors:p.vendors||[], stores:p.stores||[], active:p.active,
+    is_input:p.isInput||false,
     updated_at:new Date().toISOString()
   };
 }
@@ -2819,10 +2839,10 @@ function renderCoffeeInventory(){
           <th>UPC</th><th>QTY</th><th>MIN</th><th>MAX</th>
           <th>UNIT COST</th><th>SALE PRICE</th><th>COST/BOX</th><th>PCS/BOX</th>
           <th>CAT 1</th><th>CAT 2</th><th>VENDOR</th>
-          <th>STORES</th><th>STATUS</th><th>ACTIVE</th><th>ACTIONS</th>
+          <th>STORES</th><th>TYPE</th><th>STATUS</th><th>ACTIVE</th><th>ACTIONS</th>
         </tr></thead>
         <tbody>
-        ${filtered.length===0?`<tr><td colspan="15" style="text-align:center;padding:30px;color:#7080a0">No coffee items yet. Click "+ Add Item" to get started.</td></tr>`
+        ${filtered.length===0?`<tr><td colspan="16" style="text-align:center;padding:30px;color:#7080a0">No coffee items yet. Click "+ Add Item" to get started.</td></tr>`
           :filtered.map(p=>renderCoffeeRow(p)).join('')}
         </tbody>
       </table>
@@ -2857,6 +2877,7 @@ function renderCoffeeRow(p){
         <div style="font-size:9px;color:#8090b0;margin-top:2px">Ctrl+click multi</div>
       </td>
       <td style="min-width:120px">${storeMultiSelect(p.id,'coffee',p.stores||[])}</td>
+      <td style="min-width:90px">${inputChargedToggle(p.isInput,`toggleCoffeeInput(${p.id})`)}</td>
       <td>${badge(p.qty,p.minLevel,p.maxLevel)}</td>
       <td style="min-width:110px">${toggleSwitch(p.active,`toggleCoffeeActive(${p.id})`)}</td>
       <td style="min-width:110px"><span style="font-size:10px;color:#c9a84c;font-weight:700">✎ EDITING</span></td>
@@ -2877,6 +2898,7 @@ function renderCoffeeRow(p){
     <td style="font-size:11px;color:#5060a0">${p.cat2||'—'}</td>
     <td style="min-width:90px">${p.vendors&&p.vendors.length>0?p.vendors.map(v=>{const vc=VENDOR_COLORS[v]||{bg:'#e8edf8',color:'#0d1f4e'};return `<span class="vendor-tag" style="background:${vc.bg};color:${vc.color}" title="${v}">${vendorAbbr(v)}</span>`;}).join(''):'<span style="color:#b0b8cc;font-size:11px">—</span>'}</td>
     <td style="min-width:100px">${storeTiles(p.stores||[])}</td>
+    <td style="min-width:90px">${inputChargedToggle(p.isInput,`toggleCoffeeInput(${p.id})`)}</td>
     <td>${badge(p.qty,p.minLevel,p.maxLevel)}</td>
     <td style="min-width:110px">${toggleSwitch(p.active,`toggleCoffeeActive(${p.id})`)}</td>
     <td style="min-width:130px"><div style="display:flex;gap:4px">
@@ -7151,10 +7173,104 @@ function renderSalesPreview(storeResults){
         <td style="font-weight:700;color:${x.newStoreQty<=0?'#b01c1c':'#1a7a45'}">${x.newStoreQty}</td>
       </tr>`).join('')}
       </tbody></table></div>`:''}
-      ${notInStore.length>0?`<details style="margin-bottom:6px"><summary style="font-size:11px;font-weight:700;color:#7080a0;cursor:pointer;padding:4px 0">Not in ${store} inventory (${notInStore.length} - no action)</summary><div style="margin-top:6px;font-size:11px;color:#7080a0">${notInStore.map(x=>`<div>${x.product.name} - ${x.unitsSold} sold</div>`).join('')}</div></details>`:''}
-      ${unmatched.length>0?`<details open><summary style="font-size:11px;font-weight:700;color:#b01c1c;cursor:pointer;padding:4px 0">\u26a0 Unmatched (${unmatched.length}) — not found in warehouse inventory</summary><div style="margin-top:6px;overflow-x:auto"><table><thead><tr><th style="padding-left:4px;min-width:180px">CSV ITEM NAME</th><th>UPC</th><th>CATEGORY</th><th>PRICE</th><th>UNITS SOLD</th></tr></thead><tbody>${unmatched.map(x=>`<tr><td style="padding-left:4px;font-weight:600;color:#b01c1c;white-space:normal;max-width:220px">${x.csvName}</td><td style="font-size:11px;color:#5060a0">${x.upc||'—'}</td><td style="font-size:11px;color:#5060a0">${x.cat||'—'}</td><td style="font-size:11px;color:#0d1f4e">${x.price||'—'}</td><td style="font-weight:700;color:#b01c1c">${x.unitsSold}</td></tr>`).join('')}</tbody></table></div></details>`:''}
+      ${notInStore.length>0?`<details style="margin-bottom:6px"><summary style="font-size:11px;font-weight:700;color:#7080a0;cursor:pointer;padding:4px 0">Matched but not in ${store} inventory (${notInStore.length}) — sales data saved, no qty adjustment</summary><div style="margin-top:6px;font-size:11px;color:#7080a0">${notInStore.map(x=>`<div style="padding:2px 0">${x.product.name} — <span style="color:#b35a00">${x.unitsSold} sold</span> <span style="font-size:9px;color:#b0b8cc">(item may have been removed from store)</span></div>`).join('')}</div></details>`:''}
+      ${unmatched.length>0?`<details open><summary style="font-size:11px;font-weight:700;color:#b01c1c;cursor:pointer;padding:4px 0">\u26a0 Unmatched (${unmatched.length}) — not found in warehouse inventory</summary><div style="margin-top:6px">
+      ${unmatched.map((x,idx)=>{
+        const safeId = store.replace(/\s/g,'_')+'_'+idx;
+        const escapedName = x.csvName.replace(/'/g,"\\'").replace(/"/g,'&quot;');
+        return `<div style="border:1.5px solid #f0b8b8;border-radius:7px;padding:8px 10px;margin-bottom:6px;background:#fef8f8">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <div>
+              <span style="font-weight:600;color:#b01c1c">${x.csvName}</span>
+              <span style="font-size:10px;color:#5060a0;margin-left:8px">UPC: ${x.upc||'—'} · Cat: ${x.cat||'—'} · Price: ${x.price||'—'} · Sold: ${x.unitsSold}</span>
+            </div>
+            <button onclick="document.getElementById('add-wh-${safeId}').style.display=document.getElementById('add-wh-${safeId}').style.display==='none'?'block':'none'" style="background:#0d1f4e;color:#fff;border:none;border-radius:5px;padding:4px 10px;font-size:10px;font-weight:700;cursor:pointer">+ Add to Warehouse</button>
+          </div>
+          <div id="add-wh-${safeId}" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid #e0c8c8">
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
+              <div style="flex:2;min-width:180px"><label style="font-size:9px;font-weight:700;color:#5060a0">NAME</label><input id="awh-name-${safeId}" value="${x.csvName.replace(/"/g,'&quot;')}" style="width:100%;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 6px;font-size:11px;outline:none"/></div>
+              <div style="min-width:100px"><label style="font-size:9px;font-weight:700;color:#5060a0">UPC</label><input id="awh-upc-${safeId}" value="${x.upc||''}" style="width:100%;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 6px;font-size:11px;font-family:monospace;outline:none"/></div>
+              <div style="min-width:100px"><label style="font-size:9px;font-weight:700;color:#5060a0">CATEGORY</label><select id="awh-cat-${safeId}" style="width:100%;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 6px;font-size:11px;outline:none"><option value="">—</option>${STORE_CATEGORIES.map(c=>'<option value="'+c+'"'+(x.cat&&x.cat.toUpperCase()===c?' selected':'')+'>'+c+'</option>').join('')}</select></div>
+              <div style="min-width:60px"><label style="font-size:9px;font-weight:700;color:#5060a0">SALE PRICE</label><input id="awh-price-${safeId}" type="number" step="0.01" value="${x.price||0}" style="width:100%;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 6px;font-size:11px;outline:none"/></div>
+              <div style="min-width:60px"><label style="font-size:9px;font-weight:700;color:#5060a0">UNIT COST</label><input id="awh-cost-${safeId}" type="number" step="0.01" value="0" style="width:100%;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 6px;font-size:11px;outline:none"/></div>
+              <div style="min-width:60px"><label style="font-size:9px;font-weight:700;color:#5060a0">COST/BOX</label><input id="awh-cpb-${safeId}" type="number" step="0.01" value="0" style="width:100%;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 6px;font-size:11px;outline:none"/></div>
+              <div style="min-width:40px"><label style="font-size:9px;font-weight:700;color:#5060a0">PCS/BOX</label><input id="awh-ppb-${safeId}" type="number" value="1" style="width:100%;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 6px;font-size:11px;outline:none"/></div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <label style="font-size:10px;font-weight:600;color:#5060a0"><input type="checkbox" id="awh-addstore-${safeId}" checked/> Also add to ${store} store inventory</label>
+              <button onclick="addUnmatchedToWarehouse('${safeId}','${store.replace(/'/g,"\\'")}')" style="background:#1a7a45;color:#fff;border:none;border-radius:5px;padding:5px 14px;font-size:11px;font-weight:700;cursor:pointer">✓ Save to Warehouse</button>
+              <span id="awh-status-${safeId}" style="font-size:10px"></span>
+            </div>
+          </div>
+        </div>`;
+      }).join('')}
+      </div></details>`:''}
     </div>`;
   }).join('');
+}
+
+async function addUnmatchedToWarehouse(safeId, store){
+  const statusEl = document.getElementById('awh-status-'+safeId);
+  const name = document.getElementById('awh-name-'+safeId)?.value?.trim();
+  if(!name){ showToast('Name is required'); return; }
+
+  const upc = document.getElementById('awh-upc-'+safeId)?.value?.trim()||'';
+  const cat1 = document.getElementById('awh-cat-'+safeId)?.value||'';
+  const salePrice = parseFloat(document.getElementById('awh-price-'+safeId)?.value)||0;
+  const unitCost = parseFloat(document.getElementById('awh-cost-'+safeId)?.value)||0;
+  const costPerBox = parseFloat(document.getElementById('awh-cpb-'+safeId)?.value)||0;
+  const piecesPerBox = parseInt(document.getElementById('awh-ppb-'+safeId)?.value)||1;
+  const addToStore = document.getElementById('awh-addstore-'+safeId)?.checked;
+
+  if(statusEl) statusEl.innerHTML = '<span style="color:#5060a0">⏳ Saving...</span>';
+
+  const productId = Date.now();
+  const product = {
+    id: productId, name, upc, qty: 0, min_level: 0, max_level: 0,
+    unit_cost: unitCost, sale_price: salePrice, cost_per_box: costPerBox,
+    pieces_per_box: piecesPerBox, cat1, cat2: '', vendors: [],
+    stores: addToStore ? [store] : [], active: true
+  };
+
+  try{
+    await sbFetch('products',{method:'POST',prefer:'resolution=merge-duplicates,return=minimal',body:JSON.stringify([product])});
+    // Add to in-memory products array
+    products.push({
+      id:productId, name, upc, qty:0, minLevel:0, maxLevel:0,
+      unitCost, salePrice, costPerBox, piecesPerBox,
+      cat1, cat2:'', vendors:[], stores:addToStore?[store]:[], active:true
+    });
+
+    if(addToStore){
+      const storeItem = {
+        id: Date.now()+1, store_name: store, product_id: productId,
+        product_source: 'mm', product_name: name, cat1, store_cat: '',
+        station_name: '', qty: 0, min_level: 0, max_level: 0, active: true
+      };
+      await sbFetch('store_inventory',{method:'POST',prefer:'resolution=merge-duplicates,return=minimal',body:JSON.stringify([storeItem])});
+      storeInventory.push(storeItem);
+    }
+
+    if(statusEl) statusEl.innerHTML = '<span style="color:#1a7a45;font-weight:700">✓ Added to warehouse' + (addToStore ? ' + '+store : '') + '</span>';
+
+    // Update the sales preview data — re-match this item in txnRows
+    const data = window._siConfirmData && window._siConfirmData[store];
+    if(data && data.txnRows){
+      for(const row of data.txnRows){
+        if(!row.matched && row.csv_item_name === name){
+          row.product_id = productId;
+          row.product_name = name;
+          row.matched = true;
+        }
+        // Also try UPC match
+        if(!row.matched && upc && row.csv_item_name){
+          // Can't easily match by UPC here since txnRows don't store UPC, but the next preview will catch it
+        }
+      }
+    }
+  }catch(e){
+    if(statusEl) statusEl.innerHTML = '<span style="color:#b01c1c">⚠ Error: '+e.message+'</span>';
+  }
 }
 
 async function confirmSalesImport(store){
@@ -8387,8 +8503,7 @@ function renderInsightsWidgets(){
         const cp = coffeeProducts.find(p=>p.id===item.product_id);
         if(!cp) continue;
         const uc = parseFloat(cp.unitCost||cp.unit_cost||0);
-        const sp = parseFloat(cp.salePrice||cp.sale_price||0);
-        if(sp <= 1){
+        if(cp.isInput){
           inputCOGS += uc * qty; // beans, powders, creamers — no direct revenue
         } else {
           supplyCOGS += uc * qty; // filter rolls, cups, etc. — has revenue
@@ -8799,7 +8914,7 @@ async function generateInvoicePreview(){
   const monthName = new Date(parseInt(year), parseInt(month)-1).toLocaleString('en-US',{month:'long', year:'numeric'});
 
   // Get stations for this store
-  const stations = getStationsForStore(store).filter(s=>s.station_name!=='MM');
+  const stations = getStationsForStore(store);
 
   // Get previous readings for each station
   const stationReadings = stations.map(stn=>{
@@ -8820,8 +8935,8 @@ async function generateInvoicePreview(){
       if(qty <= 0) continue;
       const cp = coffeeProducts.find(p=>p.id===item.product_id);
       if(!cp) continue;
+      if(cp.isInput) continue; // input item, not charged
       const sp = parseFloat(cp.salePrice||cp.sale_price||0);
-      if(sp <= 1) continue; // input item, not charged
       // Determine taxability: non-food consumables are taxed (filter rolls, etc.)
       const isTaxable = isNonFoodConsumable(cp.name);
       chargedItems.push({name:cp.name, qty, rate:sp, amount:qty*sp, taxable:isTaxable, productId:cp.id});
@@ -8840,6 +8955,8 @@ async function generateInvoicePreview(){
   const equipFees = JSON.parse(typeof contract.equipment_fees === 'string' ? contract.equipment_fees : JSON.stringify(contract.equipment_fees||[]));
 
   invoiceManualLines = [];
+  window._invSupplyItems = aggregatedItems;
+  window._invEquipFees = equipFees;
 
   const area = document.getElementById('inv-preview-area');
   area.innerHTML = `
@@ -8867,6 +8984,14 @@ async function generateInvoicePreview(){
           <td style="padding-left:8px;font-weight:800;color:#0d1f4e" colspan="3">TOTAL CUPS</td>
           <td style="font-weight:800;color:#0d1f4e;font-size:14px" id="cups-total">-</td>
         </tr>
+        <tr>
+          <td style="padding-left:8px;font-weight:600;color:#5060a0" colspan="3">Adjustment (+/-)</td>
+          <td><input type="number" id="cup-adjustment" value="0" oninput="recalcInvoiceCups()" style="width:80px;background:#fff;border:1.5px solid #d0d5e0;border-radius:5px;padding:5px 8px;font-size:12px;font-weight:700;outline:none;color:#5060a0"/></td>
+        </tr>
+        <tr>
+          <td style="padding-left:8px;font-weight:800;color:#1a7a45" colspan="3">BILLABLE CUPS</td>
+          <td style="font-weight:800;color:#1a7a45;font-size:14px" id="cups-billable">-</td>
+        </tr>
         </tbody></table></div>
         <button onclick="recalcInvoiceCups()" style="margin-top:8px;background:#0d1f4e;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:11px;font-weight:700;cursor:pointer">Recalculate</button>
       </div>
@@ -8878,12 +9003,12 @@ async function generateInvoicePreview(){
         ${aggregatedItems.length>0?`<div style="overflow-x:auto"><table><thead><tr>
           <th style="padding-left:8px">ITEM</th><th>QTY</th><th>RATE</th><th>AMOUNT</th><th>TAX</th>
         </tr></thead><tbody>
-        ${aggregatedItems.map(ci=>`<tr>
+        ${aggregatedItems.map((ci,idx)=>`<tr>
           <td style="padding-left:8px;font-weight:600;color:#0d1f4e">${ci.name}</td>
-          <td>${ci.qty}</td>
-          <td>$${ci.rate.toFixed(2)}</td>
-          <td style="font-weight:700">$${ci.amount.toFixed(2)}</td>
-          <td>${ci.taxable?'<span style="color:#b35a00;font-weight:700">T</span>':'—'}</td>
+          <td><input type="number" id="inv-sup-qty-${idx}" value="${ci.qty}" min="0" style="width:50px;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:3px 6px;font-size:11px;font-weight:700;outline:none"/></td>
+          <td><input type="number" step="0.01" id="inv-sup-rate-${idx}" value="${ci.rate.toFixed(2)}" style="width:70px;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:3px 6px;font-size:11px;outline:none"/></td>
+          <td style="font-weight:700" id="inv-sup-amt-${idx}">$${ci.amount.toFixed(2)}</td>
+          <td><input type="checkbox" id="inv-sup-tax-${idx}" ${ci.taxable?'checked':''}/></td>
         </tr>`).join('')}
         </tbody></table></div>`:''}
       </div>
@@ -8891,8 +9016,10 @@ async function generateInvoicePreview(){
       <!-- Equipment Fees -->
       <div style="background:#f4f6fa;border-radius:8px;padding:12px;margin-bottom:14px">
         <div style="font-size:11px;font-weight:800;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">🔧 Equipment Fees (Monthly)</div>
-        ${equipFees.map(f=>`<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:12px"><span style="color:#0d1f4e;font-weight:600">${f.desc}</span><span style="font-weight:700">$${parseFloat(f.amount).toFixed(2)}</span></div>`).join('')}
-        <div style="display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid #d0d5e0;margin-top:4px;font-size:12px;font-weight:800;color:#0d1f4e"><span>Equipment Total</span><span>$${equipFees.reduce((s,f)=>s+parseFloat(f.amount),0).toFixed(2)}</span></div>
+        ${equipFees.map((f,idx)=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:12px">
+          <input id="inv-eq-desc-${idx}" value="${f.desc}" style="flex:1;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 8px;font-size:11px;outline:none;margin-right:8px"/>
+          <span style="margin-right:4px">$</span><input type="number" step="0.01" id="inv-eq-amt-${idx}" value="${parseFloat(f.amount).toFixed(2)}" style="width:80px;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 8px;font-size:11px;font-weight:700;outline:none"/>
+        </div>`).join('')}
       </div>
 
       <!-- Manual Line Items -->
@@ -8939,7 +9066,7 @@ function recalcInvoiceCups(){
   const month = invoiceEditMonth;
   const year = invoiceEditYear;
   const periodStart = `${year}-${month}-01`;
-  const stations = getStationsForStore(store).filter(s=>s.station_name!=='MM');
+  const stations = getStationsForStore(store);
   let total = 0;
   for(const stn of stations){
     const key = stn.station_name.replace(/\s/g,'_');
@@ -8955,6 +9082,10 @@ function recalcInvoiceCups(){
   }
   const totalEl = document.getElementById('cups-total');
   if(totalEl) totalEl.textContent = total > 0 ? total.toLocaleString() : '-';
+  const adj = parseInt(document.getElementById('cup-adjustment')?.value)||0;
+  const billable = Math.max(0, total + adj);
+  const billableEl = document.getElementById('cups-billable');
+  if(billableEl) billableEl.textContent = billable > 0 ? billable.toLocaleString() : '-';
 }
 
 function addManualInvoiceLine(){
@@ -8968,7 +9099,7 @@ async function saveAndExportInvoice(store, periodStart, periodEnd){
 
   const month = invoiceEditMonth;
   const year = invoiceEditYear;
-  const stations = getStationsForStore(store).filter(s=>s.station_name!=='MM');
+  const stations = getStationsForStore(store);
   const invoiceDate = periodEnd;
   const invNum = contract.store_code + month + String(parseInt(periodEnd.slice(8,10))).padStart(2,'0') + year.slice(2);
 
@@ -8986,39 +9117,32 @@ async function saveAndExportInvoice(store, periodStart, periodEnd){
     totalCups += Math.max(0, curVal - prev);
     newReadings.push({id:Date.now()+Math.random()*1000|0, store_name:store, station_name:stn.station_name, reading_date:periodEnd, counter_value:curVal, notes:`Invoice ${invNum}`});
   }
+  const cupAdj = parseInt(document.getElementById('cup-adjustment')?.value)||0;
+  const billableCups = Math.max(0, totalCups + cupAdj);
 
   // Build line items
   const lineItems = [];
 
-  // Cup consumption
-  if(totalCups > 0){
-    lineItems.push({desc:contract.cup_label, qty:totalCups, rate:contract.cup_rate, amount:totalCups*contract.cup_rate, taxable:false});
+  // Cup consumption (use billable cups)
+  if(billableCups > 0){
+    lineItems.push({desc:contract.cup_label, qty:billableCups, rate:parseFloat(contract.cup_rate), amount:billableCups*parseFloat(contract.cup_rate), taxable:false});
   }
 
-  // Equipment fees
-  const equipFees = JSON.parse(typeof contract.equipment_fees === 'string' ? contract.equipment_fees : JSON.stringify(contract.equipment_fees||[]));
-  for(const f of equipFees){
-    lineItems.push({desc:f.desc, qty:1, rate:parseFloat(f.amount), amount:parseFloat(f.amount), taxable:false});
+  // Equipment fees — read from DOM
+  const equipFees = window._invEquipFees||[];
+  for(let i=0; i<equipFees.length; i++){
+    const desc = document.getElementById('inv-eq-desc-'+i)?.value || equipFees[i].desc;
+    const amt = parseFloat(document.getElementById('inv-eq-amt-'+i)?.value)||0;
+    if(amt > 0) lineItems.push({desc, qty:1, rate:amt, amount:amt, taxable:false});
   }
 
-  // Charged supplies
-  const periodOrders = storeOrders.filter(o=>o.store_name===store && o.status==='received' && o.created_at >= periodStart && o.created_at <= periodEnd+'T23:59:59');
-  const itemMap = {};
-  for(const order of periodOrders){
-    for(const item of (order.items||[])){
-      if(item.product_source !== 'coffee') continue;
-      const qty = parseInt(item.order_qty)||0;
-      if(qty <= 0) continue;
-      const cp = coffeeProducts.find(p=>p.id===item.product_id);
-      if(!cp) continue;
-      const sp = parseFloat(cp.salePrice||cp.sale_price||0);
-      if(sp <= 1) continue;
-      if(!itemMap[cp.name]) itemMap[cp.name] = {name:cp.name, qty:0, rate:sp, taxable:isNonFoodConsumable(cp.name)};
-      itemMap[cp.name].qty += qty;
-    }
-  }
-  for(const ci of Object.values(itemMap)){
-    lineItems.push({desc:ci.name, qty:ci.qty, rate:ci.rate, amount:ci.qty*ci.rate, taxable:ci.taxable});
+  // Charged supplies — read from DOM
+  const supplyItems = window._invSupplyItems||[];
+  for(let i=0; i<supplyItems.length; i++){
+    const qty = parseInt(document.getElementById('inv-sup-qty-'+i)?.value)||0;
+    const rate = parseFloat(document.getElementById('inv-sup-rate-'+i)?.value)||0;
+    const taxable = document.getElementById('inv-sup-tax-'+i)?.checked || false;
+    if(qty > 0) lineItems.push({desc:supplyItems[i].name, qty, rate, amount:qty*rate, taxable});
   }
 
   // Manual lines
