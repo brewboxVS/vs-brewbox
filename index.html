@@ -8222,12 +8222,27 @@ function parseHistCSV(csvText, store, fileName){
     const count = parseInt(row[countIdx])||0;
     if(!name || count===0) continue;
 
-    // Parse date
+    // Parse date - handle multiple formats
     const dateStr = (row[dateIdx]||'').trim();
     let dt;
-    const dm = dateStr.match(/(\d+)\/(\d+)\/(\d+)\s*(\d+):(\d+)/);
-    if(dm){ dt = new Date(parseInt(dm[3]),parseInt(dm[1])-1,parseInt(dm[2]),parseInt(dm[4]),parseInt(dm[5])); }
-    else { const dm2 = dateStr.match(/(\d+)\/(\d+)\/(\d+)/); if(dm2) dt = new Date(parseInt(dm2[3]),parseInt(dm2[1])-1,parseInt(dm2[2])); }
+    // Format 1: M/D/YYYY H:MM (Elevate)
+    const dm1 = dateStr.match(/^(\d+)\/(\d+)\/(\d+)\s+(\d+):(\d+)/);
+    if(dm1){ dt = new Date(parseInt(dm1[3]),parseInt(dm1[1])-1,parseInt(dm1[2]),parseInt(dm1[4]),parseInt(dm1[5])); }
+    // Format 2: YYYY-MM-DD HH:MM:SS AM/PM (Safran/Exodus/SMT)
+    if(!dt){
+      const dm2 = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d+):(\d+):?(\d*)\s*(AM|PM)?/i);
+      if(dm2){
+        let hr = parseInt(dm2[4]);
+        if(dm2[7] && dm2[7].toUpperCase()==='PM' && hr<12) hr+=12;
+        if(dm2[7] && dm2[7].toUpperCase()==='AM' && hr===12) hr=0;
+        dt = new Date(parseInt(dm2[1]),parseInt(dm2[2])-1,parseInt(dm2[3]),hr,parseInt(dm2[5]));
+      }
+    }
+    // Format 3: just YYYY-MM-DD
+    if(!dt){
+      const dm3 = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if(dm3) dt = new Date(parseInt(dm3[1]),parseInt(dm3[2])-1,parseInt(dm3[3]));
+    }
     if(!dt || isNaN(dt.getTime())) continue;
 
     if(!minDate || dt < minDate) minDate = dt;
