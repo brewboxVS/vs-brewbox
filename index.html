@@ -7192,9 +7192,9 @@ function renderSalesPreview(storeResults){
               <div style="min-width:100px"><label style="font-size:9px;font-weight:700;color:#5060a0">UPC</label><input id="awh-upc-${safeId}" value="${x.upc||''}" style="width:100%;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 6px;font-size:11px;font-family:monospace;outline:none"/></div>
               <div style="min-width:100px"><label style="font-size:9px;font-weight:700;color:#5060a0">CATEGORY</label><select id="awh-cat-${safeId}" style="width:100%;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 6px;font-size:11px;outline:none"><option value="">—</option>${STORE_CATEGORIES.map(c=>'<option value="'+c+'"'+(x.cat&&x.cat.toUpperCase()===c?' selected':'')+'>'+c+'</option>').join('')}</select></div>
               <div style="min-width:60px"><label style="font-size:9px;font-weight:700;color:#5060a0">SALE PRICE</label><input id="awh-price-${safeId}" type="number" step="0.01" value="${x.price||0}" style="width:100%;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 6px;font-size:11px;outline:none"/></div>
-              <div style="min-width:60px"><label style="font-size:9px;font-weight:700;color:#5060a0">UNIT COST</label><input id="awh-cost-${safeId}" type="number" step="0.01" value="0" style="width:100%;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 6px;font-size:11px;outline:none"/></div>
-              <div style="min-width:60px"><label style="font-size:9px;font-weight:700;color:#5060a0">COST/BOX</label><input id="awh-cpb-${safeId}" type="number" step="0.01" value="0" style="width:100%;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 6px;font-size:11px;outline:none"/></div>
-              <div style="min-width:40px"><label style="font-size:9px;font-weight:700;color:#5060a0">PCS/BOX</label><input id="awh-ppb-${safeId}" type="number" value="1" style="width:100%;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 6px;font-size:11px;outline:none"/></div>
+              <div style="min-width:60px"><label style="font-size:9px;font-weight:700;color:#5060a0">COST/BOX *</label><input id="awh-cpb-${safeId}" type="number" step="0.01" value="0" required oninput="document.getElementById('awh-uc-${safeId}').textContent='$'+(((parseFloat(this.value)||0)/(parseInt(document.getElementById('awh-ppb-${safeId}')?.value)||1)).toFixed(4))" style="width:100%;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 6px;font-size:11px;outline:none"/></div>
+              <div style="min-width:40px"><label style="font-size:9px;font-weight:700;color:#5060a0">PCS/BOX *</label><input id="awh-ppb-${safeId}" type="number" value="1" required oninput="document.getElementById('awh-uc-${safeId}').textContent='$'+(((parseFloat(document.getElementById('awh-cpb-${safeId}')?.value)||0)/(parseInt(this.value)||1)).toFixed(4))" style="width:100%;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 6px;font-size:11px;outline:none"/></div>
+              <div style="min-width:60px"><label style="font-size:9px;font-weight:700;color:#5060a0">UNIT COST</label><div id="awh-uc-${safeId}" style="padding:5px 6px;font-size:11px;font-weight:700;color:#5060a0">$0.0000</div></div>
             </div>
             <div style="display:flex;gap:8px;align-items:center">
               <label style="font-size:10px;font-weight:600;color:#5060a0"><input type="checkbox" id="awh-addstore-${safeId}" checked/> Also add to ${store} store inventory</label>
@@ -7217,10 +7217,15 @@ async function addUnmatchedToWarehouse(safeId, store){
   const upc = document.getElementById('awh-upc-'+safeId)?.value?.trim()||'';
   const cat1 = document.getElementById('awh-cat-'+safeId)?.value||'';
   const salePrice = parseFloat(document.getElementById('awh-price-'+safeId)?.value)||0;
-  const unitCost = parseFloat(document.getElementById('awh-cost-'+safeId)?.value)||0;
   const costPerBox = parseFloat(document.getElementById('awh-cpb-'+safeId)?.value)||0;
   const piecesPerBox = parseInt(document.getElementById('awh-ppb-'+safeId)?.value)||1;
+  const unitCost = piecesPerBox > 0 ? costPerBox / piecesPerBox : 0;
   const addToStore = document.getElementById('awh-addstore-'+safeId)?.checked;
+
+  // Validate required fields
+  if(!cat1){ showToast('Category is required'); return; }
+  if(!salePrice){ showToast('Sale price is required'); return; }
+  if(!costPerBox){ showToast('Cost/box is required'); return; }
 
   if(statusEl) statusEl.innerHTML = '<span style="color:#5060a0">⏳ Saving...</span>';
 
@@ -8468,97 +8473,6 @@ function renderInsightsWidgets(){
   // ════════════════════════════════════════════
   const lossReasons = ['Theft/Walkoff'];
 
-  // ── Coffee Revenue (for stores with coffee contracts) ──
-  const contract = !isAll ? coffeeContracts.find(c=>c.store_name===insightsStore) : null;
-  let coffeeHTML = '';
-  let coffeeTotalRevenue = 0, coffeeTotalCOGS = 0;
-
-  if(!isAll && contract){
-    // Pull invoices for this store in the date range
-    const storeInvoices = invoicesList.filter(inv=>inv.store_name===insightsStore && inv.period_end >= from && inv.period_start <= to);
-    let cupRevenue=0, cupCount=0, supplyRevenue=0, equipRevenue=0;
-    for(const inv of storeInvoices){
-      const items = typeof inv.line_items === 'string' ? JSON.parse(inv.line_items) : (inv.line_items||[]);
-      for(const li of items){
-        if(li.desc && li.desc.toLowerCase().includes('consumption') && li.desc.toLowerCase().includes('cup')){
-          cupRevenue += parseFloat(li.amount)||0;
-          cupCount += parseInt(li.qty)||0;
-        } else if(li.desc && (li.desc.toLowerCase().includes('lease') || li.desc.toLowerCase().includes('machine') || li.desc.toLowerCase().includes('cooler') || li.desc.toLowerCase().includes('rental'))){
-          equipRevenue += parseFloat(li.amount)||0;
-        } else {
-          supplyRevenue += parseFloat(li.amount)||0;
-        }
-      }
-    }
-    coffeeTotalRevenue = cupRevenue + supplyRevenue + equipRevenue;
-
-    // Coffee COGS: all coffee items from received store orders in period
-    const coffeeOrders = storeOrders.filter(o=>o.store_name===insightsStore && o.status==='received' && o.created_at >= from && o.created_at <= to+'T23:59:59');
-    let inputCOGS = 0, supplyCOGS = 0;
-    for(const order of coffeeOrders){
-      for(const item of (order.items||[])){
-        if(item.product_source !== 'coffee') continue;
-        const qty = parseInt(item.order_qty)||0;
-        if(qty <= 0) continue;
-        const cp = coffeeProducts.find(p=>p.id===item.product_id);
-        if(!cp) continue;
-        const uc = parseFloat(cp.unitCost||cp.unit_cost||0);
-        if(cp.isInput){
-          inputCOGS += uc * qty; // beans, powders, creamers — no direct revenue
-        } else {
-          supplyCOGS += uc * qty; // filter rolls, cups, etc. — has revenue
-        }
-      }
-    }
-    coffeeTotalCOGS = inputCOGS + supplyCOGS;
-    const coffeeMargin = coffeeTotalRevenue - coffeeTotalCOGS;
-    const coffeeMarginPct = coffeeTotalRevenue > 0 ? ((coffeeMargin/coffeeTotalRevenue)*100).toFixed(1) : '0.0';
-
-    if(coffeeTotalRevenue > 0 || coffeeTotalCOGS > 0){
-      coffeeHTML = `
-      <div class="card" style="border-top:3px solid #6b2fa0;margin-bottom:14px">
-        <div class="card-title" style="margin-bottom:12px;color:#6b2fa0">☕ Coffee Service Revenue</div>
-        <div class="stats-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:14px">
-          <div class="stat-card" style="border-top-color:#6b2fa0"><div class="stat-val" style="color:#6b2fa0">${cupCount.toLocaleString()}</div><div class="stat-label">Cups</div><div class="stat-sub">@ $${contract.cup_rate}/cup</div></div>
-          <div class="stat-card" style="border-top-color:#1a7a45"><div class="stat-val" style="color:#1a7a45">$${cupRevenue.toFixed(0)}</div><div class="stat-label">Cup Revenue</div></div>
-          <div class="stat-card"><div class="stat-val">$${supplyRevenue.toFixed(0)}</div><div class="stat-label">Supply Revenue</div></div>
-          <div class="stat-card"><div class="stat-val">$${equipRevenue.toFixed(0)}</div><div class="stat-label">Equipment</div></div>
-          <div class="stat-card" style="border-top-color:#0d1f4e"><div class="stat-val" style="color:#0d1f4e">$${coffeeTotalRevenue.toFixed(0)}</div><div class="stat-label">Total Coffee Rev</div></div>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
-          <div style="background:#f4f6fa;border-radius:7px;padding:10px;text-align:center">
-            <div style="font-size:10px;color:#7080a0;margin-bottom:2px">Input COGS</div>
-            <div style="font-size:14px;font-weight:800;color:#5060a0">$${inputCOGS.toFixed(0)}</div>
-            <div style="font-size:9px;color:#7080a0">beans, powders, creamers</div>
-          </div>
-          <div style="background:#f4f6fa;border-radius:7px;padding:10px;text-align:center">
-            <div style="font-size:10px;color:#7080a0;margin-bottom:2px">Supply COGS</div>
-            <div style="font-size:14px;font-weight:800;color:#5060a0">$${supplyCOGS.toFixed(0)}</div>
-            <div style="font-size:9px;color:#7080a0">filters, cups, utensils</div>
-          </div>
-          <div style="background:${coffeeMargin>=0?'#e6f4ee':'#fde8e8'};border-radius:7px;padding:10px;text-align:center">
-            <div style="font-size:10px;color:#7080a0;margin-bottom:2px">Coffee Margin</div>
-            <div style="font-size:14px;font-weight:800;color:${coffeeMargin>=0?'#1a7a45':'#b01c1c'}">$${coffeeMargin.toFixed(0)}</div>
-            <div style="font-size:9px;color:#7080a0">${coffeeMarginPct}%</div>
-          </div>
-        </div>
-        ${storeInvoices.length===0?'<div style="font-size:11px;color:#b35a00;margin-top:10px">⚠ No invoices found for this period. Create an invoice to see coffee revenue.</div>':''}
-      </div>`;
-    } else if(storeInvoices.length===0){
-      coffeeHTML = `<div class="card" style="border-top:3px solid #6b2fa0;margin-bottom:14px;padding:16px;text-align:center">
-        <div style="font-size:13px;font-weight:700;color:#6b2fa0;margin-bottom:4px">☕ Coffee Service</div>
-        <div style="font-size:11px;color:#7080a0">No invoices for this period. Create one in Reports → Invoices to see coffee revenue here.</div>
-      </div>`;
-    }
-  }
-
-  // ── Combined totals (micromarket + coffee) ──
-  const combinedRevenue = totalGross + coffeeTotalRevenue;
-  const combinedCOGS = totalCOGS + coffeeTotalCOGS;
-  const combinedMargin = combinedRevenue - combinedCOGS;
-  const combinedMarginPct = combinedRevenue > 0 ? ((combinedMargin/combinedRevenue)*100).toFixed(1) : '0.0';
-  const hasCoffeeContract = !!contract;
-
   // ── Aggregate sales ──
   const totalRevenue = sales.reduce((s,r)=>s+parseFloat(r.total_price||0),0);
   const totalGross = sales.reduce((s,r)=>s+parseFloat(r.unit_price||0),0);
@@ -8648,6 +8562,76 @@ function renderInsightsWidgets(){
   const totalLossCost = lossList.reduce((s,r)=>s+r.cost,0);
   const totalLostRevenue = lossList.reduce((s,r)=>s+r.lostRevenue,0);
   const totalLossUnits = lossList.reduce((s,r)=>s+r.units,0);
+
+  // ── Coffee Revenue (for stores with coffee contracts) ──
+  const contract = !isAll ? coffeeContracts.find(c=>c.store_name===insightsStore) : null;
+  let coffeeHTML = '';
+  let coffeeTotalRevenue = 0, coffeeTotalCOGS = 0;
+
+  if(!isAll && contract){
+    const storeInvoices = invoicesList.filter(inv=>inv.store_name===insightsStore && inv.period_end >= from && inv.period_start <= to);
+    let cupRevenue=0, cupCount=0, supplyRevenue=0, equipRevenue=0;
+    for(const inv of storeInvoices){
+      const items = typeof inv.line_items === 'string' ? JSON.parse(inv.line_items) : (inv.line_items||[]);
+      for(const li of items){
+        if(li.desc && li.desc.toLowerCase().includes('consumption') && li.desc.toLowerCase().includes('cup')){
+          cupRevenue += parseFloat(li.amount)||0;
+          cupCount += parseInt(li.qty)||0;
+        } else if(li.desc && (li.desc.toLowerCase().includes('lease') || li.desc.toLowerCase().includes('machine') || li.desc.toLowerCase().includes('cooler') || li.desc.toLowerCase().includes('rental'))){
+          equipRevenue += parseFloat(li.amount)||0;
+        } else {
+          supplyRevenue += parseFloat(li.amount)||0;
+        }
+      }
+    }
+    coffeeTotalRevenue = cupRevenue + supplyRevenue + equipRevenue;
+
+    const coffeeOrders = storeOrders.filter(o=>o.store_name===insightsStore && o.status==='received' && o.created_at >= from && o.created_at <= to+'T23:59:59');
+    let inputCOGS = 0, supplyCOGS = 0;
+    for(const order of coffeeOrders){
+      for(const item of (order.items||[])){
+        if(item.product_source !== 'coffee') continue;
+        const qty = parseInt(item.order_qty)||0;
+        if(qty <= 0) continue;
+        const cp = coffeeProducts.find(p=>p.id===item.product_id);
+        if(!cp) continue;
+        const uc = parseFloat(cp.unitCost||cp.unit_cost||0);
+        if(cp.isInput){ inputCOGS += uc * qty; } else { supplyCOGS += uc * qty; }
+      }
+    }
+    coffeeTotalCOGS = inputCOGS + supplyCOGS;
+    const coffeeMargin = coffeeTotalRevenue - coffeeTotalCOGS;
+    const coffeeMarginPct = coffeeTotalRevenue > 0 ? ((coffeeMargin/coffeeTotalRevenue)*100).toFixed(1) : '0.0';
+
+    if(coffeeTotalRevenue > 0 || coffeeTotalCOGS > 0){
+      coffeeHTML = `
+      <div class="card" style="border-top:3px solid #6b2fa0;margin-bottom:14px">
+        <div class="card-title" style="margin-bottom:12px;color:#6b2fa0">☕ Coffee Service Revenue</div>
+        <div class="stats-grid" style="grid-template-columns:repeat(5,1fr);margin-bottom:14px">
+          <div class="stat-card" style="border-top-color:#6b2fa0"><div class="stat-val" style="color:#6b2fa0">${cupCount.toLocaleString()}</div><div class="stat-label">Cups</div><div class="stat-sub">@ $${contract.cup_rate}/cup</div></div>
+          <div class="stat-card" style="border-top-color:#1a7a45"><div class="stat-val" style="color:#1a7a45">$${cupRevenue.toFixed(0)}</div><div class="stat-label">Cup Revenue</div></div>
+          <div class="stat-card"><div class="stat-val">$${supplyRevenue.toFixed(0)}</div><div class="stat-label">Supply Revenue</div></div>
+          <div class="stat-card"><div class="stat-val">$${equipRevenue.toFixed(0)}</div><div class="stat-label">Equipment</div></div>
+          <div class="stat-card" style="border-top-color:#0d1f4e"><div class="stat-val" style="color:#0d1f4e">$${coffeeTotalRevenue.toFixed(0)}</div><div class="stat-label">Total Coffee Rev</div></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+          <div style="background:#f4f6fa;border-radius:7px;padding:10px;text-align:center"><div style="font-size:10px;color:#7080a0;margin-bottom:2px">Input COGS</div><div style="font-size:14px;font-weight:800;color:#5060a0">$${inputCOGS.toFixed(0)}</div><div style="font-size:9px;color:#7080a0">beans, powders, creamers</div></div>
+          <div style="background:#f4f6fa;border-radius:7px;padding:10px;text-align:center"><div style="font-size:10px;color:#7080a0;margin-bottom:2px">Supply COGS</div><div style="font-size:14px;font-weight:800;color:#5060a0">$${supplyCOGS.toFixed(0)}</div><div style="font-size:9px;color:#7080a0">filters, cups, utensils</div></div>
+          <div style="background:${coffeeMargin>=0?'#e6f4ee':'#fde8e8'};border-radius:7px;padding:10px;text-align:center"><div style="font-size:10px;color:#7080a0;margin-bottom:2px">Coffee Margin</div><div style="font-size:14px;font-weight:800;color:${coffeeMargin>=0?'#1a7a45':'#b01c1c'}">$${coffeeMargin.toFixed(0)}</div><div style="font-size:9px;color:#7080a0">${coffeeMarginPct}%</div></div>
+        </div>
+        ${storeInvoices.length===0?'<div style="font-size:11px;color:#b35a00;margin-top:10px">⚠ No invoices found for this period. Create an invoice to see coffee revenue.</div>':''}
+      </div>`;
+    } else if(storeInvoices.length===0){
+      coffeeHTML = `<div class="card" style="border-top:3px solid #6b2fa0;margin-bottom:14px;padding:16px;text-align:center"><div style="font-size:13px;font-weight:700;color:#6b2fa0;margin-bottom:4px">☕ Coffee Service</div><div style="font-size:11px;color:#7080a0">No invoices for this period. Create one in Reports → Invoices to see coffee revenue here.</div></div>`;
+    }
+  }
+
+  // ── Combined totals (micromarket + coffee) ──
+  const combinedRevenue = totalGross + coffeeTotalRevenue;
+  const combinedCOGS = totalCOGS + coffeeTotalCOGS;
+  const combinedMargin = combinedRevenue - combinedCOGS;
+  const combinedMarginPct = combinedRevenue > 0 ? ((combinedMargin/combinedRevenue)*100).toFixed(1) : '0.0';
+  const hasCoffeeContract = !!contract;
 
   // ── Cross-store comparison (only for ALL) ──
   let crossStoreHTML = '';
