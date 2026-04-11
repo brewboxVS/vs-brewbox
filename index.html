@@ -5119,49 +5119,156 @@ function renderWhOrderDetail(order){
               <th style="min-width:110px">✓ BOUGHT REC.</th>
               <th style="min-width:90px">ACTUAL CASES</th>
               <th>QTY TO ADD</th>
-              <th>NOTES</th>
+              <th style="min-width:60px">NOT AVAIL</th>
             </tr></thead>
             <tbody>
             ${items.map((item,idx)=>{
               const globalIdx = order.items.indexOf(item);
-              const casesUsed = item.bought_rec ? item.rec_cases : (item.actual_cases!==''?parseFloat(item.actual_cases)||0:0);
+              const isNA = item.not_available === true;
+              const casesUsed = isNA ? 0 : (item.bought_rec ? item.rec_cases : (item.actual_cases!==''?parseFloat(item.actual_cases)||0:0));
               const qtyAdd = casesUsed * item.pieces_per_box;
-              const confirmed = item.bought_rec || (item.actual_cases!==''&&item.actual_cases>0);
-              return `<tr style="background:${confirmed?'#f0fff4':''}">
-                <td style="padding-left:4px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:200px;line-height:1.3">${item.product_name}</td>
+              const confirmed = !isNA && (item.bought_rec || (item.actual_cases!==''&&item.actual_cases>0));
+              return `<tr style="background:${isNA?'#fef0f0':confirmed?'#f0fff4':''}">
+                <td style="padding-left:4px;font-weight:600;color:${isNA?'#b0b8cc':'#0d1f4e'};white-space:normal;max-width:200px;line-height:1.3;${isNA?'text-decoration:line-through':''}">${item.product_name}</td>
                 <td style="font-size:10px;color:#5060a0">${item.cat1||'—'}</td>
                 <td style="font-weight:700;color:${item.current_qty<=item.min_level?'#b01c1c':'#0d1f4e'}">${item.current_qty}</td>
                 <td style="color:#7080a0">${item.max_level}</td>
                 <td style="color:#5060a0">${item.pieces_per_box}</td>
                 <td style="font-weight:700;color:#0d1f4e">${item.rec_cases}</td>
                 <td>
-                  ${isOpen?`<label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-                    <input type="checkbox" ${item.bought_rec?'checked':''} 
+                  ${isOpen?`<label style="display:flex;align-items:center;gap:6px;cursor:pointer${isNA?';opacity:0.3;pointer-events:none':''}">
+                    <input type="checkbox" ${item.bought_rec?'checked':''} ${isNA?'disabled':''}
                       onchange="updateWhItemBoughtRec(${order.id},${globalIdx},this.checked)"
                       style="width:16px;height:16px;accent-color:#1a7a45;cursor:pointer"/>
                     <span style="font-size:11px;color:${item.bought_rec?'#1a7a45':'#7080a0'}">${item.bought_rec?'✓ Yes':''}</span>
                   </label>`:`<span style="font-size:11px;color:${item.bought_rec?'#1a7a45':'#7080a0'}">${item.bought_rec?'✓ Yes':'—'}</span>`}
                 </td>
                 <td>
-                  ${isOpen?`<input type="number" value="${item.actual_cases||''}" placeholder="—" min="0"
-                    style="width:70px;background:#f4f6fa;border:1.5px solid ${!item.bought_rec&&item.actual_cases!==''?'#c9a84c':'#d0d5e0'};border-radius:5px;padding:3px 7px;font-size:12px;color:#1a2340;outline:none"
+                  ${isOpen?`<input type="number" value="${isNA?'0':(item.actual_cases||'')}" placeholder="—" min="0"
+                    style="width:70px;background:#f4f6fa;border:1.5px solid ${!item.bought_rec&&item.actual_cases!==''?'#c9a84c':'#d0d5e0'};border-radius:5px;padding:3px 7px;font-size:12px;color:#1a2340;outline:none;${isNA||item.bought_rec?'opacity:0.4':''}"
                     oninput="updateWhItemActualCases(${order.id},${globalIdx},this.value)"
-                    ${item.bought_rec?'disabled style="opacity:0.4"':''}
+                    ${isNA||item.bought_rec?'disabled':''}
                   />`:`<span style="color:#5060a0;font-weight:600">${item.actual_cases||'—'}</span>`}
                 </td>
-                <td style="font-weight:700;color:${qtyAdd>0?'#1a7a45':'#d0d5e0'}">${qtyAdd>0?'+'+qtyAdd:'—'}</td>
-                <td style="font-size:11px;color:#7080a0;max-width:120px;white-space:normal">${item.notes||''}</td>
+                <td style="font-weight:700;color:${isNA?'#b01c1c':qtyAdd>0?'#1a7a45':'#d0d5e0'}">${isNA?'N/A':qtyAdd>0?'+'+qtyAdd:'—'}</td>
+                <td>
+                  ${isOpen?`<label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+                    <input type="checkbox" ${isNA?'checked':''}
+                      onchange="updateWhItemNA(${order.id},${globalIdx},this.checked)"
+                      style="width:15px;height:15px;accent-color:#b01c1c;cursor:pointer"/>
+                    <span style="font-size:10px;color:${isNA?'#b01c1c':'#7080a0'}">${isNA?'N/A':''}</span>
+                  </label>`:`${isNA?'<span style="font-size:10px;color:#b01c1c;font-weight:700">N/A</span>':''}`}
+                </td>
               </tr>`;
             }).join('')}
             </tbody>
           </table>
         </div>`).join('')}
+
+      ${isOpen?`
+      <div style="border-top:2px solid #e8ecf4;padding-top:10px;margin-top:6px">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap" id="wh-add-item-${order.id}">
+          <div style="font-size:10px;font-weight:700;color:#5060a0;letter-spacing:1px;text-transform:uppercase">ADD ITEM</div>
+          <div style="position:relative;flex:1;min-width:200px">
+            <input type="text" id="wh-add-search-${order.id}" placeholder="Search product..." oninput="filterWhAddItem(${order.id},this.value)"
+              style="width:100%;background:#f4f6fa;border:1.5px solid #d0d5e0;border-radius:6px;padding:6px 10px;font-size:12px;outline:none"/>
+            <div id="wh-add-results-${order.id}" style="display:none;position:absolute;top:100%;left:0;right:0;max-height:200px;overflow-y:auto;background:#fff;border:1.5px solid #d0d5e0;border-radius:0 0 6px 6px;z-index:100;box-shadow:0 4px 12px rgba(0,0,0,0.1)"></div>
+          </div>
+          <div style="display:flex;align-items:center;gap:4px">
+            <label style="font-size:10px;color:#5060a0;font-weight:600">Cases:</label>
+            <input type="number" id="wh-add-cases-${order.id}" value="1" min="1" style="width:50px;background:#f4f6fa;border:1.5px solid #d0d5e0;border-radius:5px;padding:4px 6px;font-size:12px;outline:none"/>
+          </div>
+          <button onclick="addItemToWhOrder(${order.id})" style="background:#1a7a45;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">+ Add</button>
+        </div>
+        <div id="wh-add-selected-${order.id}" style="font-size:11px;color:#1a7a45;margin-top:4px"></div>
+      </div>`:''}
     </div>`;
 }
 
 function toggleWhOrderExpand(id){
   if(whExpandedIds.has(id)) whExpandedIds.delete(id);
   else whExpandedIds.add(id);
+  renderWhOrders();
+}
+
+// ── Add item to open warehouse order ──
+let whAddSelectedProduct = null;
+
+function filterWhAddItem(orderId, query){
+  const resultsEl = document.getElementById('wh-add-results-'+orderId);
+  if(!resultsEl) return;
+  if(!query || query.length < 2){ resultsEl.style.display='none'; return; }
+
+  const order = whOrders.find(o=>o.id===orderId);
+  const existingIds = new Set((order?.items||[]).map(i=>i.product_id));
+  const q = query.toLowerCase();
+  const matches = products.filter(p=>p.active && !existingIds.has(p.id) && (p.name.toLowerCase().includes(q) || (p.upc&&p.upc.includes(q)))).slice(0,8);
+
+  if(matches.length===0){ resultsEl.style.display='none'; return; }
+
+  resultsEl.style.display='block';
+  resultsEl.innerHTML = matches.map(p=>`
+    <div onclick="selectWhAddItem(${orderId},${p.id})" style="padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid #f0f2f8;display:flex;justify-content:space-between;align-items:center"
+      onmouseover="this.style.background='#f4f6fa'" onmouseout="this.style.background='#fff'">
+      <span style="font-weight:600;color:#0d1f4e">${p.name}</span>
+      <span style="font-size:10px;color:#7080a0">${p.piecesPerBox} pcs/case · qty: ${p.qty}</span>
+    </div>
+  `).join('');
+}
+
+function selectWhAddItem(orderId, productId){
+  whAddSelectedProduct = products.find(p=>p.id===productId);
+  if(!whAddSelectedProduct) return;
+  const searchEl = document.getElementById('wh-add-search-'+orderId) || document.getElementById('mob-wh-add-search-'+orderId);
+  const resultsEl = document.getElementById('wh-add-results-'+orderId);
+  const selectedEl = document.getElementById('wh-add-selected-'+orderId);
+  if(searchEl) searchEl.value = whAddSelectedProduct.name;
+  if(resultsEl) resultsEl.style.display = 'none';
+  if(selectedEl) selectedEl.textContent = `Selected: ${whAddSelectedProduct.name} (${whAddSelectedProduct.piecesPerBox} pcs/case)`;
+}
+
+async function addItemToWhOrder(orderId){
+  if(!whAddSelectedProduct){ showToast('Search and select a product first'); return; }
+  const order = whOrders.find(o=>o.id===orderId);
+  if(!order){ showToast('Order not found'); return; }
+
+  const casesEl = document.getElementById('wh-add-cases-'+orderId);
+  const cases = parseInt(casesEl?.value)||1;
+  const p = whAddSelectedProduct;
+
+  // Determine vendor (first vendor from product, or 'Other')
+  const vendor = p.vendors && p.vendors.length > 0 ? p.vendors[0] : 'Other';
+
+  const newItem = {
+    product_id: p.id,
+    product_name: p.name,
+    cat1: p.cat1||'',
+    vendor: vendor,
+    current_qty: p.qty,
+    min_level: p.minLevel,
+    max_level: p.maxLevel,
+    pieces_per_box: p.piecesPerBox,
+    rec_cases: cases,
+    bought_rec: true,
+    actual_cases: '',
+    notes: 'Added manually'
+  };
+
+  order.items.push(newItem);
+
+  // Save to Supabase
+  if(useSupabase){
+    try{
+      await sbFetch('warehouse_orders?id=eq.'+orderId,{
+        method:'PATCH',
+        prefer:'return=minimal',
+        body:JSON.stringify({items:order.items})
+      });
+    }catch(e){ console.error('Failed to save added item:', e); }
+  }
+
+  whAddSelectedProduct = null;
+  showToast(`✓ Added ${p.name} (${cases} case${cases>1?'s':''}) to order`);
   renderWhOrders();
 }
 
@@ -5185,6 +5292,18 @@ function updateWhItemActualCases(orderId, idx, val){
   if(!order) return;
   order.items[idx].actual_cases = val;
   saveWhOrderDebounced(order);
+}
+
+function updateWhItemNA(orderId, idx, checked){
+  const order = whOrders.find(o=>o.id===orderId);
+  if(!order) return;
+  order.items[idx].not_available = checked;
+  if(checked){
+    order.items[idx].bought_rec = false;
+    order.items[idx].actual_cases = 0;
+  }
+  saveWhOrderDebounced(order);
+  renderWhOrders();
 }
 
 let whSaveTimer = null;
@@ -10238,14 +10357,22 @@ function renderMobWhOrderCard(order, isOpen){
         <div style="font-size:10px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:1px;margin:8px 0 4px">${vendor}</div>
         ${items.map((item,_)=>{
           const globalIdx = order.items.indexOf(item);
-          const casesUsed = item.bought_rec ? item.rec_cases : (item.actual_cases!==''?parseFloat(item.actual_cases)||0:0);
+          const isNA = item.not_available === true;
+          const casesUsed = isNA ? 0 : (item.bought_rec ? item.rec_cases : (item.actual_cases!==''?parseFloat(item.actual_cases)||0:0));
           const qtyAdd = casesUsed * item.pieces_per_box;
-          return `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #f4e8c0">
+          return `<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #f4e8c0;${isNA?'opacity:0.5':''}">
             <div style="flex:1;min-width:0">
-              <div style="font-size:13px;font-weight:600;color:#0d1f4e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.product_name}</div>
+              <div style="font-size:13px;font-weight:600;color:${isNA?'#b0b8cc':'#0d1f4e'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${isNA?'text-decoration:line-through':''}">${item.product_name}</div>
               <div style="font-size:11px;color:#7080a0">Rec: ${item.rec_cases} cases · ${item.pieces_per_box}pcs/case</div>
             </div>
             <div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex-shrink:0">
+              ${isNA?`
+              <div style="font-size:11px;color:#b01c1c;font-weight:700">N/A</div>
+              <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
+                <input type="checkbox" checked onchange="updateWhItemNA(${order.id},${globalIdx},false)"
+                  style="width:18px;height:18px;accent-color:#b01c1c;cursor:pointer"/>
+                <span style="font-size:10px;color:#b01c1c">Undo</span>
+              </label>`:`
               <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
                 <input type="checkbox" ${item.bought_rec?'checked':''} onchange="updateWhItemBoughtRec(${order.id},${globalIdx},this.checked)"
                   style="width:20px;height:20px;accent-color:#1a7a45;cursor:pointer"/>
@@ -10255,10 +10382,32 @@ function renderMobWhOrderCard(order, isOpen){
                 oninput="updateWhItemActualCases(${order.id},${globalIdx},this.value)"
                 style="width:72px;padding:6px;border:1.5px solid ${!item.bought_rec&&item.actual_cases?'#c9a84c':'#d0d5e0'};border-radius:6px;font-size:14px;font-weight:700;text-align:center;outline:none;${item.bought_rec?'opacity:0.4':''}"/>
               ${qtyAdd>0?`<div style="font-size:10px;color:#1a7a45;font-weight:700">+${qtyAdd} units</div>`:''}
+              <label style="display:flex;align-items:center;gap:4px;cursor:pointer;margin-top:2px">
+                <input type="checkbox" onchange="updateWhItemNA(${order.id},${globalIdx},true)"
+                  style="width:16px;height:16px;accent-color:#b01c1c;cursor:pointer"/>
+                <span style="font-size:10px;color:#7080a0">N/A</span>
+              </label>`}
             </div>
           </div>`;
         }).join('')}
       `).join('')}
+
+      <!-- Add Item -->
+      <div style="border-top:2px solid #f0e8cc;padding-top:10px;margin-top:8px">
+        <div style="font-size:10px;font-weight:700;color:#5060a0;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px">ADD ITEM</div>
+        <input type="text" id="mob-wh-add-search-${order.id}" placeholder="Search product..." oninput="filterWhAddItem(${order.id},this.value)"
+          style="width:100%;background:#f4f6fa;border:1.5px solid #d0d5e0;border-radius:8px;padding:10px 12px;font-size:14px;outline:none;box-sizing:border-box;margin-bottom:4px"/>
+        <div id="wh-add-results-${order.id}" style="display:none;max-height:180px;overflow-y:auto;background:#fff;border:1.5px solid #d0d5e0;border-radius:0 0 8px 8px;margin-top:-5px;z-index:100;position:relative"></div>
+        <div id="wh-add-selected-${order.id}" style="font-size:12px;color:#1a7a45;margin:4px 0"></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <div style="display:flex;align-items:center;gap:4px">
+            <label style="font-size:11px;color:#5060a0;font-weight:600">Cases:</label>
+            <input type="number" id="wh-add-cases-${order.id}" value="1" min="1" style="width:55px;background:#f4f6fa;border:1.5px solid #d0d5e0;border-radius:6px;padding:8px;font-size:14px;font-weight:700;text-align:center;outline:none"/>
+          </div>
+          <button onclick="addItemToWhOrder(${order.id})" style="flex:1;background:#1a7a45;color:#fff;border:none;border-radius:8px;padding:10px;font-size:13px;font-weight:700;cursor:pointer">+ Add Item</button>
+        </div>
+      </div>
+
       <div style="display:flex;gap:8px;margin-top:12px">
         <button onclick="exportWhOrderExcel(whOrders.find(o=>o.id===${order.id}))" style="flex:1;padding:11px;background:#0d1f4e;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">📊 Export</button>
         <button id="wh-recv-btn-${order.id}" onclick="receiveWhOrder(${order.id})" style="flex:2;padding:11px;background:#1a7a45;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer">✓ Receive</button>
