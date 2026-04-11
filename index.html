@@ -9255,6 +9255,7 @@ async function generateInvoicePreview(){
   const contract = coffeeContracts.find(c=>c.store_name===store);
   if(!contract){ showToast('No coffee contract for '+store); return; }
 
+  // Selected month = consumption month = invoice month
   const periodStart = `${year}-${month}-01`;
   const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
   const periodEnd = `${year}-${month}-${String(lastDay).padStart(2,'0')}`;
@@ -9263,16 +9264,17 @@ async function generateInvoicePreview(){
   // Get stations for this store
   const stations = getStationsForStore(store);
 
-  // Get previous readings for each station
+  // Previous readings = latest reading BEFORE this month (auto-populated)
+  // Current readings = reading within this month (auto-populated if exists, otherwise entered manually)
   const stationReadings = stations.map(stn=>{
     const prevReadings = cupReadings.filter(r=>r.store_name===store && r.station_name===stn.station_name && r.reading_date < periodStart);
-    const prev = prevReadings.length > 0 ? prevReadings[0] : null; // already sorted desc
+    const prev = prevReadings.length > 0 ? prevReadings[0] : null; // sorted desc
     const curReadings = cupReadings.filter(r=>r.store_name===store && r.station_name===stn.station_name && r.reading_date >= periodStart && r.reading_date <= periodEnd);
     const cur = curReadings.length > 0 ? curReadings[0] : null;
     return {station:stn, prev, cur};
   });
 
-  // Get charged coffee supplies from received store orders in this period
+  // Get charged coffee supplies from received store orders in this month
   const chargedItems = [];
   const periodOrders = storeOrders.filter(o=>o.store_name===store && o.status==='received' && o.created_at >= periodStart && o.created_at <= periodEnd+'T23:59:59');
   for(const order of periodOrders){
@@ -9315,32 +9317,40 @@ async function generateInvoicePreview(){
       <div style="background:#f4f6fa;border-radius:8px;padding:12px;margin-bottom:14px">
         <div style="font-size:11px;font-weight:800;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px">☕ Cup Readings by Station</div>
         <div style="overflow-x:auto"><table><thead><tr>
-          <th style="padding-left:8px">STATION</th><th>PREV READING</th><th>CURRENT READING</th><th>CUPS CONSUMED</th>
+          <th style="padding-left:8px">STATION</th><th>PREV TOTAL</th><th>CUR TOTAL</th><th>PREV HW</th><th>CUR HW</th><th>TOTAL CUPS</th><th>HOT WATER</th><th>BILLABLE</th>
         </tr></thead><tbody>
         ${stationReadings.map(sr=>{
           const prevVal = sr.prev ? sr.prev.counter_value : 0;
+          const prevHW = sr.prev ? (sr.prev.hot_water_value||0) : 0;
           const curVal = sr.cur ? sr.cur.counter_value : '';
+          const curHW = sr.cur ? (sr.cur.hot_water_value||0) : '';
+          const key = sr.station.station_name.replace(/\s/g,'_');
           return `<tr>
             <td style="padding-left:8px;font-weight:600;color:#6b2fa0">${sr.station.station_name}${sr.station.station_label?' — '+sr.station.station_label:''}</td>
-            <td style="color:#7080a0">${prevVal>0?prevVal.toLocaleString():'<span style="color:#b35a00;font-size:10px">No prior reading</span>'}</td>
-            <td><input type="number" id="cup-${sr.station.station_name.replace(/\s/g,'_')}" value="${curVal}" placeholder="Enter reading" style="width:100px;background:#fff;border:1.5px solid #d0d5e0;border-radius:5px;padding:5px 8px;font-size:12px;font-weight:700;outline:none"/></td>
-            <td style="font-weight:700;color:#1a7a45" id="cups-calc-${sr.station.station_name.replace(/\s/g,'_')}">${curVal?Math.max(0,curVal-prevVal):'-'}</td>
+            <td style="color:#7080a0;font-size:11px">${prevVal>0?prevVal.toLocaleString():'<span style="color:#b35a00;font-size:10px">—</span>'}</td>
+            <td><input type="number" id="cup-${key}" value="${curVal}" placeholder="Total" oninput="recalcInvoiceCups()" style="width:85px;background:#fff;border:1.5px solid #d0d5e0;border-radius:5px;padding:5px 6px;font-size:12px;font-weight:700;outline:none"/></td>
+            <td style="color:#7080a0;font-size:11px">${prevHW>0?prevHW.toLocaleString():'—'}</td>
+            <td><input type="number" id="hw-${key}" value="${curHW}" placeholder="HW" oninput="recalcInvoiceCups()" style="width:85px;background:#fff;border:1.5px solid #e0c8c8;border-radius:5px;padding:5px 6px;font-size:12px;outline:none;color:#b35a00"/></td>
+            <td style="font-weight:600;color:#0d1f4e" id="cups-calc-${key}">-</td>
+            <td style="font-weight:600;color:#b35a00" id="hw-calc-${key}">-</td>
+            <td style="font-weight:700;color:#1a7a45" id="net-calc-${key}">-</td>
           </tr>`;
         }).join('')}
         <tr style="border-top:2px solid #d0d5e0">
-          <td style="padding-left:8px;font-weight:800;color:#0d1f4e" colspan="3">TOTAL CUPS</td>
-          <td style="font-weight:800;color:#0d1f4e;font-size:14px" id="cups-total">-</td>
+          <td style="padding-left:8px;font-weight:800;color:#0d1f4e" colspan="5">TOTALS</td>
+          <td style="font-weight:800;color:#0d1f4e" id="cups-total">-</td>
+          <td style="font-weight:800;color:#b35a00" id="hw-total">-</td>
+          <td style="font-weight:800;color:#1a7a45;font-size:14px" id="net-total">-</td>
         </tr>
         <tr>
-          <td style="padding-left:8px;font-weight:600;color:#5060a0" colspan="3">Adjustment (+/-)</td>
+          <td style="padding-left:8px;font-weight:600;color:#5060a0" colspan="7">Adjustment (+/-)</td>
           <td><input type="number" id="cup-adjustment" value="0" oninput="recalcInvoiceCups()" style="width:80px;background:#fff;border:1.5px solid #d0d5e0;border-radius:5px;padding:5px 8px;font-size:12px;font-weight:700;outline:none;color:#5060a0"/></td>
         </tr>
         <tr>
-          <td style="padding-left:8px;font-weight:800;color:#1a7a45" colspan="3">BILLABLE CUPS</td>
+          <td style="padding-left:8px;font-weight:800;color:#1a7a45" colspan="7">BILLABLE CUPS</td>
           <td style="font-weight:800;color:#1a7a45;font-size:14px" id="cups-billable">-</td>
         </tr>
         </tbody></table></div>
-        <button onclick="recalcInvoiceCups()" style="margin-top:8px;background:#0d1f4e;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:11px;font-weight:700;cursor:pointer">Recalculate</button>
       </div>
 
       <!-- Charged Supplies -->
@@ -9388,18 +9398,11 @@ async function generateInvoicePreview(){
 
       <!-- Save Button -->
       <div style="display:flex;gap:8px;justify-content:flex-end">
-        <button onclick="saveAndExportInvoice('${store}','${periodStart}','${periodEnd}')" class="primary-btn" style="padding:10px 24px;font-size:13px">💾 Save Invoice & Export PDF</button>
+        <button onclick="saveAndExportInvoice('${store.replace(/'/g,"\\'")}')" class="primary-btn" style="padding:10px 24px;font-size:13px">💾 Save Invoice & Export PDF</button>
       </div>
     </div>
   `;
 
-  // Wire up cup input recalculation
-  for(const sr of stationReadings){
-    const inp = document.getElementById('cup-'+sr.station.station_name.replace(/\s/g,'_'));
-    if(inp){
-      inp.addEventListener('input', ()=> recalcInvoiceCups());
-    }
-  }
   recalcInvoiceCups();
 }
 
@@ -9414,23 +9417,38 @@ function recalcInvoiceCups(){
   const year = invoiceEditYear;
   const periodStart = `${year}-${month}-01`;
   const stations = getStationsForStore(store);
-  let total = 0;
+  let totalCups = 0, totalHW = 0;
   for(const stn of stations){
     const key = stn.station_name.replace(/\s/g,'_');
     const inp = document.getElementById('cup-'+key);
+    const hwInp = document.getElementById('hw-'+key);
     const calcEl = document.getElementById('cups-calc-'+key);
-    if(!inp || !calcEl) continue;
+    const hwCalcEl = document.getElementById('hw-calc-'+key);
+    const netCalcEl = document.getElementById('net-calc-'+key);
+    if(!inp) continue;
     const cur = parseInt(inp.value)||0;
+    const curHW = parseInt(hwInp?.value)||0;
     const prevReadings = cupReadings.filter(r=>r.store_name===store && r.station_name===stn.station_name && r.reading_date < periodStart);
     const prev = prevReadings.length > 0 ? prevReadings[0].counter_value : 0;
+    const prevHW = prevReadings.length > 0 ? (prevReadings[0].hot_water_value||0) : 0;
     const cups = cur > 0 ? Math.max(0, cur - prev) : 0;
-    calcEl.textContent = cur > 0 ? cups.toLocaleString() : '-';
-    total += cups;
+    const hw = curHW > 0 ? Math.max(0, curHW - prevHW) : 0;
+    const net = Math.max(0, cups - hw);
+    if(calcEl) calcEl.textContent = cur > 0 ? cups.toLocaleString() : '-';
+    if(hwCalcEl) hwCalcEl.textContent = curHW > 0 ? hw.toLocaleString() : '-';
+    if(netCalcEl) netCalcEl.textContent = cur > 0 ? net.toLocaleString() : '-';
+    totalCups += cups;
+    totalHW += hw;
   }
   const totalEl = document.getElementById('cups-total');
-  if(totalEl) totalEl.textContent = total > 0 ? total.toLocaleString() : '-';
+  const hwTotalEl = document.getElementById('hw-total');
+  const netTotalEl = document.getElementById('net-total');
+  if(totalEl) totalEl.textContent = totalCups > 0 ? totalCups.toLocaleString() : '-';
+  if(hwTotalEl) hwTotalEl.textContent = totalHW > 0 ? totalHW.toLocaleString() : '-';
+  const netTotal = Math.max(0, totalCups - totalHW);
+  if(netTotalEl) netTotalEl.textContent = netTotal > 0 ? netTotal.toLocaleString() : '-';
   const adj = parseInt(document.getElementById('cup-adjustment')?.value)||0;
-  const billable = Math.max(0, total + adj);
+  const billable = Math.max(0, netTotal + adj);
   const billableEl = document.getElementById('cups-billable');
   if(billableEl) billableEl.textContent = billable > 0 ? billable.toLocaleString() : '-';
 }
@@ -9440,32 +9458,42 @@ function addManualInvoiceLine(){
   generateInvoicePreview();
 }
 
-async function saveAndExportInvoice(store, periodStart, periodEnd){
+async function saveAndExportInvoice(store){
   const contract = coffeeContracts.find(c=>c.store_name===store);
   if(!contract) return;
 
   const month = invoiceEditMonth;
   const year = invoiceEditYear;
   const stations = getStationsForStore(store);
+
+  // Same month = consumption month = invoice month
+  const periodStart = `${year}-${month}-01`;
+  const lastDay = new Date(parseInt(year), parseInt(month), 0).getDate();
+  const periodEnd = `${year}-${month}-${String(lastDay).padStart(2,'0')}`;
   const invoiceDate = periodEnd;
-  const invNum = contract.store_code + month + String(parseInt(periodEnd.slice(8,10))).padStart(2,'0') + year.slice(2);
+  const invNum = contract.store_code + month + String(lastDay).padStart(2,'0') + year.slice(2);
 
   // Collect cup readings
-  let totalCups = 0;
+  let totalCups = 0, totalHW = 0;
   const newReadings = [];
   for(const stn of stations){
     const key = stn.station_name.replace(/\s/g,'_');
     const inp = document.getElementById('cup-'+key);
+    const hwInp = document.getElementById('hw-'+key);
     if(!inp) continue;
     const curVal = parseInt(inp.value)||0;
+    const curHW = parseInt(hwInp?.value)||0;
     if(curVal <= 0) continue;
     const prevReadings = cupReadings.filter(r=>r.store_name===store && r.station_name===stn.station_name && r.reading_date < periodStart);
     const prev = prevReadings.length > 0 ? prevReadings[0].counter_value : 0;
+    const prevHW = prevReadings.length > 0 ? (prevReadings[0].hot_water_value||0) : 0;
     totalCups += Math.max(0, curVal - prev);
-    newReadings.push({id:Date.now()+Math.random()*1000|0, store_name:store, station_name:stn.station_name, reading_date:periodEnd, counter_value:curVal, notes:`Invoice ${invNum}`});
+    totalHW += Math.max(0, curHW - prevHW);
+    newReadings.push({id:Date.now()+Math.random()*1000|0, store_name:store, station_name:stn.station_name, reading_date:periodEnd, counter_value:curVal, hot_water_value:curHW, notes:`Invoice ${invNum}`});
   }
+  const netCups = Math.max(0, totalCups - totalHW);
   const cupAdj = parseInt(document.getElementById('cup-adjustment')?.value)||0;
-  const billableCups = Math.max(0, totalCups + cupAdj);
+  const billableCups = Math.max(0, netCups + cupAdj);
 
   // Build line items
   const lineItems = [];
@@ -9539,7 +9567,7 @@ async function saveAndExportInvoice(store, periodStart, periodEnd){
 async function exportInvoicePDF(invoice, contract){
   if(!contract) contract = coffeeContracts.find(c=>c.store_name===invoice.store_name);
   const lineItems = typeof invoice.line_items === 'string' ? JSON.parse(invoice.line_items) : invoice.line_items;
-  const monthName = new Date(invoice.period_start+'T12:00:00').toLocaleString('en-US',{month:'long', year:'numeric'});
+  const monthName = new Date(invoice.invoice_date+'T12:00:00').toLocaleString('en-US',{month:'long', year:'numeric'});
 
   // Build HTML for PDF
   const html = `<!DOCTYPE html><html><head><style>
