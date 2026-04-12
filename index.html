@@ -9435,8 +9435,9 @@ async function generateInvoicePreview(){
   area.innerHTML = `
     <div class="card" style="border-top:3px solid #0d1f4e;margin-bottom:14px">
       <div class="card-title" style="margin-bottom:4px">🧾 ${store} — ${monthName}</div>
-      <div style="font-size:11px;color:#7080a0;margin-bottom:14px">Period: ${periodStart} → ${periodEnd} · Rate: $${contract.cup_rate}/cup</div>
+      <div style="font-size:11px;color:#7080a0;margin-bottom:14px">${parseFloat(contract.cup_rate)>0 ? `Period: ${periodStart} → ${periodEnd} · Rate: $${contract.cup_rate}/cup` : `Invoice Period: ${monthName}`}</div>
 
+      ${parseFloat(contract.cup_rate) > 0 ? `
       <!-- Cup Readings -->
       <div style="background:#f4f6fa;border-radius:8px;padding:12px;margin-bottom:14px">
         <div style="font-size:11px;font-weight:800;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px">☕ Cup Readings by Station</div>
@@ -9475,7 +9476,7 @@ async function generateInvoicePreview(){
           <td style="font-weight:800;color:#1a7a45;font-size:14px" id="cups-billable">-</td>
         </tr>
         </tbody></table></div>
-      </div>
+      </div>` : '<!-- No cup readings for this store -->'}
 
       <!-- Charged Supplies -->
       <div style="background:#f4f6fa;border-radius:8px;padding:12px;margin-bottom:14px">
@@ -9486,10 +9487,10 @@ async function generateInvoicePreview(){
         </tr></thead><tbody>
         ${aggregatedItems.map((ci,idx)=>`<tr>
           <td style="padding-left:8px;font-weight:600;color:#0d1f4e">${ci.name}</td>
-          <td><input type="number" id="inv-sup-qty-${idx}" value="${ci.qty}" min="0" style="width:50px;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:3px 6px;font-size:11px;font-weight:700;outline:none"/></td>
-          <td><input type="number" step="0.01" id="inv-sup-rate-${idx}" value="${ci.rate.toFixed(2)}" style="width:70px;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:3px 6px;font-size:11px;outline:none"/></td>
+          <td><input type="number" id="inv-sup-qty-${idx}" value="${ci.qty}" min="0" oninput="recalcInvoiceTotals()" style="width:50px;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:3px 6px;font-size:11px;font-weight:700;outline:none"/></td>
+          <td><input type="number" step="0.01" id="inv-sup-rate-${idx}" value="${ci.rate.toFixed(2)}" oninput="recalcInvoiceTotals()" style="width:70px;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:3px 6px;font-size:11px;outline:none"/></td>
           <td style="font-weight:700" id="inv-sup-amt-${idx}">$${ci.amount.toFixed(2)}</td>
-          <td><input type="checkbox" id="inv-sup-tax-${idx}" ${ci.taxable?'checked':''}/></td>
+          <td><input type="checkbox" id="inv-sup-tax-${idx}" ${ci.taxable?'checked':''} onchange="recalcInvoiceTotals()"/></td>
         </tr>`).join('')}
         </tbody></table></div>`:''}
       </div>
@@ -9499,7 +9500,7 @@ async function generateInvoicePreview(){
         <div style="font-size:11px;font-weight:800;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">🔧 Equipment Fees (Monthly)</div>
         ${equipFees.map((f,idx)=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:12px">
           <input id="inv-eq-desc-${idx}" value="${f.desc}" style="flex:1;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 8px;font-size:11px;outline:none;margin-right:8px"/>
-          <span style="margin-right:4px">$</span><input type="number" step="0.01" id="inv-eq-amt-${idx}" value="${parseFloat(f.amount).toFixed(2)}" style="width:80px;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 8px;font-size:11px;font-weight:700;outline:none"/>
+          <span style="margin-right:4px">$</span><input type="number" step="0.01" id="inv-eq-amt-${idx}" value="${parseFloat(f.amount).toFixed(2)}" oninput="recalcInvoiceTotals()" style="width:80px;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 8px;font-size:11px;font-weight:700;outline:none"/>
         </div>`).join('')}
       </div>
 
@@ -9511,16 +9512,20 @@ async function generateInvoicePreview(){
         </div>
         <div id="inv-manual-lines">
           ${invoiceManualLines.map((l,i)=>`<div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
-            <input value="${l.desc}" onchange="invoiceManualLines[${i}].desc=this.value" placeholder="Description" style="flex:2;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 8px;font-size:11px;outline:none"/>
-            <input type="number" value="${l.qty}" onchange="invoiceManualLines[${i}].qty=parseFloat(this.value)||0" placeholder="Qty" style="width:50px;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 6px;font-size:11px;outline:none"/>
-            <input type="number" step="0.01" value="${l.rate}" onchange="invoiceManualLines[${i}].rate=parseFloat(this.value)||0" placeholder="Rate" style="width:70px;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 6px;font-size:11px;outline:none"/>
-            <label style="font-size:10px;white-space:nowrap"><input type="checkbox" ${l.taxable?'checked':''} onchange="invoiceManualLines[${i}].taxable=this.checked"/> Tax</label>
+            <input value="${l.desc}" onchange="invoiceManualLines[${i}].desc=this.value;recalcInvoiceTotals()" placeholder="Description" style="flex:2;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 8px;font-size:11px;outline:none"/>
+            <input type="number" value="${l.qty}" onchange="invoiceManualLines[${i}].qty=parseFloat(this.value)||0;recalcInvoiceTotals()" placeholder="Qty" style="width:50px;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 6px;font-size:11px;outline:none"/>
+            <input type="number" step="0.01" value="${l.rate}" onchange="invoiceManualLines[${i}].rate=parseFloat(this.value)||0;recalcInvoiceTotals()" placeholder="Rate" style="width:70px;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 6px;font-size:11px;outline:none"/>
+            <label style="font-size:10px;white-space:nowrap"><input type="checkbox" ${l.taxable?'checked':''} onchange="invoiceManualLines[${i}].taxable=this.checked;recalcInvoiceTotals()"/> Tax</label>
             <button onclick="invoiceManualLines.splice(${i},1);generateInvoicePreview()" style="background:none;border:none;color:#b01c1c;cursor:pointer;font-size:14px">✕</button>
           </div>`).join('')}
         </div>
       </div>
 
       <!-- Save Button -->
+      <div style="background:#0d1f4e;border-radius:8px;padding:14px;margin-bottom:14px;color:#fff">
+        <div style="font-size:11px;font-weight:800;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px">💰 Invoice Totals</div>
+        <div id="inv-totals-breakdown" style="font-size:12px;line-height:2"></div>
+      </div>
       <div style="display:flex;gap:8px;justify-content:flex-end">
         <button onclick="saveAndExportInvoice('${store.replace(/'/g,"\\'")}')" class="primary-btn" style="padding:10px 24px;font-size:13px">💾 Save Invoice & Export PDF</button>
       </div>
@@ -9533,6 +9538,58 @@ async function generateInvoicePreview(){
 function isNonFoodConsumable(name){
   const n = name.toLowerCase();
   return n.includes('filter') || n.includes('paper towel') || n.includes('stir stick');
+}
+
+function recalcInvoiceTotals(){
+  const store = invoiceEditStore;
+  const contract = coffeeContracts.find(c=>c.store_name===store);
+  if(!contract) return;
+  const taxRate = parseFloat(contract.tax_rate)||0;
+
+  let lines = [];
+
+  // Cup revenue
+  const billableEl = document.getElementById('cups-billable');
+  const billable = parseInt(billableEl?.textContent?.replace(/,/g,''))||0;
+  const cupRate = parseFloat(contract.cup_rate)||0;
+  if(billable > 0) lines.push({desc:contract.cup_label||'Coffee Consumption', amt:billable*cupRate, taxable:false});
+
+  // Equipment
+  const equipFees = window._invEquipFees||[];
+  for(let i=0; i<equipFees.length; i++){
+    const amt = parseFloat(document.getElementById('inv-eq-amt-'+i)?.value)||0;
+    if(amt > 0) lines.push({desc:equipFees[i].desc, amt, taxable:false});
+  }
+
+  // Charged supplies
+  const supplyItems = window._invSupplyItems||[];
+  for(let i=0; i<supplyItems.length; i++){
+    const qty = parseInt(document.getElementById('inv-sup-qty-'+i)?.value)||0;
+    const rate = parseFloat(document.getElementById('inv-sup-rate-'+i)?.value)||0;
+    const taxable = document.getElementById('inv-sup-tax-'+i)?.checked||false;
+    if(qty > 0) lines.push({desc:supplyItems[i].name, amt:qty*rate, taxable});
+  }
+
+  // Manual lines
+  for(const ml of invoiceManualLines){
+    if(!ml.desc) continue;
+    lines.push({desc:ml.desc, amt:(ml.qty||0)*(ml.rate||0), taxable:ml.taxable});
+  }
+
+  const subtotal = lines.reduce((s,l)=>s+l.amt,0);
+  const taxableAmt = lines.filter(l=>l.taxable).reduce((s,l)=>s+l.amt,0);
+  const tax = Math.round(taxableAmt * taxRate * 100)/100;
+  const total = subtotal + tax;
+
+  const el = document.getElementById('inv-totals-breakdown');
+  if(el){
+    el.innerHTML = `
+      <div style="display:flex;justify-content:space-between;padding:2px 0"><span>Subtotal</span><span>$${subtotal.toFixed(2)}</span></div>
+      ${taxableAmt > 0 ? `<div style="display:flex;justify-content:space-between;padding:2px 0;color:#a0b0d0"><span>Taxable Amount</span><span>$${taxableAmt.toFixed(2)}</span></div>` : ''}
+      <div style="display:flex;justify-content:space-between;padding:2px 0;color:#a0b0d0"><span>Sales Tax (${(taxRate*100).toFixed(2)}%)</span><span>$${tax.toFixed(2)}</span></div>
+      <div style="display:flex;justify-content:space-between;padding:6px 0 0;border-top:1px solid rgba(255,255,255,0.3);font-size:16px;font-weight:800"><span>TOTAL</span><span>$${total.toFixed(2)}</span></div>
+    `;
+  }
 }
 
 function recalcInvoiceCups(){
@@ -9575,6 +9632,7 @@ function recalcInvoiceCups(){
   const billable = Math.max(0, netTotal + adj);
   const billableEl = document.getElementById('cups-billable');
   if(billableEl) billableEl.textContent = billable > 0 ? billable.toLocaleString() : '-';
+  recalcInvoiceTotals();
 }
 
 function addManualInvoiceLine(){
