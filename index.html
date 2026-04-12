@@ -1349,9 +1349,11 @@ function isStoreSettings(storeName, key){
   return storeSettings[storeName] && storeSettings[storeName][key];
 }
 
-function getStoreNegReasons(storeName){
+function getStoreNegReasons(storeName, productSource){
   const isFV = isStoreSettings(storeName, 'free_vend');
-  return [isFV?'Consumption':'Theft/Walkoff','Complimentary','Spoilage','Return to Warehouse','Manual Decrease'];
+  const isCoffee = productSource === 'coffee';
+  const primary = (isFV || isCoffee) ? 'Consumption' : 'Theft/Walkoff';
+  return [primary,'Complimentary','Spoilage','Return to Warehouse','Manual Decrease'];
 }
 
 let vendingPriceMap = []; // loaded from DB
@@ -4044,12 +4046,19 @@ async function receiveStoreOrder(orderId){
     if(el) item.order_qty = parseFloat(el.value)||0;
   });
 
+  const activeItems = order.items.filter(i=>(i.order_qty||0) > 0);
+  showCountProgress(`Receiving Store Order — ${order.store_name}`, activeItems.length);
+
   const orderItemLines = [];
   let errors = 0;
+  let processed = 0;
 
   for(const item of order.items){
     const qty = item.order_qty||0;
     if(qty <= 0) continue;
+
+    processed++;
+    updateCountProgress(processed, activeItems.length, item.product_name);
 
     // 1. Increase store qty
     const storeItem = storeInventory.find(x=>x.id===item.store_item_id);
@@ -4102,6 +4111,7 @@ async function receiveStoreOrder(orderId){
   restockLog = [orderRcvEntry, ...restockLog];
   await saveRestock(orderRcvEntry);
 
+  hideCountProgress();
   updateSidebar();
   expandedOrderIds.delete(orderId);
   renderStoreOrders();
@@ -4367,7 +4377,7 @@ function renderStoreCountRow(item){
   const diff = isDiff ? actualQty - currentQty : null;
   const verifiedQty = s.verified ? currentQty : (actualQty !== null ? actualQty : '');
   const rowBg = s.verified ? '#f0fff4' : (isDiff ? '#fff8f0' : '');
-  const reasons = diff !== null ? (diff < 0 ? getStoreNegReasons(storeCountStore) : STORE_COUNT_POS_REASONS) : [];
+  const reasons = diff !== null ? (diff < 0 ? getStoreNegReasons(storeCountStore, item.product_source) : STORE_COUNT_POS_REASONS) : [];
 
   return `<tr id="sc-row-${item.id}" style="background:${rowBg}">
     <td style="padding-left:8px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:200px;line-height:1.3">${item.product_name}</td>
@@ -4440,7 +4450,7 @@ function updateStoreCountQty(id, val){
     // Inject or remove reason dropdown
     if(reasonTd){
       if(isDiff){
-        const reasons = diff < 0 ? getStoreNegReasons(storeCountStore) : STORE_COUNT_POS_REASONS;
+        const reasons = diff < 0 ? getStoreNegReasons(storeCountStore, item?.product_source) : STORE_COUNT_POS_REASONS;
         reasonTd.innerHTML = `<select onchange="updateStoreCountReason(${id},this.value)"
           style="background:#f4f6fa;border:1.5px solid #e8943a;border-radius:5px;padding:4px 7px;font-size:11px;color:#1a2340;outline:none;cursor:pointer">
           <option value="">-- Select --</option>
@@ -5518,12 +5528,21 @@ async function receiveWhOrder(orderId){
   const order = whOrders.find(o=>o.id===orderId);
   if(!order) return;
 
+  const activeItems = order.items.filter(item=>{
+    const c = item.bought_rec ? item.rec_cases : (item.actual_cases!==''?parseFloat(item.actual_cases)||0:0);
+    return c > 0;
+  });
+  showCountProgress('Receiving Warehouse Order', activeItems.length);
+
   let updated = 0;
   const logLines = [];
 
   for(const item of order.items){
     const casesUsed = item.bought_rec ? item.rec_cases : (item.actual_cases!==''?parseFloat(item.actual_cases)||0:0);
     if(casesUsed <= 0) continue;
+
+    updated++;
+    updateCountProgress(updated, activeItems.length, item.product_name);
 
     const qtyAdd = casesUsed * item.pieces_per_box;
     const isCoffee = item.product_source === 'coffee';
@@ -5552,7 +5571,6 @@ async function receiveWhOrder(orderId){
     restockLog = [entry,...restockLog];
     await saveRestock(entry);
     logLines.push(item.product_name);
-    updated++;
   }
 
   // Mark received
@@ -5577,6 +5595,7 @@ async function receiveWhOrder(orderId){
   restockLog=[summaryEntry,...restockLog];
   await saveRestock(summaryEntry);
 
+  hideCountProgress();
   whExpandedIds.delete(orderId);
   updateSidebar();
   renderWhOrders();
@@ -6179,7 +6198,7 @@ function renderMobCountCard(item){
   const displayVal = s.verified ? currentQty : s.stepperVal;
   const diff = s.verified ? 0 : displayVal - currentQty;
   const isDiff = diff !== 0;
-  const reasons = isDiff ? (diff < 0 ? getStoreNegReasons(storeCountStore) : STORE_COUNT_POS_REASONS) : [];
+  const reasons = isDiff ? (diff < 0 ? getStoreNegReasons(storeCountStore, item.product_source) : STORE_COUNT_POS_REASONS) : [];
   const cardClass = s.verified ? 'verified' : (isDiff ? 'has-diff' : '');
 
   return `<div class="mob-count-card ${cardClass}" id="mcc-${item.id}">
@@ -6224,7 +6243,7 @@ function mobCountStep(id, delta){
   // Reset reason if diff direction changed
   const diff = s.stepperVal - item.qty;
   if(s.reason){
-    const negReasons = getStoreNegReasons(storeCountStore);
+    const negReasons = getStoreNegReasons(storeCountStore, item.product_source);
     const posReasons = STORE_COUNT_POS_REASONS;
     if(diff < 0 && posReasons.includes(s.reason)) s.reason = '';
     if(diff > 0 && negReasons.includes(s.reason)) s.reason = '';
@@ -6240,7 +6259,7 @@ function mobCountStep(id, delta){
     // Update diff line and reason dropdown via partial re-render of card inner
     const diffSection = card.querySelector('.mob-count-diff');
     const reasonSection = card.querySelector('.mob-count-reason');
-    const reasons = isDiff ? (diff<0 ? getStoreNegReasons(storeCountStore) : STORE_COUNT_POS_REASONS) : [];
+    const reasons = isDiff ? (diff<0 ? getStoreNegReasons(storeCountStore, item.product_source) : STORE_COUNT_POS_REASONS) : [];
     if(isDiff){
       if(!diffSection){
         // Re-render card fully (first time diff appears)
