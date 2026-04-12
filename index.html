@@ -3160,6 +3160,11 @@ function getStoreItemCat1(item){
   const wp = warehouseArr.find(x=>x.id===item.product_id);
   return wp?.cat1 || '';
 }
+// For store count and store orders: prefer store_cat, fall back to cat1
+function getStoreItemCountCat(item){
+  if(item.store_cat) return item.store_cat;
+  return getStoreItemCat1(item) || '';
+}
 const STORE_CATEGORIES = ['DRINKS','SNACKS','CHIPS','CANDY','PASTRY','COLD FOOD','FROZEN FOOD'];
 const COFFEE_CAT_ORDER = ['WB ESPRESSO','WB MED ROAST','WB DECAF','SOLUBLE POWDERS','COFFEE PERIPHERALS','FLAVORED SYRUPS','KITCHEN SUPPLIES'];
 const LS_STORE_INV = 'vs_brewbox_store_inventory';
@@ -4212,14 +4217,14 @@ function renderStoreCount(){
   const verified = Object.values(storeCountState).filter(s=>s.verified||(s.actualQty!==''&&s.reason!=='')).length;
   const pending = Math.max(0, total - verified);
 
-  // Group MM by category
+  // Group MM by store category
   const mmCatGroups = {};
   for(const item of mmItems){
-    const cat = getStoreItemCat1(item) || 'UNCATEGORIZED';
+    const cat = getStoreItemCountCat(item) || 'UNCATEGORIZED';
     if(!mmCatGroups[cat]) mmCatGroups[cat] = [];
     mmCatGroups[cat].push(item);
   }
-  const mmCatOrder = [...STORE_CATEGORIES, 'UNCATEGORIZED'].filter(c=>mmCatGroups[c]);
+  const mmCatOrder = [...new Set([...STORE_CATEGORIES, ...Object.keys(mmCatGroups)])].filter(c=>mmCatGroups[c]);
   for(const c of mmCatOrder) mmCatGroups[c].sort((a,b)=>a.product_name.localeCompare(b.product_name));
 
   // Group Coffee by station
@@ -4483,7 +4488,7 @@ function confirmSubmitStoreCount(){
     } else {
       if(storeCountSkippedCats.has('ALL_MM')) return true;
     }
-    return storeCountSkippedCats.has(getStoreItemCat1(item)||'UNCATEGORIZED');
+    return storeCountSkippedCats.has(getStoreItemCountCat(item)||'UNCATEGORIZED');
   }
   // Validate — check missing reasons
   const items = storeInventory.filter(x=>x.store_name===storeCountStore);
@@ -4582,7 +4587,7 @@ async function submitStoreCount(){
   const items=storeInventory.filter(x=>x.store_name===storeCountStore);
   const toUpdate=items.filter(item=>{
     const s=storeCountState[item.id];
-    const skipped = (item.product_source==='coffee') ? (storeCountSkippedCats.has('ALL_COFFEE') || (item.station_name && storeCountSkippedCats.has('STN_'+item.station_name))) : (storeCountSkippedCats.has('ALL_MM') || storeCountSkippedCats.has(getStoreItemCat1(item)||'UNCATEGORIZED'));
+    const skipped = (item.product_source==='coffee') ? (storeCountSkippedCats.has('ALL_COFFEE') || (item.station_name && storeCountSkippedCats.has('STN_'+item.station_name))) : (storeCountSkippedCats.has('ALL_MM') || storeCountSkippedCats.has(getStoreItemCountCat(item)||'UNCATEGORIZED'));
     if(!s||s.verified||skipped) return false;
     const aq=s.actualQty!==''?parseFloat(s.actualQty):null;
     return aq!==null&&aq!==item.qty&&s.reason;
@@ -4655,7 +4660,7 @@ async function submitStoreCount(){
   if(useSupabase){
     const verifiedItems = items.filter(item=>{
       const s = storeCountState[item.id];
-      const skipped = (item.product_source==='coffee') ? (storeCountSkippedCats.has('ALL_COFFEE') || (item.station_name && storeCountSkippedCats.has('STN_'+item.station_name))) : (storeCountSkippedCats.has('ALL_MM') || storeCountSkippedCats.has(getStoreItemCat1(item)||'UNCATEGORIZED'));
+      const skipped = (item.product_source==='coffee') ? (storeCountSkippedCats.has('ALL_COFFEE') || (item.station_name && storeCountSkippedCats.has('STN_'+item.station_name))) : (storeCountSkippedCats.has('ALL_MM') || storeCountSkippedCats.has(getStoreItemCountCat(item)||'UNCATEGORIZED'));
       return s && s.verified && !skipped;
     });
     if(verifiedItems.length > 0){
@@ -6073,14 +6078,14 @@ function renderMobStoreCount(){
     return false;
   }).length;
 
-  // Group MM by category
+  // Group MM by store category
   const catGroups = {};
   for(const item of mmItems){
-    const cat = getStoreItemCat1(item) || 'UNCATEGORIZED';
+    const cat = getStoreItemCountCat(item) || 'UNCATEGORIZED';
     if(!catGroups[cat]) catGroups[cat] = [];
     catGroups[cat].push(item);
   }
-  const catOrder = [...STORE_CATEGORIES, 'UNCATEGORIZED'].filter(c=>catGroups[c]);
+  const catOrder = [...new Set([...STORE_CATEGORIES, ...Object.keys(catGroups)])].filter(c=>catGroups[c]);
   for(const c of catOrder) catGroups[c].sort((a,b)=>a.product_name.localeCompare(b.product_name));
 
   // Group coffee by station
@@ -6460,7 +6465,7 @@ function renderMobStoreOrders(){
           if(items.length===0) return '';
           const catGroups = {};
           for(const item of items){
-            const cat = getStoreItemCat1(item) || 'UNCATEGORIZED';
+            const cat = getStoreItemCountCat(item) || 'UNCATEGORIZED';
             if(!catGroups[cat]) catGroups[cat] = [];
             catGroups[cat].push(item);
           }
