@@ -1034,6 +1034,26 @@ let currentView = 'dashboard';
 let searchTerm = '';
 let showActiveOnly = false;
 let categoryFilters = new Set();
+let invStockFilter = 'all'; // 'all','out','low','ok'
+let coffeeStockFilter = 'all';
+let storeStockFilter = 'all';
+
+function getStockStatus(qty, minLevel){
+  if(qty <= 0) return 'out';
+  if(minLevel > 0 && qty <= minLevel) return 'low';
+  return 'ok';
+}
+function stockFilterPills(current, counts, varName, renderFn){
+  const pills = [
+    {key:'all', label:'All', count:counts.all, color:'#0d1f4e'},
+    {key:'out', label:'Out', count:counts.out, color:'#b01c1c'},
+    {key:'low', label:'Low', count:counts.low, color:'#c9a84c'},
+    {key:'ok',  label:'In Stock', count:counts.ok, color:'#1a7a45'}
+  ];
+  return `<div style="display:flex;gap:4px;background:#f4f6fa;border-radius:7px;padding:3px">${pills.map(p=>
+    `<button onclick="${varName}='${p.key}';${renderFn}()" style="padding:5px 10px;border:none;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:4px;${current===p.key?'background:'+p.color+';color:#fff':'background:transparent;color:#5060a0'}">${p.label}<span style="background:${current===p.key?'rgba(255,255,255,0.25)':p.key==='out'&&p.count>0?'#fde8e8':p.key==='low'&&p.count>0?'#fff3cd':'#e8ecf4'};color:${current===p.key?'#fff':p.color};padding:1px 6px;border-radius:10px;font-size:10px;font-weight:800">${p.count}</span></button>`
+  ).join('')}</div>`;
+}
 let editingRows = new Set(); // set of product IDs currently being edited
 let aiOpen = false;
 let aiMessages = [];
@@ -1766,10 +1786,13 @@ function renderInventory(){
     const ms=p.name.toLowerCase().includes(searchTerm.toLowerCase())||p.upc.includes(searchTerm);
     const matchActive=showActiveOnly?p.active:true;
     const matchCat=categoryFilters.size===0||categoryFilters.has(p.cat1);
-    return ms&&matchActive&&matchCat;
+    const matchStock=invStockFilter==='all'||getStockStatus(p.qty,p.minLevel)===invStockFilter;
+    return ms&&matchActive&&matchCat&&matchStock;
   }).sort((a,b)=>a.name.localeCompare(b.name));
   const activeCount=products.filter(p=>p.active).length;
   const inactiveCount=products.filter(p=>!p.active).length;
+  const activeProducts=products.filter(p=>showActiveOnly?p.active:true);
+  const stockCounts={all:activeProducts.length, out:activeProducts.filter(p=>getStockStatus(p.qty,p.minLevel)==='out').length, low:activeProducts.filter(p=>getStockStatus(p.qty,p.minLevel)==='low').length, ok:activeProducts.filter(p=>getStockStatus(p.qty,p.minLevel)==='ok').length};
   document.getElementById('main-body').innerHTML=`
     <div class="cat-filters">
       <button class="cat-btn${categoryFilters.size===0?' active':''}" onclick="categoryFilters.clear();render()">ALL</button>
@@ -1777,11 +1800,12 @@ function renderInventory(){
     </div>
     <div class="filter-row" style="margin-bottom:10px">
       <input class="search-input" id="mm-search-input" placeholder="Search by name or UPC…" value="${searchTerm}" oninput="searchTerm=this.value;renderWithSearchFocus(render,'mm-search-input')"/>
+      ${stockFilterPills(invStockFilter, stockCounts, 'invStockFilter', 'render')}
       <div class="filter-toggle${showActiveOnly?' active-filter':''}" onclick="showActiveOnly=!showActiveOnly;render()">
         <div class="filter-toggle-track${showActiveOnly?' on':''}"><div class="filter-toggle-thumb"></div></div>
-        <span>Active items only</span>
+        <span>Active only</span>
       </div>
-      <span style="font-size:11px;color:#7080a0;margin-left:2px">${filtered.length} shown · ${activeCount} active · ${inactiveCount} inactive</span>
+      <span style="font-size:11px;color:#7080a0;margin-left:2px">${filtered.length} shown</span>
     </div>
     ${editingRows.size>0?`
     <div style="display:flex;justify-content:space-between;align-items:center;background:#fffbf0;border:1.5px solid #c9a84c;border-radius:8px;padding:9px 14px;margin-bottom:10px">
@@ -2833,10 +2857,13 @@ function renderCoffeeInventory(){
     const ms = p.name.toLowerCase().includes(coffeeSearchTerm.toLowerCase())||p.upc.includes(coffeeSearchTerm);
     const matchActive = coffeeShowActiveOnly ? p.active : true;
     const matchCat = coffeeCategoryFilters.size===0 || coffeeCategoryFilters.has(p.cat1);
-    return ms && matchActive && matchCat;
+    const matchStock = coffeeStockFilter==='all' || getStockStatus(p.qty,p.minLevel)===coffeeStockFilter;
+    return ms && matchActive && matchCat && matchStock;
   }).sort((a,b)=>a.name.localeCompare(b.name));
   const activeCount = coffeeProducts.filter(p=>p.active).length;
   const inactiveCount = coffeeProducts.filter(p=>!p.active).length;
+  const activeProds = coffeeProducts.filter(p=>coffeeShowActiveOnly?p.active:true);
+  const stockCounts={all:activeProds.length, out:activeProds.filter(p=>getStockStatus(p.qty,p.minLevel)==='out').length, low:activeProds.filter(p=>getStockStatus(p.qty,p.minLevel)==='low').length, ok:activeProds.filter(p=>getStockStatus(p.qty,p.minLevel)==='ok').length};
 
   document.getElementById('main-body').innerHTML=`
     <div class="cat-filters">
@@ -2850,11 +2877,12 @@ function renderCoffeeInventory(){
     </div>
     <div class="filter-row" style="margin-bottom:10px">
       <input class="search-input" id="coffee-search-input" placeholder="Search by name or UPC…" value="${coffeeSearchTerm}" oninput="coffeeSearchTerm=this.value;renderWithSearchFocus(renderCoffeeInventory,'coffee-search-input')"/>
+      ${stockFilterPills(coffeeStockFilter, stockCounts, 'coffeeStockFilter', 'renderCoffeeInventory')}
       <div class="filter-toggle${coffeeShowActiveOnly?' active-filter':''}" onclick="coffeeShowActiveOnly=!coffeeShowActiveOnly;renderCoffeeInventory()">
         <div class="filter-toggle-track${coffeeShowActiveOnly?' on':''}"><div class="filter-toggle-thumb"></div></div>
-        <span>Active items only</span>
+        <span>Active only</span>
       </div>
-      <span style="font-size:11px;color:#7080a0;margin-left:2px">${filtered.length} shown · ${activeCount} active · ${inactiveCount} inactive</span>
+      <span style="font-size:11px;color:#7080a0;margin-left:2px">${filtered.length} shown</span>
     </div>
     ${coffeeEditingRows.size>0?`
     <div style="display:flex;justify-content:space-between;align-items:center;background:#fffbf0;border:1.5px solid #c9a84c;border-radius:8px;padding:9px 14px;margin-bottom:10px">
@@ -3253,16 +3281,18 @@ function renderStoreInventory(){
   const storeItems = storeSourceFilter === 'mm' ? mmItems :
     storeSourceFilter === 'coffee' ? coffeeItems : allStoreItems;
 
-  // Apply search + category filter
+  // Apply search + category + stock filter
   const filtered = storeItems.filter(x=>{
     const ms = x.product_name.toLowerCase().includes(storeSearchTerm.toLowerCase());
     const cat = getStoreItemCat1(x);
     const matchCat = storeCategoryFilters.size===0 || storeCategoryFilters.has(cat);
-    return ms && matchCat;
+    const matchStock = storeStockFilter==='all' || getStockStatus(parseFloat(x.qty)||0, parseFloat(x.min_level)||0)===storeStockFilter;
+    return ms && matchCat && matchStock;
   }).sort((a,b)=>a.product_name.localeCompare(b.product_name));
 
-  const outCount = allStoreItems.filter(x=>x.qty<=0).length;
-  const lowCount = allStoreItems.filter(x=>x.qty>0&&x.min_level>0&&x.qty<=x.min_level).length;
+  const outCount = allStoreItems.filter(x=>(parseFloat(x.qty)||0)<=0).length;
+  const lowCount = allStoreItems.filter(x=>{const q=parseFloat(x.qty)||0;const m=parseFloat(x.min_level)||0;return q>0&&m>0&&q<=m;}).length;
+  const stockCounts={all:allStoreItems.length, out:outCount, low:lowCount, ok:allStoreItems.length-outCount-lowCount};
 
   // Build unique categories present for current source filter
   const storeCats = [...new Set(storeItems.map(x=>getStoreItemCat1(x)).filter(Boolean))].sort();
@@ -3271,7 +3301,7 @@ function renderStoreInventory(){
     <div style="display:flex;gap:12px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
       <div style="display:flex;align-items:center;gap:10px">
         <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.8px">Store:</label>
-        <select onchange="currentStore=this.value;storeSearchTerm='';storeCategoryFilters.clear();storeSourceFilter='all';renderStoreInventory()"
+        <select onchange="currentStore=this.value;storeSearchTerm='';storeCategoryFilters.clear();storeSourceFilter='all';storeStockFilter='all';renderStoreInventory()"
           style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:160px">
           ${STORES.map(s=>`<option value="${s}" ${s===currentStore?'selected':''}>${s}</option>`).join('')}
         </select>
@@ -3293,7 +3323,8 @@ function renderStoreInventory(){
     <div class="filter-row" style="margin-bottom:10px">
       <input class="search-input" id="store-search-input" placeholder="Search items…" value="${storeSearchTerm}"
         oninput="storeSearchTerm=this.value;renderWithSearchFocus(renderStoreInventory,'store-search-input')" style="width:240px"/>
-      <span style="font-size:11px;color:#7080a0;margin-left:2px">${filtered.length} shown · ${allStoreItems.length} total SKUs</span>
+      ${stockFilterPills(storeStockFilter, stockCounts, 'storeStockFilter', 'renderStoreInventory')}
+      <span style="font-size:11px;color:#7080a0;margin-left:2px">${filtered.length} shown</span>
     </div>
 
     <div class="stats-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:14px">
@@ -6309,14 +6340,17 @@ function renderMobStoreInventory(){
     const ms = x.product_name.toLowerCase().includes(storeSearchTerm.toLowerCase());
     const cat = getStoreItemCat1(x);
     const matchCat = storeCategoryFilters.size===0 || storeCategoryFilters.has(cat);
-    return ms && matchCat;
+    const matchStock = storeStockFilter==='all' || getStockStatus(parseFloat(x.qty)||0, parseFloat(x.min_level)||0)===storeStockFilter;
+    return ms && matchCat && matchStock;
   }).sort((a,b)=>a.product_name.localeCompare(b.product_name));
-  const outCount = allStoreItems.filter(x=>x.qty<=0).length;
+  const outCount = allStoreItems.filter(x=>(parseFloat(x.qty)||0)<=0).length;
+  const lowCount = allStoreItems.filter(x=>{const q=parseFloat(x.qty)||0;const m=parseFloat(x.min_level)||0;return q>0&&m>0&&q<=m;}).length;
+  const stockCounts={all:allStoreItems.length, out:outCount, low:lowCount, ok:allStoreItems.length-outCount-lowCount};
   const storeCats = [...new Set(storeItems.map(x=>getStoreItemCat1(x)).filter(Boolean))].sort();
 
   document.getElementById('main-body').innerHTML=`
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
-      <select onchange="currentStore=this.value;storeSearchTerm='';storeCategoryFilters.clear();storeSourceFilter='all';mobInvEditingIds=new Set();renderStoreInventory()"
+      <select onchange="currentStore=this.value;storeSearchTerm='';storeCategoryFilters.clear();storeSourceFilter='all';storeStockFilter='all';mobInvEditingIds=new Set();renderStoreInventory()"
         style="flex:1;padding:10px 12px;border:1.5px solid #0d1f4e;border-radius:8px;font-size:14px;font-weight:700;color:#0d1f4e;background:#fff;outline:none">
         ${STORES.map(s=>`<option value="${s}" ${s===currentStore?'selected':''}>${s}</option>`).join('')}
       </select>
@@ -6332,6 +6366,10 @@ function renderMobStoreInventory(){
     <input class="search-input" id="store-search-input" placeholder="Search items…" value="${storeSearchTerm}"
       oninput="storeSearchTerm=this.value;renderWithSearchFocus(renderStoreInventory,'store-search-input')"
       style="width:100%;margin-bottom:8px;padding:10px 12px;font-size:14px"/>
+
+    <div style="overflow-x:auto;margin-bottom:8px">
+      ${stockFilterPills(storeStockFilter, stockCounts, 'storeStockFilter', 'renderStoreInventory')}
+    </div>
 
     <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;overflow-x:auto">
       <button class="cat-btn${storeCategoryFilters.size===0?' active':''}" onclick="storeCategoryFilters.clear();renderStoreInventory()" style="font-size:11px;padding:5px 10px">ALL</button>
