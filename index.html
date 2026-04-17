@@ -583,6 +583,7 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
           <button class="nav-btn nav-sub" onclick="setView('store-inventory')">📊 &nbsp;<span>Store Inventory</span></button>
           <button class="nav-btn nav-sub" onclick="setView('store-orders')">🛒 &nbsp;<span>Store Orders</span></button>
           <button class="nav-btn nav-sub" onclick="setView('store-count')">📋 &nbsp;<span>Store Inventory Count</span></button>
+          <button class="nav-btn nav-sub" onclick="setView('invoices')">🧾 &nbsp;<span>Invoices</span></button>
         </div>
       </div>
       <div id="import-nav">
@@ -604,7 +605,6 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
         <div id="reports-submenu" style="display:none">
           <button class="nav-btn nav-sub" onclick="setView('insights')">📈 &nbsp;<span>Insights Dashboard</span></button>
           <button class="nav-btn nav-sub" onclick="setView('usage-report')">📋 &nbsp;<span>Usage / Theft Report</span></button>
-          <button class="nav-btn nav-sub" onclick="setView('invoices')">🧾 &nbsp;<span>Invoices</span></button>
         </div>
       </div>
     </div>
@@ -1506,10 +1506,10 @@ function updateSidebar(){
   if(currentView==='wh-orders') document.querySelector('.nav-btn[onclick*="wh-orders"]')?.classList.add('active');
   // Auto-open warehouse submenu when on warehouse views
   if(currentView==='inventory'||currentView==='coffee'||currentView==='count'||currentView==='wh-orders'||currentView==='vendor-mgmt') openWarehouseMenu();
-  if(currentView==='store-inventory'||currentView==='store-orders'||currentView==='store-count') openStoresMenu();
+  if(currentView==='store-inventory'||currentView==='store-orders'||currentView==='store-count'||currentView==='invoices') openStoresMenu();
   // Auto-open import submenu when on import views
   if(currentView==='orders') openImportMenu();
-  if(currentView==='usage-report'||currentView==='insights'||currentView==='invoices') { openReportsMenu(); document.querySelector('.nav-btn[onclick*="'+currentView+'"]')?.classList.add('active'); }
+  if(currentView==='usage-report'||currentView==='insights') { openReportsMenu(); document.querySelector('.nav-btn[onclick*="'+currentView+'"]')?.classList.add('active'); }
 }
 
 function toggleWarehouseMenu(){
@@ -9399,6 +9399,9 @@ function renderInsightsWidgets(){
   return html;
 }
 
+let invoicePageStore = '';
+let invoiceExpandedId = null;
+let invoiceGenerating = false; // true when the generate form is open
 let invoiceEditStore = '';
 let invoiceEditMonth = '';
 let invoiceEditYear = '';
@@ -9406,67 +9409,254 @@ let invoiceManualLines = [];
 
 function renderInvoices(){
   const now = new Date();
-  if(!invoiceEditMonth) invoiceEditMonth = String(now.getMonth()+1).padStart(2,'0');
-  if(!invoiceEditYear) invoiceEditYear = String(now.getFullYear());
-  const contractStores = coffeeContracts.map(c=>c.store_name);
+  if(!invoicePageStore) invoicePageStore = STORES.filter(s=>coffeeContracts.find(c=>c.store_name===s))[0] || STORES[0];
+
+  const storeInvoices = invoicesList.filter(inv=>inv.store_name===invoicePageStore)
+    .sort((a,b)=>b.invoice_date.localeCompare(a.invoice_date));
+
+  // Check if current month invoice exists
+  const curMonth = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  const curMonthLabel = now.toLocaleString('en-US',{month:'long', year:'numeric'});
+  const hasCurrentMonth = storeInvoices.some(inv=>inv.invoice_date.substring(0,7)===curMonth);
+  const contract = coffeeContracts.find(c=>c.store_name===invoicePageStore);
+
+  // Summary stats
+  const totalRevenue = storeInvoices.reduce((s,inv)=>s+parseFloat(inv.total||0),0);
+  const unpaidTotal = storeInvoices.filter(inv=>inv.status!=='paid').reduce((s,inv)=>s+parseFloat(inv.total||0),0);
+  const unpaidCount = storeInvoices.filter(inv=>inv.status!=='paid').length;
 
   document.getElementById('main-body').innerHTML=`
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px">
-      <!-- Create Invoice -->
-      <div class="card" style="border-top:3px solid #0d1f4e">
-        <div class="card-title" style="margin-bottom:12px">🧾 Create Invoice</div>
-        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
-          <div style="flex:1;min-width:140px">
-            <label style="font-size:10px;font-weight:700;color:#5060a0;text-transform:uppercase;display:block;margin-bottom:4px">Store</label>
-            <select id="inv-store" onchange="invoiceEditStore=this.value" style="width:100%;background:#fff;border:1.5px solid #d0d5e0;border-radius:7px;padding:7px 10px;font-size:13px;font-weight:600;color:#0d1f4e;outline:none">
-              <option value="">— Select —</option>
-              ${contractStores.map(s=>`<option value="${s}" ${s===invoiceEditStore?'selected':''}>${s}</option>`).join('')}
-            </select>
-          </div>
-          <div style="min-width:80px">
-            <label style="font-size:10px;font-weight:700;color:#5060a0;text-transform:uppercase;display:block;margin-bottom:4px">Month</label>
-            <select id="inv-month" onchange="invoiceEditMonth=this.value" style="width:100%;background:#fff;border:1.5px solid #d0d5e0;border-radius:7px;padding:7px 10px;font-size:13px;outline:none">
-              ${[...Array(12)].map((_,i)=>{const m=String(i+1).padStart(2,'0');const label=new Date(2026,i).toLocaleString('en-US',{month:'long'});return `<option value="${m}" ${m===invoiceEditMonth?'selected':''}>${label}</option>`;}).join('')}
-            </select>
-          </div>
-          <div style="min-width:70px">
-            <label style="font-size:10px;font-weight:700;color:#5060a0;text-transform:uppercase;display:block;margin-bottom:4px">Year</label>
-            <input id="inv-year" type="number" value="${invoiceEditYear}" onchange="invoiceEditYear=this.value" style="width:100%;background:#fff;border:1.5px solid #d0d5e0;border-radius:7px;padding:7px 10px;font-size:13px;outline:none"/>
-          </div>
-        </div>
-        <button onclick="generateInvoicePreview()" class="primary-btn" style="width:100%;padding:10px;font-size:13px">🧾 Generate Invoice</button>
+    <div style="display:flex;gap:12px;align-items:center;margin-bottom:16px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:10px">
+        <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.8px">Store:</label>
+        <select onchange="invoicePageStore=this.value;invoiceExpandedId=null;invoiceGenerating=false;renderInvoices()"
+          style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:160px">
+          ${STORES.map(s=>`<option value="${s}" ${s===invoicePageStore?'selected':''}>${s}</option>`).join('')}
+        </select>
       </div>
-
-      <!-- Existing Invoices -->
-      <div class="card" style="border-top:3px solid #1a7a45">
-        <div class="card-title" style="margin-bottom:12px">📋 Invoice History</div>
-        ${invoicesList.length===0?'<div style="color:#7080a0;font-size:12px">No invoices created yet.</div>':''}
-        ${invoicesList.map(inv=>{
-          const statusColor = inv.status==='paid'?'#1a7a45':inv.status==='sent'?'#0d1f4e':'#b35a00';
-          return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #f0f2f8">
-            <div>
-              <div style="font-size:12px;font-weight:700;color:#0d1f4e">${inv.invoice_number} — ${inv.store_name}</div>
-              <div style="font-size:10px;color:#7080a0">${inv.period_start} → ${inv.period_end}</div>
-            </div>
-            <div style="display:flex;gap:6px;align-items:center">
-              <span style="font-size:12px;font-weight:700;color:#0d1f4e">$${parseFloat(inv.total).toFixed(2)}</span>
-              <span style="background:${statusColor}22;color:${statusColor};border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700;text-transform:uppercase">${inv.status}</span>
-              <button onclick="viewInvoice(${inv.id})" style="background:none;border:1px solid #d0d5e0;border-radius:5px;padding:3px 8px;font-size:10px;cursor:pointer;color:#0d1f4e">View</button>
-            </div>
-          </div>`;
-        }).join('')}
-      </div>
+      ${contract && !hasCurrentMonth && !invoiceGenerating ? `<button onclick="startGenerateInvoice()" class="primary-btn" style="margin-left:auto;padding:8px 16px;font-size:12px">+ Generate ${curMonthLabel} Invoice</button>` : ''}
     </div>
 
-    <div id="inv-preview-area"></div>
+    ${unpaidCount > 0 ? `<div style="display:flex;gap:14px;margin-bottom:14px">
+      <div style="flex:1;background:#fff3cd;border:1.5px solid #e6c200;border-radius:8px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:12px;font-weight:600;color:#856404">${unpaidCount} unpaid invoice${unpaidCount>1?'s':''}</span>
+        <span style="font-size:14px;font-weight:800;color:#856404">$${unpaidTotal.toFixed(2)}</span>
+      </div>
+    </div>` : ''}
+
+    <div id="invoice-generate-area">${invoiceGenerating ? renderInvoiceGenerateForm() : ''}</div>
+
+    <div id="invoice-list">
+      ${storeInvoices.length === 0 && !invoiceGenerating ? `<div class="card" style="text-align:center;padding:40px;color:#7080a0">
+        <div style="font-size:16px;margin-bottom:8px">No invoices for ${invoicePageStore}</div>
+        <div style="font-size:12px">${contract ? 'Click "Generate" to create the first invoice.' : 'No coffee contract found for this store.'}</div>
+      </div>` : ''}
+      ${storeInvoices.map(inv=>renderInvoiceRow(inv)).join('')}
+    </div>
   `;
 }
 
+function renderInvoiceLineItemRow(inv, li, idx, isPaid){
+  let html = '<tr>';
+  if(!isPaid){
+    html += '<td style="padding:4px 8px"><input type="number" value="'+li.qty+'" onchange="updateInvoiceLineItem('+inv.id+','+idx+',\'qty\',this.value)" style="width:55px;padding:4px;border:1px solid #d0d5e0;border-radius:4px;font-size:12px;text-align:center"/></td>';
+    html += '<td style="padding:4px 8px;font-size:12px"><input type="text" value="'+(li.desc||'').replace(/"/g,'&quot;')+'" onchange="updateInvoiceLineItem('+inv.id+','+idx+',\'desc\',this.value)" style="width:100%;padding:4px;border:1px solid #d0d5e0;border-radius:4px;font-size:12px"/>'+(li.taxable?'<span style="color:#b35a00;font-weight:700;font-size:10px;margin-left:4px">T</span>':'')+'</td>';
+    html += '<td style="padding:4px 8px;text-align:center"><input type="checkbox" '+(li.taxable?'checked':'')+' onchange="updateInvoiceLineItem('+inv.id+','+idx+',\'taxable\',this.checked)" style="width:14px;height:14px"/></td>';
+    html += '<td style="padding:4px 8px;text-align:right"><input type="number" step="0.01" value="'+parseFloat(li.rate).toFixed(2)+'" onchange="updateInvoiceLineItem('+inv.id+','+idx+',\'rate\',this.value)" style="width:70px;padding:4px;border:1px solid #d0d5e0;border-radius:4px;font-size:12px;text-align:right"/></td>';
+  } else {
+    html += '<td style="padding:4px 8px">'+li.qty.toLocaleString()+'</td>';
+    html += '<td style="padding:4px 8px;font-size:12px">'+li.desc+(li.taxable?'<span style="color:#b35a00;font-weight:700;font-size:10px;margin-left:4px">T</span>':'')+'</td>';
+    html += '<td style="padding:4px 8px;text-align:center">'+(li.taxable?'T':'')+'</td>';
+    html += '<td style="padding:4px 8px;text-align:right">$'+parseFloat(li.rate).toFixed(2)+'</td>';
+  }
+  html += '<td style="padding:4px 8px;text-align:right;font-weight:600;font-size:12px">$'+parseFloat(li.amount).toFixed(2)+'</td>';
+  if(!isPaid) html += '<td style="padding:4px"><button onclick="removeInvoiceLineItem('+inv.id+','+idx+')" style="background:none;border:none;color:#b01c1c;cursor:pointer;font-size:14px" title="Remove">&times;</button></td>';
+  html += '</tr>';
+  return html;
+}
+
+function renderInvoiceRow(inv){
+  const isExpanded = invoiceExpandedId === inv.id;
+  const isPaid = inv.status === 'paid';
+  const items = typeof inv.line_items === 'string' ? JSON.parse(inv.line_items) : (inv.line_items||[]);
+  const monthLabel = new Date(inv.invoice_date+'T12:00:00').toLocaleString('en-US',{month:'short', year:'numeric'});
+
+  let expandedHTML = '';
+  if(isExpanded){
+    const subtotal = items.reduce((s,li)=>s+parseFloat(li.amount||0),0);
+    const rowsHTML = items.map((li,idx)=>renderInvoiceLineItemRow(inv, li, idx, isPaid)).join('');
+
+    expandedHTML = '<div style="padding:14px 16px;border-top:1px solid #e8ecf4;background:#fafbfe">'
+      + '<table style="width:100%;margin-bottom:12px"><thead><tr>'
+      + '<th style="font-size:10px;text-align:left;padding:4px 8px;width:60px">QTY</th>'
+      + '<th style="font-size:10px;text-align:left;padding:4px 8px">DESCRIPTION</th>'
+      + '<th style="font-size:10px;text-align:center;padding:4px 8px;width:40px">TAX</th>'
+      + '<th style="font-size:10px;text-align:right;padding:4px 8px;width:80px">RATE</th>'
+      + '<th style="font-size:10px;text-align:right;padding:4px 8px;width:90px">AMOUNT</th>'
+      + (!isPaid?'<th style="width:30px"></th>':'')
+      + '</tr></thead><tbody>'
+      + rowsHTML
+      + '</tbody></table>'
+      + (!isPaid?'<button onclick="addInvoiceLineItem('+inv.id+')" style="background:none;border:1px dashed #d0d5e0;border-radius:6px;padding:6px 12px;font-size:11px;color:#5060a0;cursor:pointer;margin-bottom:12px;width:100%">+ Add Line Item</button>':'')
+      + '<div style="display:flex;justify-content:flex-end;gap:16px;padding:8px 0;border-top:1.5px solid #d0d5e0;margin-top:4px">'
+      + '<div style="font-size:11px;color:#7080a0">Subtotal: <strong>$'+subtotal.toFixed(2)+'</strong></div>'
+      + '<div style="font-size:11px;color:#7080a0">Tax: <strong>$'+parseFloat(inv.tax||0).toFixed(2)+'</strong></div>'
+      + '<div style="font-size:13px;font-weight:800;color:#0d1f4e">Total: $'+parseFloat(inv.total).toFixed(2)+'</div>'
+      + '</div>'
+      + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">'
+      + (!isPaid?'<button onclick="saveInvoiceEdits('+inv.id+')" style="background:#1a7a45;color:#fff;border:none;border-radius:7px;padding:8px 16px;font-size:12px;font-weight:700;cursor:pointer">💾 Save Changes</button>':'')
+      + '<button onclick="exportInvoicePDF(invoicesList.find(function(i){return i.id==='+inv.id+'}))" style="background:#0d1f4e;color:#fff;border:none;border-radius:7px;padding:8px 16px;font-size:12px;font-weight:700;cursor:pointer">📄 Export PDF</button>'
+      + (!isPaid?'<button onclick="deleteInvoice('+inv.id+')" style="background:#fff;color:#b01c1c;border:1.5px solid #b01c1c;border-radius:7px;padding:8px 16px;font-size:12px;font-weight:700;cursor:pointer">🗑 Delete</button>':'')
+      + '</div></div>';
+  }
+
+  const borderColor = isPaid ? '#1a7a45' : '#c9a84c';
+  const statusBg = isPaid ? '#e6f4ee' : '#fff3cd';
+  const statusColor = isPaid ? '#1a7a45' : '#856404';
+  const statusBorder = isPaid ? '#1a7a45' : '#c9a84c';
+  const statusLabel = isPaid ? '● PAID' : '● UNPAID';
+
+  return '<div class="card" style="margin-bottom:8px;padding:0;overflow:hidden;border-top:3px solid '+borderColor+'">'
+    + '<div onclick="invoiceExpandedId=invoiceExpandedId==='+inv.id+'?null:'+inv.id+';renderInvoices()"'
+    + ' style="display:flex;align-items:center;padding:12px 16px;cursor:pointer;gap:12px;user-select:none">'
+    + '<span style="font-size:12px;color:#7080a0;transition:transform .2s;'+(isExpanded?'transform:rotate(90deg)':'')+'">▶</span>'
+    + '<div style="flex:1;display:flex;align-items:center;gap:12px;flex-wrap:wrap">'
+    + '<span style="font-size:13px;font-weight:800;color:#0d1f4e;font-family:monospace">'+inv.invoice_number+'</span>'
+    + '<span style="font-size:12px;color:#5060a0">'+monthLabel+'</span>'
+    + '<span style="font-size:14px;font-weight:800;color:#0d1f4e">$'+parseFloat(inv.total).toFixed(2)+'</span>'
+    + '</div>'
+    + '<div style="display:flex;align-items:center;gap:8px" onclick="event.stopPropagation()">'
+    + '<button onclick="toggleInvoicePaid('+inv.id+')" style="padding:4px 12px;border-radius:12px;font-size:10px;font-weight:800;letter-spacing:.5px;cursor:pointer;border:1.5px solid '+statusBorder+';background:'+statusBg+';color:'+statusColor+'">'+statusLabel+'</button>'
+    + '<button onclick="exportInvoicePDF(invoicesList.find(function(i){return i.id==='+inv.id+'}))" style="background:none;border:none;font-size:16px;cursor:pointer;padding:4px" title="Export PDF">📄</button>'
+    + '</div></div>'
+    + expandedHTML
+    + '</div>';
+}
+
+function toggleInvoicePaid(id){
+  const inv = invoicesList.find(i=>i.id===id);
+  if(!inv) return;
+  const newStatus = inv.status === 'paid' ? 'open' : 'paid';
+  if(newStatus === 'paid' && !confirm('Mark this invoice as paid?')) return;
+  if(newStatus === 'open' && !confirm('Mark this invoice as unpaid?')) return;
+  inv.status = newStatus;
+  sbFetch(`invoices?id=eq.${id}`, {method:'PATCH', prefer:'return=minimal', body:JSON.stringify({status:newStatus})}).then(()=>{
+    showToast(`Invoice ${inv.invoice_number} marked as ${newStatus==='paid'?'PAID':'UNPAID'}`);
+  });
+  renderInvoices();
+}
+
+function updateInvoiceLineItem(invId, idx, field, value){
+  const inv = invoicesList.find(i=>i.id===invId);
+  if(!inv) return;
+  const items = typeof inv.line_items === 'string' ? JSON.parse(inv.line_items) : inv.line_items;
+  if(field === 'qty') { items[idx].qty = parseFloat(value)||0; items[idx].amount = items[idx].qty * items[idx].rate; }
+  else if(field === 'rate') { items[idx].rate = parseFloat(value)||0; items[idx].amount = items[idx].qty * items[idx].rate; }
+  else if(field === 'desc') items[idx].desc = value;
+  else if(field === 'taxable') items[idx].taxable = value;
+  inv.line_items = items;
+  // Recalc totals
+  const contract = coffeeContracts.find(c=>c.store_name===inv.store_name);
+  const taxRate = parseFloat(contract?.tax_rate||0.0775);
+  const taxableAmt = items.filter(li=>li.taxable).reduce((s,li)=>s+parseFloat(li.amount||0),0);
+  inv.subtotal = items.reduce((s,li)=>s+parseFloat(li.amount||0),0);
+  inv.tax = Math.round(taxableAmt * taxRate * 100)/100;
+  inv.total = inv.subtotal + inv.tax;
+  renderInvoices();
+}
+
+function addInvoiceLineItem(invId){
+  const inv = invoicesList.find(i=>i.id===invId);
+  if(!inv) return;
+  const items = typeof inv.line_items === 'string' ? JSON.parse(inv.line_items) : inv.line_items;
+  items.push({desc:'', qty:1, rate:0, amount:0, taxable:false});
+  inv.line_items = items;
+  renderInvoices();
+}
+
+function removeInvoiceLineItem(invId, idx){
+  const inv = invoicesList.find(i=>i.id===invId);
+  if(!inv) return;
+  const items = typeof inv.line_items === 'string' ? JSON.parse(inv.line_items) : inv.line_items;
+  items.splice(idx, 1);
+  inv.line_items = items;
+  // Recalc
+  const contract = coffeeContracts.find(c=>c.store_name===inv.store_name);
+  const taxRate = parseFloat(contract?.tax_rate||0.0775);
+  const taxableAmt = items.filter(li=>li.taxable).reduce((s,li)=>s+parseFloat(li.amount||0),0);
+  inv.subtotal = items.reduce((s,li)=>s+parseFloat(li.amount||0),0);
+  inv.tax = Math.round(taxableAmt * taxRate * 100)/100;
+  inv.total = inv.subtotal + inv.tax;
+  renderInvoices();
+}
+
+async function saveInvoiceEdits(invId){
+  const inv = invoicesList.find(i=>i.id===invId);
+  if(!inv) return;
+  try{
+    await sbFetch(`invoices?id=eq.${invId}`, {
+      method:'PATCH', prefer:'return=minimal',
+      body:JSON.stringify({line_items:inv.line_items, subtotal:inv.subtotal, tax:inv.tax, total:inv.total})
+    });
+    showToast(`✓ Invoice ${inv.invoice_number} saved — $${parseFloat(inv.total).toFixed(2)}`);
+  }catch(e){
+    showToast('⚠ Error saving invoice: '+e.message);
+  }
+}
+
+async function deleteInvoice(invId){
+  const inv = invoicesList.find(i=>i.id===invId);
+  if(!inv) return;
+  if(!confirm(`Delete invoice ${inv.invoice_number}? This cannot be undone.`)) return;
+  try{
+    await sbFetch('invoices?id=eq.'+invId, {method:'DELETE', prefer:'return=minimal'});
+    invoicesList = invoicesList.filter(i=>i.id!==invId);
+    invoiceExpandedId = null;
+    showToast('✓ Invoice deleted');
+    renderInvoices();
+  }catch(e){
+    showToast('⚠ Error deleting invoice: '+e.message);
+  }
+}
+
+function startGenerateInvoice(){
+  const now = new Date();
+  invoiceEditStore = invoicePageStore;
+  invoiceEditMonth = String(now.getMonth()+1).padStart(2,'0');
+  invoiceEditYear = String(now.getFullYear());
+  invoiceManualLines = [];
+  invoiceGenerating = true;
+  invoiceExpandedId = null;
+  renderInvoices();
+  // Trigger preview generation
+  generateInvoicePreview();
+}
+
+function renderInvoiceGenerateForm(){
+  const monthLabel = new Date(parseInt(invoiceEditYear), parseInt(invoiceEditMonth)-1).toLocaleString('en-US',{month:'long', year:'numeric'});
+  return `<div class="card" style="border-top:3px solid #0d1f4e;margin-bottom:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <div class="card-title" style="margin:0">📝 Generate Invoice — ${invoicePageStore} — ${monthLabel}</div>
+      <button onclick="cancelGenerateInvoice()" style="background:none;border:1.5px solid #b01c1c;color:#b01c1c;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer">✕ Cancel</button>
+    </div>
+    <div id="invoice-generate-area-inner">
+      <div style="text-align:center;padding:20px;color:#7080a0;font-size:13px">⏳ Loading invoice data…</div>
+    </div>
+  </div>`;
+}
+
+function cancelGenerateInvoice(){
+  invoiceGenerating = false;
+  invoiceManualLines = [];
+  renderInvoices();
+}
+
+
 async function generateInvoicePreview(){
-  const store = document.getElementById('inv-store')?.value;
-  const month = document.getElementById('inv-month')?.value;
-  const year = document.getElementById('inv-year')?.value;
-  if(!store){ showToast('Select a store'); return; }
+  const store = invoiceEditStore || invoicePageStore;
+  const month = invoiceEditMonth;
+  const year = invoiceEditYear;
+  if(!store) return;
 
   invoiceEditStore = store;
   invoiceEditMonth = month;
@@ -9484,7 +9674,7 @@ async function generateInvoicePreview(){
   // Check for existing invoice this store+month
   const existing = invoicesList.find(inv=>inv.store_name===store && inv.invoice_date >= periodStart && inv.invoice_date <= periodEnd);
   if(existing){
-    const area = document.getElementById('invoice-preview-area');
+    const area = document.getElementById('invoice-generate-area-inner');
     const existingItems = typeof existing.line_items === 'string' ? JSON.parse(existing.line_items) : existing.line_items;
     area.innerHTML = `
       <div class="card" style="border-top:3px solid #c9a84c;margin-bottom:14px">
@@ -9562,7 +9752,8 @@ async function generateInvoicePreview(){
   window._invSupplyItems = aggregatedItems;
   window._invEquipFees = equipFees;
 
-  const area = document.getElementById('inv-preview-area');
+  const area = document.getElementById('invoice-generate-area-inner');
+  if(!area) return;
   area.innerHTML = `
     <div class="card" style="border-top:3px solid #0d1f4e;margin-bottom:14px">
       <div class="card-title" style="margin-bottom:4px">🧾 ${store} — ${monthName}</div>
@@ -9890,14 +10081,21 @@ async function _buildAndSaveInvoice(store){
 }
 
 async function saveInvoiceOnly(store){
-  const invoice = await saveAndExportInvoice(store, true);
-  if(invoice) generateInvoicePreview(); // refresh to show saved state
+  const invoice = await _buildAndSaveInvoice(store);
+  if(invoice){
+    invoiceGenerating = false;
+    invoiceManualLines = [];
+    renderInvoices();
+  }
 }
 
 async function saveAndExportInvoice(store, skipExport){
   const invoice = await _buildAndSaveInvoice(store);
   if(!invoice) return null;
   if(!skipExport) exportInvoicePDF(invoice);
+  invoiceGenerating = false;
+  invoiceManualLines = [];
+  renderInvoices();
   return invoice;
 }
 
