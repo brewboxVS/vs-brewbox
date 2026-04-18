@@ -1657,17 +1657,133 @@ function renderDashboard(){
   const vendorParList = Object.entries(vendorPar).map(([v,d])=>({vendor:v, pct:d.count>0?(d.sum/d.count)*100:0, count:d.count}))
     .sort((a,b)=>a.pct-b.pct);
 
-  // ── Financial Stats (MM + Coffee) ──
+  // ── Financial Stats (MM only + Coffee breakdown) ──
   const mmActive = products.filter(p=>p.active);
   const coffeeActive = coffeeProducts.filter(p=>p.active);
   const mmVal = mmActive.reduce((s,p)=>s+Math.max(0,p.qty)*p.unitCost,0);
   const mmSaleVal = mmActive.reduce((s,p)=>s+Math.max(0,p.qty)*p.salePrice,0);
-  const coffeeVal = coffeeActive.reduce((s,p)=>s+Math.max(0,p.qty)*p.unitCost,0);
-  const coffeeSaleVal = coffeeActive.reduce((s,p)=>s+Math.max(0,p.qty)*p.salePrice,0);
-  const totalCost = mmVal + coffeeVal;
-  const totalSale = mmSaleVal + coffeeSaleVal;
-  const totalMargin = totalSale - totalCost;
-  const marginPct = totalSale > 0 ? ((totalMargin / totalSale) * 100).toFixed(1) : '0.0';
+  const mmMargin = mmSaleVal - mmVal;
+  const mmMarginPct = mmSaleVal > 0 ? ((mmMargin / mmSaleVal) * 100).toFixed(1) : '0.0';
+
+  const coffeeInputs = coffeeActive.filter(p=>p.isInput);
+  const coffeeSupplies = coffeeActive.filter(p=>!p.isInput);
+  const coffeeInputVal = coffeeInputs.reduce((s,p)=>s+Math.max(0,p.qty)*p.unitCost,0);
+  const coffeeSupplyVal = coffeeSupplies.reduce((s,p)=>s+Math.max(0,p.qty)*p.unitCost,0);
+  const coffeeTotalVal = coffeeInputVal + coffeeSupplyVal;
+
+  // ── Cost Per Cup (last 3 FULL months, per store) ──
+  const nowDate = new Date();
+  // Last 3 FULL months = start of (current month - 3) to end of (current month - 1)
+  const periodEnd = new Date(nowDate.getFullYear(), nowDate.getMonth(), 0); // last day of previous month
+  const periodStart = new Date(nowDate.getFullYear(), nowDate.getMonth()-3, 1); // first day of 3 months ago
+  const periodStartStr = periodStart.toISOString().slice(0,10);
+  const periodEndStr = periodEnd.toISOString().slice(0,10);
+  const periodMonths = 3;
+  const periodLabel = `${periodStart.toLocaleString('en-US',{month:'short'})}–${periodEnd.toLocaleString('en-US',{month:'short',year:'numeric'})}`;
+
+  // Determine which stores have coffee contracts with cup_rate > 0
+  const coffeeStoreList = STORES.filter(s=>{
+    const contract = coffeeContracts.find(c=>c.store_name===s);
+    return contract && parseFloat(contract.cup_rate||0) > 0;
+  });
+
+  // Per-store cost per cup calculation
+  const cupMetrics = STORES.map(store=>{
+    const contract = coffeeContracts.find(c=>c.store_name===store);
+    const cupRate = contract ? parseFloat(contract.cup_rate||0) : 0;
+
+    // Elevated Brandz has no coffee — flag N/A
+    if(!contract || cupRate === 0){
+      return {store, status:'na', cupRate:0, costPerCup:0, marginPerCup:0, source:''};
+    }
+
+    // Get consumption logs for THIS store, coffee INPUT items only, in period
+    const inputIds = new Set(coffeeInputs.map(p=>p.id));
+    const consumptionLogs = (window._countLogCache||[]).filter(l=>
+      l.store_name === store &&
+      inputIds.has(l.product_id) &&
+      l.reason === 'Consumption' &&
+      l.count_date >= periodStartStr &&
+      l.count_date <= periodEndStr
+    );
+    const daysCovered = consumptionLogs.length > 0
+      ? (new Date(consumptionLogs[consumptionLogs.length-1].count_date) - new Date(consumptionLogs[0].count_date)) / (1000*60*60*24)
+      : 0;
+
+    // Billable cups from invoices in period (for this store)
+    const storeInvoices = (invoicesList||[]).filter(inv=>
+      inv.store_name === store &&
+      inv.invoice_date >= periodStartStr &&
+      inv.invoice_date <= periodEndStr
+    );
+    let totalCups = 0;
+    for(const inv of storeInvoices){
+      const items = typeof inv.line_items === 'string' ? JSON.parse(inv.line_items) : (inv.line_items||[]);
+      for(const li of items){
+        // Cup lines: match by description containing "cup" (case-insensitive) OR by matching contract cup_label
+        const desc = (li.desc||'').toLowerCase();
+        if(desc.includes('cup') && !desc.includes('lid')){
+          totalCups += parseInt(li.qty)||0;
+        }
+      }
+    }
+
+    let costPerCup = 0;
+    let source = '';
+
+    if(consumptionLogs.length >= 10 && daysCovered >= 30){
+      // Enough consumption data: use it (difference is negative for consumption, take abs)
+      let totalCost = 0;
+      for(const log of consumptionLogs){
+        const prod = coffeeProducts.find(p=>p.id===log.product_id);
+        if(prod){
+          const consumed = Math.abs(parseFloat(log.difference)||0);
+          totalCost += consumed * parseFloat(prod.unitCost||0);
+        }
+      }
+      if(totalCups > 0){
+        costPerCup = totalCost / totalCups;
+        source = 'Consumption logs';
+      }
+    } else {
+      // Fallback: estimate from received store orders in period
+      let totalCost = 0;
+      const receivedOrders = (storeOrders||[]).filter(o=>
+        o.store_name === store && o.status === 'received'
+      );
+      for(const order of receivedOrders){
+        const closedAt = (order.closed_at||'').slice(0,10);
+        if(!closedAt || closedAt < periodStartStr || closedAt > periodEndStr) continue;
+        for(const item of (order.items||[])){
+          if(item.product_source !== 'coffee') continue;
+          const prod = coffeeProducts.find(p=>p.id===item.product_id);
+          if(prod && prod.isInput){
+            const qty = parseFloat(item.order_qty||0);
+            totalCost += qty * parseFloat(prod.unitCost||0);
+          }
+        }
+      }
+      if(totalCups > 0){
+        costPerCup = totalCost / totalCups;
+        source = 'Est. from orders';
+      }
+    }
+
+    if(totalCups === 0){
+      return {store, status:'no_data', cupRate, costPerCup:0, marginPerCup:0, source:'No cup data'};
+    }
+
+    const marginPerCup = cupRate - costPerCup;
+    return {store, status:'ok', cupRate, costPerCup, marginPerCup, totalCups, source};
+  });
+
+  // Load count logs if not cached
+  if(!window._countLogCache){
+    window._countLogCache = [];
+    sbFetch(`inventory_count_log?count_date=gte.${periodStartStr}&select=product_id,store_name,difference,reason,count_date&order=count_date`,{method:'GET',prefer:'return=representation'})
+      .then(rows=>{ window._countLogCache = rows||[]; render(); })
+      .catch(()=>{});
+  }
 
   document.getElementById('main-body').innerHTML=`
     <!-- Store Inventory Widgets -->
@@ -1757,23 +1873,62 @@ function renderDashboard(){
       <!-- RIGHT: Financial Stats -->
       <div class="card" style="border-top:3px solid #1a7a45">
         <div class="card-title" style="margin-bottom:12px">Warehouse Inv Financial Stats</div>
+
+        <!-- MM Section -->
+        <div style="font-size:10px;font-weight:800;color:#7080a0;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">🍫 MM Inventory</div>
         ${[
-          ['MM Inventory Value (Cost)', '$'+mmVal.toFixed(0), '#0d1f4e'],
-          ['MM Sale Value', '$'+mmSaleVal.toFixed(0), '#1a7a45'],
-          ['MM Potential Margin', '$'+(mmSaleVal-mmVal).toFixed(0), '#1a7a45'],
-          ['_divider'],
-          ['Coffee Inventory Value (Cost)', '$'+coffeeVal.toFixed(0), '#6b2fa0'],
-          ['Coffee Sale Value', '$'+coffeeSaleVal.toFixed(0), '#1a7a45'],
-          ['Coffee Potential Margin', '$'+(coffeeSaleVal-coffeeVal).toFixed(0), '#1a7a45'],
-          ['_divider'],
-          ['Total Inventory Value', '$'+totalCost.toFixed(0), '#0d1f4e'],
-          ['Total Sale Value', '$'+totalSale.toFixed(0), '#1a7a45'],
-          ['Total Potential Margin', '$'+totalMargin.toFixed(0), '#1a7a45'],
-          ['Margin %', marginPct+'%', '#0d1f4e'],
-        ].map(row=>{
-          if(row[0]==='_divider') return '<div style="border-top:1px solid #e8ecf4;margin:6px 0"></div>';
-          return `<div style="display:flex;justify-content:space-between;padding:5px 0"><span style="font-size:12px;color:#5060a0">${row[0]}</span><span style="font-weight:700;color:${row[2]}">${row[1]}</span></div>`;
-        }).join('')}
+          ['Inventory Value (Cost)', '$'+mmVal.toFixed(0), '#0d1f4e'],
+          ['Sale Value', '$'+mmSaleVal.toFixed(0), '#1a7a45'],
+          ['Potential Margin', '$'+mmMargin.toFixed(0), '#1a7a45'],
+          ['Margin %', mmMarginPct+'%', '#0d1f4e'],
+        ].map(row=>`<div style="display:flex;justify-content:space-between;padding:5px 0"><span style="font-size:12px;color:#5060a0">${row[0]}</span><span style="font-weight:700;color:${row[2]}">${row[1]}</span></div>`).join('')}
+
+        <div style="border-top:1px solid #e8ecf4;margin:10px 0"></div>
+
+        <!-- Coffee Section -->
+        <div style="font-size:10px;font-weight:800;color:#6b2fa0;text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px">☕ Coffee Inventory</div>
+        ${[
+          ['Input Items ('+coffeeInputs.length+')', '$'+coffeeInputVal.toFixed(0), '#6b2fa0'],
+          ['Supply Items ('+coffeeSupplies.length+')', '$'+coffeeSupplyVal.toFixed(0), '#6b2fa0'],
+          ['Total Coffee Inventory Value', '$'+coffeeTotalVal.toFixed(0), '#0d1f4e'],
+        ].map(row=>`<div style="display:flex;justify-content:space-between;padding:5px 0"><span style="font-size:12px;color:#5060a0">${row[0]}</span><span style="font-weight:700;color:${row[2]}">${row[1]}</span></div>`).join('')}
+
+        <div style="border-top:1px solid #e8ecf4;margin:10px 0"></div>
+
+        <!-- Cost Per Cup Analysis -->
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
+          <div style="font-size:10px;font-weight:800;color:#6b2fa0;text-transform:uppercase;letter-spacing:.8px">💧 Cost Per Cup</div>
+          <div style="font-size:10px;color:#8090b0">${periodLabel}</div>
+        </div>
+        <div style="font-size:10px;color:#8090b0;margin-bottom:8px;line-height:1.4">Based on coffee INPUT item consumption ÷ billable cups, last 3 full months.</div>
+
+        <table style="width:100%;font-size:11px">
+          <thead>
+            <tr style="color:#7080a0">
+              <th style="text-align:left;padding:4px 4px;font-weight:700">STORE</th>
+              <th style="text-align:right;padding:4px 4px;font-weight:700">COST/CUP</th>
+              <th style="text-align:right;padding:4px 4px;font-weight:700">SALE/CUP</th>
+              <th style="text-align:right;padding:4px 4px;font-weight:700">MARGIN</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${cupMetrics.map(m=>{
+              if(m.status==='na'){
+                return `<tr><td style="padding:4px 4px;color:#0d1f4e;font-weight:600">${m.store}</td><td colspan="3" style="padding:4px 4px;color:#8090b0;font-size:10px;text-align:right">N/A — no coffee service</td></tr>`;
+              }
+              if(m.status==='no_data'){
+                return `<tr><td style="padding:4px 4px;color:#0d1f4e;font-weight:600">${m.store}</td><td colspan="3" style="padding:4px 4px;color:#8090b0;font-size:10px;text-align:right">No invoiced cups in period</td></tr>`;
+              }
+              const marginColor = m.marginPerCup > 0 ? '#1a7a45' : m.marginPerCup < 0 ? '#b01c1c' : '#7080a0';
+              return `<tr>
+                <td style="padding:4px 4px;color:#0d1f4e;font-weight:600">${m.store}<div style="font-size:9px;color:#8090b0;font-weight:400">${m.source}</div></td>
+                <td style="padding:4px 4px;text-align:right;font-weight:700;color:#0d1f4e">$${m.costPerCup.toFixed(3)}</td>
+                <td style="padding:4px 4px;text-align:right;font-weight:700;color:#0d1f4e">$${m.cupRate.toFixed(3)}</td>
+                <td style="padding:4px 4px;text-align:right;font-weight:800;color:${marginColor}">$${m.marginPerCup.toFixed(3)}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
       </div>
 
     </div>
