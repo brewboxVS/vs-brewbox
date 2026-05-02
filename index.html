@@ -1043,6 +1043,16 @@ function getStockStatus(qty, minLevel){
   if(minLevel > 0 && qty <= minLevel) return 'low';
   return 'ok';
 }
+function getItemMarginPct(p){
+  if(!p.salePrice || p.salePrice <= 0) return null;
+  return ((p.salePrice - p.unitCost) / p.salePrice * 100);
+}
+function marginBadge(p){
+  const m = getItemMarginPct(p);
+  if(m === null) return '<span style="color:#b0b8cc;font-size:10px">—</span>';
+  const color = m < 0 ? '#b01c1c' : m < 40 ? '#b01c1c' : m < 50 ? '#c9a84c' : '#1a7a45';
+  return '<span style="font-size:11px;font-weight:700;color:'+color+'">'+m.toFixed(1)+'%</span>';
+}
 function stockFilterPills(current, counts, varName, renderFn){
   const pills = [
     {key:'all', label:'All', count:counts.all, color:'#0d1f4e'},
@@ -1050,8 +1060,11 @@ function stockFilterPills(current, counts, varName, renderFn){
     {key:'low', label:'Low', count:counts.low, color:'#c9a84c'},
     {key:'ok',  label:'In Stock', count:counts.ok, color:'#1a7a45'}
   ];
-  return `<div style="display:flex;gap:4px;background:#f4f6fa;border-radius:7px;padding:3px">${pills.map(p=>
-    `<button onclick="${varName}='${p.key}';${renderFn}()" style="padding:5px 10px;border:none;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:4px;${current===p.key?'background:'+p.color+';color:#fff':'background:transparent;color:#5060a0'}">${p.label}<span style="background:${current===p.key?'rgba(255,255,255,0.25)':p.key==='out'&&p.count>0?'#fde8e8':p.key==='low'&&p.count>0?'#fff3cd':'#e8ecf4'};color:${current===p.key?'#fff':p.color};padding:1px 6px;border-radius:10px;font-size:10px;font-weight:800">${p.count}</span></button>`
+  if(counts.lowMargin !== undefined){
+    pills.push({key:'lowMargin', label:'⚠ Low Margin', count:counts.lowMargin, color:'#c62828'});
+  }
+  return `<div style="display:flex;gap:4px;background:#f4f6fa;border-radius:7px;padding:3px;flex-wrap:wrap">${pills.map(p=>
+    `<button onclick="${varName}='${p.key}';${renderFn}()" style="padding:5px 10px;border:none;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:4px;${current===p.key?'background:'+p.color+';color:#fff':'background:transparent;color:#5060a0'}">${p.label}<span style="background:${current===p.key?'rgba(255,255,255,0.25)':p.key==='out'&&p.count>0?'#fde8e8':p.key==='low'&&p.count>0?'#fff3cd':p.key==='lowMargin'&&p.count>0?'#fde8e8':'#e8ecf4'};color:${current===p.key?'#fff':p.color};padding:1px 6px;border-radius:10px;font-size:10px;font-weight:800">${p.count}</span></button>`
   ).join('')}</div>`;
 }
 let editingRows = new Set(); // set of product IDs currently being edited
@@ -1941,13 +1954,14 @@ function renderInventory(){
     const ms=p.name.toLowerCase().includes(searchTerm.toLowerCase())||p.upc.includes(searchTerm);
     const matchActive=showActiveOnly?p.active:true;
     const matchCat=categoryFilters.size===0||categoryFilters.has(p.cat1);
-    const matchStock=invStockFilter==='all'||getStockStatus(p.qty,p.minLevel)===invStockFilter;
-    return ms&&matchActive&&matchCat&&matchStock;
+    const matchStock=invStockFilter==='all'||invStockFilter==='lowMargin'||(getStockStatus(p.qty,p.minLevel)===invStockFilter);
+    const matchMargin=invStockFilter!=='lowMargin'||((getItemMarginPct(p)||100)<45);
+    return ms&&matchActive&&matchCat&&matchStock&&matchMargin;
   }).sort((a,b)=>a.name.localeCompare(b.name));
   const activeCount=products.filter(p=>p.active).length;
   const inactiveCount=products.filter(p=>!p.active).length;
   const activeProducts=products.filter(p=>showActiveOnly?p.active:true);
-  const stockCounts={all:activeProducts.length, out:activeProducts.filter(p=>getStockStatus(p.qty,p.minLevel)==='out').length, low:activeProducts.filter(p=>getStockStatus(p.qty,p.minLevel)==='low').length, ok:activeProducts.filter(p=>getStockStatus(p.qty,p.minLevel)==='ok').length};
+  const stockCounts={all:activeProducts.length, out:activeProducts.filter(p=>getStockStatus(p.qty,p.minLevel)==='out').length, low:activeProducts.filter(p=>getStockStatus(p.qty,p.minLevel)==='low').length, ok:activeProducts.filter(p=>getStockStatus(p.qty,p.minLevel)==='ok').length, lowMargin:activeProducts.filter(p=>(getItemMarginPct(p)||100)<45).length};
   document.getElementById('main-body').innerHTML=`
     <div class="cat-filters">
       <button class="cat-btn${categoryFilters.size===0?' active':''}" onclick="categoryFilters.clear();render()">ALL</button>
@@ -1974,7 +1988,7 @@ function renderInventory(){
         <thead><tr>
           <th style="padding-left:12px;min-width:200px">NAME</th>
           <th>UPC</th><th>QTY</th><th>MIN</th><th>MAX</th>
-          <th>UNIT COST</th><th>SALE PRICE</th><th>COST/BOX</th><th>PCS/BOX</th>
+          <th>UNIT COST</th><th>SALE PRICE</th><th>MARGIN</th><th>COST/BOX</th><th>PCS/BOX</th>
           <th>CAT 1</th><th>CAT 2</th><th>VENDOR</th>
           <th>STORES</th><th>STATUS</th><th>ACTIVE</th><th>ACTIONS</th>
         </tr></thead>
@@ -2125,6 +2139,7 @@ function renderInventoryRow(p){
       <td><input class="edit-input" id="ei-max-${p.id}" type="number" value="${p.maxLevel}" style="width:45px"/></td>
       <td><span class="edit-unit-cost" id="ei-uc-${p.id}">$${uc.toFixed(4)}</span></td>
       <td><input class="edit-input" id="ei-price-${p.id}" type="number" value="${p.salePrice}" step="0.01" style="width:60px"/></td>
+      <td>${marginBadge(p)}</td>
       <td><input class="edit-input" id="ei-cpb-${p.id}" type="number" value="${p.costPerBox}" step="0.01" style="width:65px" oninput="mmRecalcUC(${p.id})"/></td>
       <td><input class="edit-input" id="ei-ppb-${p.id}" type="number" value="${p.piecesPerBox}" style="width:45px" oninput="mmRecalcUC(${p.id})"/></td>
       <td><select class="edit-select" id="ei-cat1-${p.id}" style="width:90px">
@@ -2155,6 +2170,7 @@ function renderInventoryRow(p){
     <td>${p.minLevel}</td><td style="color:#7080a0">${p.maxLevel}</td>
     <td>$${uc.toFixed(4)}</td>
     <td style="color:#1a7a45">$${p.salePrice.toFixed(2)}</td>
+    <td>${marginBadge(p)}</td>
     <td>$${p.costPerBox.toFixed(2)}</td>
     <td>${p.piecesPerBox}</td>
     <td style="font-size:11px;color:#5060a0">${p.cat1||'—'}</td>
@@ -3012,13 +3028,14 @@ function renderCoffeeInventory(){
     const ms = p.name.toLowerCase().includes(coffeeSearchTerm.toLowerCase())||p.upc.includes(coffeeSearchTerm);
     const matchActive = coffeeShowActiveOnly ? p.active : true;
     const matchCat = coffeeCategoryFilters.size===0 || coffeeCategoryFilters.has(p.cat1);
-    const matchStock = coffeeStockFilter==='all' || getStockStatus(p.qty,p.minLevel)===coffeeStockFilter;
-    return ms && matchActive && matchCat && matchStock;
+    const matchStock = coffeeStockFilter==='all' || coffeeStockFilter==='lowMargin' || (getStockStatus(p.qty,p.minLevel)===coffeeStockFilter);
+    const matchMargin = coffeeStockFilter!=='lowMargin' || (!p.isInput && (getItemMarginPct(p)||100)<45);
+    return ms && matchActive && matchCat && matchStock && matchMargin;
   }).sort((a,b)=>a.name.localeCompare(b.name));
   const activeCount = coffeeProducts.filter(p=>p.active).length;
   const inactiveCount = coffeeProducts.filter(p=>!p.active).length;
   const activeProds = coffeeProducts.filter(p=>coffeeShowActiveOnly?p.active:true);
-  const stockCounts={all:activeProds.length, out:activeProds.filter(p=>getStockStatus(p.qty,p.minLevel)==='out').length, low:activeProds.filter(p=>getStockStatus(p.qty,p.minLevel)==='low').length, ok:activeProds.filter(p=>getStockStatus(p.qty,p.minLevel)==='ok').length};
+  const stockCounts={all:activeProds.length, out:activeProds.filter(p=>getStockStatus(p.qty,p.minLevel)==='out').length, low:activeProds.filter(p=>getStockStatus(p.qty,p.minLevel)==='low').length, ok:activeProds.filter(p=>getStockStatus(p.qty,p.minLevel)==='ok').length, lowMargin:activeProds.filter(p=>!p.isInput&&(getItemMarginPct(p)||100)<45).length};
 
   document.getElementById('main-body').innerHTML=`
     <div class="cat-filters">
@@ -3051,12 +3068,12 @@ function renderCoffeeInventory(){
         <thead><tr>
           <th style="padding-left:12px;min-width:200px">NAME</th>
           <th>UPC</th><th>QTY</th><th>MIN</th><th>MAX</th>
-          <th>UNIT COST</th><th>SALE PRICE</th><th>COST/BOX</th><th>PCS/BOX</th>
+          <th>UNIT COST</th><th>SALE PRICE</th><th>MARGIN</th><th>COST/BOX</th><th>PCS/BOX</th>
           <th>CAT 1</th><th>CAT 2</th><th>VENDOR</th>
           <th>STORES</th><th>TYPE</th><th>STATUS</th><th>ACTIVE</th><th>ACTIONS</th>
         </tr></thead>
         <tbody>
-        ${filtered.length===0?`<tr><td colspan="16" style="text-align:center;padding:30px;color:#7080a0">No coffee items yet. Click "+ Add Item" to get started.</td></tr>`
+        ${filtered.length===0?`<tr><td colspan="17" style="text-align:center;padding:30px;color:#7080a0">No coffee items yet. Click "+ Add Item" to get started.</td></tr>`
           :filtered.map(p=>renderCoffeeRow(p)).join('')}
         </tbody>
       </table>
@@ -3077,6 +3094,7 @@ function renderCoffeeRow(p){
       <td><input class="edit-input" id="ci-max-${p.id}" type="number" value="${p.maxLevel}" style="width:45px"/></td>
       <td><span class="edit-unit-cost" id="ci-uc-${p.id}">$${uc.toFixed(4)}</span></td>
       <td><input class="edit-input" id="ci-price-${p.id}" type="number" value="${p.salePrice}" step="0.01" style="width:60px"/></td>
+      <td>${p.isInput ? '<span style="color:#b0b8cc;font-size:10px">—</span>' : marginBadge(p)}</td>
       <td><input class="edit-input" id="ci-cpb-${p.id}" type="number" value="${p.costPerBox}" step="0.01" style="width:65px" oninput="ciRecalcUC(${p.id})"/></td>
       <td><input class="edit-input" id="ci-ppb-${p.id}" type="number" value="${p.piecesPerBox}" style="width:45px" oninput="ciRecalcUC(${p.id})"/></td>
       <td><select class="edit-select" id="ci-cat1-${p.id}" style="width:100px">
@@ -3106,6 +3124,7 @@ function renderCoffeeRow(p){
     <td>${p.minLevel}</td><td style="color:#7080a0">${p.maxLevel}</td>
     <td>$${uc.toFixed(4)}</td>
     <td style="color:#1a7a45">$${p.salePrice.toFixed(2)}</td>
+    <td>${p.isInput ? '<span style="color:#b0b8cc;font-size:10px">—</span>' : marginBadge(p)}</td>
     <td>$${p.costPerBox.toFixed(2)}</td>
     <td>${p.piecesPerBox}</td>
     <td style="font-size:11px;color:#5060a0">${p.cat1||'—'}</td>
