@@ -604,7 +604,7 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
         <button class="nav-btn" id="reports-toggle" onclick="toggleReportsMenu()">📊 &nbsp;<span>Reports</span><span class="nav-arrow" id="reports-arrow">›</span></button>
         <div id="reports-submenu" style="display:none">
           <button class="nav-btn nav-sub" onclick="setView('insights')">📈 &nbsp;<span>Insights Dashboard</span></button>
-          <button class="nav-btn nav-sub" onclick="setView('usage-report')">📋 &nbsp;<span>Usage / Theft Report</span></button>
+          <button class="nav-btn nav-sub" onclick="setView('usage-report')">📋 &nbsp;<span>Consumption & Theft</span></button>
         </div>
       </div>
     </div>
@@ -1602,7 +1602,7 @@ function openStoresMenu(){
 
 function setView(v){
   currentView=v;
-  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log','sales-import':'Sales Import','hist-import':'Historical Data Import',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log','usage-report':'Usage / Theft Report','vendor-mgmt':'Vendor Management','insights':'Insights Dashboard','invoices':'Invoices'};
+  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log','sales-import':'Sales Import','hist-import':'Historical Data Import',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log','usage-report':'Consumption & Theft Reports','vendor-mgmt':'Vendor Management','insights':'Insights Dashboard','invoices':'Invoices'};
   if(v==='count' && Object.keys(countState).length===0) initCountState();
   if(v==='store-count' && Object.keys(storeCountState).length===0) initStoreCountState();
   document.getElementById('page-title').textContent=titles[v]||v;
@@ -10355,13 +10355,11 @@ let usageReportStore = '';
 let usageReportFrom = '';
 let usageReportTo = '';
 let usageReportData = null; // null = not yet run
+let usageReportTab = 'consumption'; // 'consumption' or 'theft'
 const USAGE_TAX_RATE = 0.109; // 10.9% taxes + fees
 
 function renderUsageReport(){
   if(!usageReportStore) usageReportStore = STORES[0];
-  const isFV = isStoreSettings(usageReportStore, 'free_vend');
-  const reportLabel = isFV ? 'Consumption' : 'Theft/Walkoff';
-  const reasons = isFV ? ['Consumption'] : ['Theft/Walkoff'];
 
   // Default date range: current month
   if(!usageReportFrom){
@@ -10370,15 +10368,23 @@ function renderUsageReport(){
     usageReportTo = now.toISOString().slice(0,10);
   }
 
+  const isConsumption = usageReportTab === 'consumption';
+  const tabLabel = isConsumption ? 'Consumption' : 'Theft / Walkoff';
+  const tabColor = isConsumption ? '#6b2fa0' : '#b35a00';
+  const priceLabel = isConsumption ? 'UNIT COST' : 'SALE PRICE';
+  const priceNote = isConsumption
+    ? 'Shows coffee input items consumed at this store. Valued at <strong>unit cost</strong> (what you paid).'
+    : 'Shows items lost to theft/walkoff at this store. Valued at <strong>sale price</strong> (lost revenue).';
+
   document.getElementById('main-body').innerHTML = `
     <div class="card" style="border-top:3px solid #0d1f4e;margin-bottom:14px">
-      <div class="card-title" style="margin-bottom:12px">${isFV ? '📋 Consumption Report' : '📋 Theft / Walkoff Report'}</div>
+      <div class="card-title" style="margin-bottom:12px">📋 Store Reports</div>
       <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
         <div style="display:flex;align-items:center;gap:8px">
           <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase">Store:</label>
           <select onchange="usageReportStore=this.value;usageReportData=null;renderUsageReport()"
             style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer">
-            ${STORES.map(s=>`<option value="${s}" ${s===usageReportStore?'selected':''}>${s}${isStoreSettings(s,'free_vend')?' (Free Vend)':''}</option>`).join('')}
+            ${STORES.map(s=>`<option value="${s}" ${s===usageReportStore?'selected':''}>${s}</option>`).join('')}
           </select>
         </div>
         <div style="display:flex;align-items:center;gap:8px">
@@ -10393,23 +10399,29 @@ function renderUsageReport(){
         </div>
         <button onclick="runUsageReport()" class="primary-btn" style="padding:8px 18px">🔍 Run Report</button>
       </div>
+
+      <!-- Tab pills -->
+      <div style="display:flex;gap:4px;background:#f4f6fa;border-radius:7px;padding:3px;margin-bottom:10px">
+        <button onclick="usageReportTab='consumption';usageReportData=null;renderUsageReport()"
+          style="flex:1;padding:8px 16px;border:none;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;${isConsumption?'background:#6b2fa0;color:#fff':'background:transparent;color:#5060a0'}">☕ Consumption</button>
+        <button onclick="usageReportTab='theft';usageReportData=null;renderUsageReport()"
+          style="flex:1;padding:8px 16px;border:none;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;${!isConsumption?'background:#b35a00;color:#fff':'background:transparent;color:#5060a0'}">🚨 Theft</button>
+      </div>
       <div style="font-size:11px;color:#7080a0;line-height:1.5">
-        ${isFV
-          ? 'This report shows all <strong>consumption</strong> logged via store inventory counts for the selected store and date range. Use it to calculate invoices.'
-          : 'This report shows all <strong>theft/walkoff</strong> logged via store inventory counts for the selected store and date range.'}
+        ${priceNote}
         <br>Prices include ${(USAGE_TAX_RATE*100).toFixed(1)}% taxes & fees.
       </div>
     </div>
 
     ${usageReportData === null ? '' : usageReportData.length === 0 ? `
     <div class="card" style="text-align:center;padding:30px;color:#7080a0">
-      <div style="font-size:16px;margin-bottom:8px">No ${reportLabel.toLowerCase()} records found</div>
+      <div style="font-size:16px;margin-bottom:8px">No ${tabLabel.toLowerCase()} records found</div>
       <div style="font-size:12px">${usageReportStore} · ${usageReportFrom} to ${usageReportTo}</div>
     </div>` : `
-    <div class="card" style="border-top:3px solid ${isFV?'#c62828':'#b35a00'}">
+    <div class="card" style="border-top:3px solid ${tabColor}">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
         <div>
-          <div class="card-title" style="margin-bottom:2px">${usageReportStore} — ${reportLabel}</div>
+          <div class="card-title" style="margin-bottom:2px">${usageReportStore} — ${tabLabel}</div>
           <div style="font-size:11px;color:#7080a0">${usageReportFrom} to ${usageReportTo} · ${usageReportData.length} items</div>
         </div>
         <button onclick="exportUsageReportExcel()" style="background:#0d1f4e;color:#fff;border:none;border-radius:7px;padding:8px 16px;font-size:12px;font-weight:700;cursor:pointer">📊 Export Excel</button>
@@ -10419,8 +10431,9 @@ function renderUsageReport(){
           <thead><tr>
             <th style="padding-left:8px;min-width:200px">ITEM</th>
             <th>CATEGORY</th>
+            <th>SOURCE</th>
             <th>UNITS</th>
-            <th>UNIT PRICE</th>
+            <th>${priceLabel}</th>
             <th>SUBTOTAL</th>
             <th>TAX/FEES</th>
             <th>LINE TOTAL</th>
@@ -10429,6 +10442,7 @@ function renderUsageReport(){
           ${usageReportData.map(r=>`<tr>
             <td style="padding-left:8px;font-weight:600;color:#0d1f4e">${r.name}</td>
             <td style="font-size:11px;color:#5060a0">${r.cat1||''}</td>
+            <td style="font-size:10px"><span style="background:${r.source==='coffee'?'#f3e8ff':'#e8edf8'};color:${r.source==='coffee'?'#6b2fa0':'#0d1f4e'};padding:2px 6px;border-radius:4px;font-weight:700">${r.source==='coffee'?'Coffee':'MM'}</span></td>
             <td style="font-weight:700;color:#b01c1c">${r.units}</td>
             <td>$${r.unitPrice.toFixed(2)}</td>
             <td>$${r.subtotal.toFixed(2)}</td>
@@ -10437,6 +10451,7 @@ function renderUsageReport(){
           </tr>`).join('')}
           <tr style="border-top:2px solid #0d1f4e;font-weight:700">
             <td style="padding-left:8px">TOTAL</td>
+            <td></td>
             <td></td>
             <td style="color:#b01c1c">${usageReportData.reduce((s,r)=>s+r.units,0)}</td>
             <td></td>
@@ -10452,44 +10467,46 @@ function renderUsageReport(){
 }
 
 async function runUsageReport(){
-  const isFV = isStoreSettings(usageReportStore, 'free_vend');
-  const targetReasons = isFV ? ['Consumption'] : ['Theft/Walkoff'];
+  const isConsumption = usageReportTab === 'consumption';
+  const targetReasons = isConsumption ? ['Consumption'] : ['Theft/Walkoff','Theft Recovery'];
 
   showToast('Loading report…');
   try{
-    // Query inventory_count_log for this store and date range
     const rows = await sbFetchAll(
       `inventory_count_log?store_name=eq.${encodeURIComponent(usageReportStore)}&count_date=gte.${usageReportFrom}&count_date=lte.${usageReportTo}&order=product_name`,
       {method:'GET', prefer:'return=representation'}
     );
 
-    // Filter to only consumption/theft reasons and negative differences
+    // Filter to matching reasons and negative differences
     const filtered = rows.filter(r => {
       const reason = (r.reason||'').trim();
       return targetReasons.includes(reason) && parseFloat(r.difference) < 0;
     });
 
-    // Group by product — sum units consumed
+    // Group by product — sum units
     const byProduct = {};
     for(const r of filtered){
-      const key = r.product_name;
-      if(!byProduct[key]) byProduct[key] = {name:key, product_id:r.product_id, units:0};
+      const key = r.product_id + '|' + r.product_name;
+      if(!byProduct[key]) byProduct[key] = {name:r.product_name, product_id:r.product_id, units:0};
       byProduct[key].units += Math.abs(parseFloat(r.difference));
     }
 
-    // Look up sale_price and category for each product
+    // Look up price and category for each product
     const reportData = Object.values(byProduct).map(item=>{
       const si = storeInventory.find(x=>x.store_name===usageReportStore && x.product_id===item.product_id);
-      const wh = si?.product_source==='coffee'
+      const source = si?.product_source || 'mm';
+      const wh = source==='coffee'
         ? coffeeProducts.find(p=>p.id===item.product_id)
         : products.find(p=>p.id===item.product_id);
-      const unitPrice = wh ? wh.salePrice : 0;
+      // Consumption = unit cost (what you paid); Theft = sale price (what you lost)
+      const unitPrice = wh ? (isConsumption ? wh.unitCost : wh.salePrice) : 0;
       const cat1 = si ? getStoreItemCat1(si) : (wh?.cat1||'');
       const subtotal = item.units * unitPrice;
       const tax = subtotal * USAGE_TAX_RATE;
       return {
         name: item.name,
         cat1,
+        source,
         units: item.units,
         unitPrice,
         subtotal,
@@ -10516,16 +10533,17 @@ async function runUsageReport(){
 
 function exportUsageReportExcel(){
   if(!usageReportData || usageReportData.length===0){ showToast('No data to export'); return; }
-  const isFV = isStoreSettings(usageReportStore, 'free_vend');
-  const label = isFV ? 'Consumption' : 'Theft';
+  const isConsumption = usageReportTab === 'consumption';
+  const label = isConsumption ? 'Consumption' : 'Theft';
+  const priceCol = isConsumption ? 'Unit Cost' : 'Sale Price';
 
   const doExport = ()=>{
-    const headers = ['Item Name','Category','Units','Unit Price','Subtotal','Tax/Fees ('+((USAGE_TAX_RATE*100).toFixed(1))+'%)','Line Total'];
+    const headers = ['Item Name','Category','Source','Units',priceCol,'Subtotal','Tax/Fees ('+((USAGE_TAX_RATE*100).toFixed(1))+'%)','Line Total'];
     const rows = usageReportData.map(r=>[
-      r.name, r.cat1||'', r.units,
+      r.name, r.cat1||'', r.source==='coffee'?'Coffee':'MM', r.units,
       r.unitPrice, r.subtotal, r.tax, r.lineTotal
     ]);
-    rows.push(['TOTAL','',
+    rows.push(['TOTAL','','',
       usageReportData.reduce((s,r)=>s+r.units,0),
       '',
       usageReportData.reduce((s,r)=>s+r.subtotal,0),
@@ -10536,15 +10554,14 @@ function exportUsageReportExcel(){
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
 
-    // Format currency columns
     for(let r=1; r<=rows.length; r++){
-      for(const c of [3,4,5,6]){
+      for(const c of [4,5,6,7]){
         const cell = ws[XLSX.utils.encode_cell({r,c})];
         if(cell && typeof cell.v === 'number') cell.z = '$#,##0.00';
       }
     }
 
-    ws['!cols'] = [{wch:35},{wch:18},{wch:8},{wch:12},{wch:12},{wch:14},{wch:12}];
+    ws['!cols'] = [{wch:35},{wch:18},{wch:8},{wch:8},{wch:12},{wch:12},{wch:14},{wch:12}];
     const sheetName = `${label} Report`;
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
     const fileName = `${usageReportStore.replace(/\s+/g,'_')}_${label}_Report_${usageReportFrom}_to_${usageReportTo}.xlsx`;
