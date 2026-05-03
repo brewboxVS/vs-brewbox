@@ -5370,7 +5370,7 @@ function renderWhOrderDetail(order){
                     ${isNA||item.bought_rec?'disabled':''}
                   />`:`<span style="color:#5060a0;font-weight:600">${item.actual_cases||'—'}</span>`}
                 </td>
-                <td id="wh-qty-add-${orderId}-${globalIdx}" style="font-weight:700;color:${isNA?'#b01c1c':qtyAdd>0?'#1a7a45':'#d0d5e0'}">${isNA?'N/A':qtyAdd>0?'+'+qtyAdd:'—'}</td>
+                <td id="wh-qty-add-${order.id}-${globalIdx}" style="font-weight:700;color:${isNA?'#b01c1c':qtyAdd>0?'#1a7a45':'#d0d5e0'}">${isNA?'N/A':qtyAdd>0?'+'+qtyAdd:'—'}</td>
                 <td>
                   ${isOpen?`<label style="display:flex;align-items:center;gap:5px;cursor:pointer">
                     <input type="checkbox" ${isNA?'checked':''}
