@@ -3350,7 +3350,7 @@ async function doCoffeeRestock(id){
 const STORES = ['SM Toyota','Safran','Exodus','Elevated Brandz','SR Honda'];
 const COFFEE_STORES = ['Safran','Exodus']; // stores with coffee service
 let storeInventory = []; // all store_inventory rows loaded
-let currentStore = 'SM Toyota';
+let currentStore = '';
 let storeSearchTerm = '';
 let storeEditingRows = new Set();
 let storeCategoryFilters = new Set();
@@ -3446,6 +3446,22 @@ async function syncStoreAssignment(productId, source, productName, newStores, ol
 
 // ── Render Store Inventory page ──
 function renderStoreInventory(){
+  const hasStore = currentStore && currentStore !== '';
+  if(!hasStore){
+    document.getElementById('main-body').innerHTML=`
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+        <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.8px">Store:</label>
+        <select onchange="currentStore=this.value;renderStoreInventory()"
+          style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:160px">
+          <option value="" selected>— Select Store —</option>
+          ${STORES.map(s=>`<option value="${s}">${s}</option>`).join('')}
+        </select>
+      </div>
+      <div class="card" style="text-align:center;padding:40px;color:#7080a0">
+        <div style="font-size:15px;font-weight:600">Select a store to view inventory</div>
+      </div>`;
+    return;
+  }
   const allStoreItems = storeInventory.filter(x=>x.store_name===currentStore);
   const mmItems = allStoreItems.filter(x=>x.product_source==='mm'||x.product_source!=='coffee');
   const coffeeItems = allStoreItems.filter(x=>x.product_source==='coffee');
@@ -3477,6 +3493,7 @@ function renderStoreInventory(){
         <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.8px">Store:</label>
         <select onchange="currentStore=this.value;storeSearchTerm='';storeCategoryFilters.clear();storeSourceFilter='all';storeStockFilter='all';renderStoreInventory()"
           style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:160px">
+          <option value="">— Select Store —</option>
           ${STORES.map(s=>`<option value="${s}" ${s===currentStore?'selected':''}>${s}</option>`).join('')}
         </select>
       </div>
@@ -4406,7 +4423,7 @@ function toggleActivityOrder(id){
 //  STORE INVENTORY COUNT
 // ═══════════════════════════════════════════════════
 let storeCountState = {};      // {storeItemId: {verified, actualQty, reason}}
-let storeCountStore = 'SM Toyota';
+let storeCountStore = '';
 let storeCountSkippedCats = new Set(); // category sections skipped
 let storeCountSubmitted = false;
 let storeCountSubmitResult = null;
@@ -4425,6 +4442,22 @@ function initStoreCountState(){
 }
 
 function renderStoreCount(){
+  const hasStore = storeCountStore && storeCountStore !== '';
+  if(!hasStore){
+    document.getElementById('main-body').innerHTML=`
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+        <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.8px">Store:</label>
+        <select onchange="storeCountStore=this.value;initStoreCountState();renderStoreCount()"
+          style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:160px">
+          <option value="" selected>— Select Store —</option>
+          ${STORES.map(s=>`<option value="${s}">${s}</option>`).join('')}
+        </select>
+      </div>
+      <div class="card" style="text-align:center;padding:40px;color:#7080a0">
+        <div style="font-size:15px;font-weight:600">Select a store to begin inventory count</div>
+      </div>`;
+    return;
+  }
   const allItems = storeInventory.filter(x=>x.store_name===storeCountStore);
   const mmItems = allItems.filter(x=>x.product_source!=='coffee');
   const coffeeItems = allItems.filter(x=>x.product_source==='coffee');
@@ -4494,6 +4527,7 @@ function renderStoreCount(){
         <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.8px">Store:</label>
         <select onchange="storeCountStore=this.value;initStoreCountState();renderStoreCount()"
           style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:6px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer">
+          <option value="">— Select Store —</option>
           ${STORES.map(s=>`<option value="${s}" ${s===storeCountStore?'selected':''}>${s}</option>`).join('')}
         </select>
         <div class="stat-card" style="padding:6px 12px;min-width:0;display:inline-flex;gap:8px;align-items:center">
@@ -6317,6 +6351,21 @@ document.addEventListener('click', e=>{
 
 function renderMobStoreCount(){
   updateMobTitle('Store Count');
+  const hasStore = storeCountStore && storeCountStore !== '';
+  if(!hasStore){
+    document.getElementById('main-body').innerHTML=`
+      <div style="padding:10px 0">
+        <select onchange="storeCountStore=this.value;initStoreCountState();renderStoreCount()"
+          style="width:100%;padding:12px;border:1.5px solid #0d1f4e;border-radius:8px;font-size:14px;font-weight:700;color:#0d1f4e;background:#fff;outline:none">
+          <option value="" selected>— Select Store —</option>
+          ${STORES.map(s=>`<option value="${s}">${s}</option>`).join('')}
+        </select>
+      </div>
+      <div style="text-align:center;padding:40px 20px;color:#7080a0">
+        <div style="font-size:15px;font-weight:600">Select a store to begin inventory count</div>
+      </div>`;
+    return;
+  }
   const allItems = storeInventory.filter(x=>x.store_name===storeCountStore);
   const mmItems = allItems.filter(x=>x.product_source!=='coffee');
   const coffeeItems = allItems.filter(x=>x.product_source==='coffee');
@@ -6356,6 +6405,7 @@ function renderMobStoreCount(){
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
       <select onchange="storeCountStore=this.value;initStoreCountState();renderStoreCount()"
         style="flex:1;padding:10px 12px;border:1.5px solid #0d1f4e;border-radius:8px;font-size:14px;font-weight:700;color:#0d1f4e;background:#fff;outline:none">
+        <option value="">— Select Store —</option>
         ${STORES.map(s=>`<option value="${s}" ${s===storeCountStore?'selected':''}>${s}</option>`).join('')}
       </select>
       <div style="font-size:12px;color:#5060a0;font-weight:600;white-space:nowrap">${verified}/${total} done</div>
@@ -6532,6 +6582,21 @@ let mobInvEditingIds = new Set();
 
 function renderMobStoreInventory(){
   updateMobTitle('Store Inventory');
+  const hasStore = currentStore && currentStore !== '';
+  if(!hasStore){
+    document.getElementById('main-body').innerHTML=`
+      <div style="padding:10px 0">
+        <select onchange="currentStore=this.value;renderStoreInventory()"
+          style="width:100%;padding:12px;border:1.5px solid #0d1f4e;border-radius:8px;font-size:14px;font-weight:700;color:#0d1f4e;background:#fff;outline:none">
+          <option value="" selected>— Select Store —</option>
+          ${STORES.map(s=>`<option value="${s}">${s}</option>`).join('')}
+        </select>
+      </div>
+      <div style="text-align:center;padding:40px 20px;color:#7080a0">
+        <div style="font-size:15px;font-weight:600">Select a store to view inventory</div>
+      </div>`;
+    return;
+  }
   const allStoreItems = storeInventory.filter(x=>x.store_name===currentStore);
   const mmItems = allStoreItems.filter(x=>x.product_source!=='coffee');
   const coffeeItems = allStoreItems.filter(x=>x.product_source==='coffee');
@@ -6554,6 +6619,7 @@ function renderMobStoreInventory(){
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
       <select onchange="currentStore=this.value;storeSearchTerm='';storeCategoryFilters.clear();storeSourceFilter='all';storeStockFilter='all';mobInvEditingIds=new Set();renderStoreInventory()"
         style="flex:1;padding:10px 12px;border:1.5px solid #0d1f4e;border-radius:8px;font-size:14px;font-weight:700;color:#0d1f4e;background:#fff;outline:none">
+        <option value="">— Select Store —</option>
         ${STORES.map(s=>`<option value="${s}" ${s===currentStore?'selected':''}>${s}</option>`).join('')}
       </select>
       <button class="primary-btn" onclick="openImportStoreItemModal()" style="padding:10px 12px;white-space:nowrap">+ Add</button>
@@ -9619,7 +9685,24 @@ let invoiceManualLines = [];
 
 function renderInvoices(){
   const now = new Date();
-  if(!invoicePageStore) invoicePageStore = STORES.filter(s=>coffeeContracts.find(c=>c.store_name===s))[0] || STORES[0];
+  if(!invoicePageStore) invoicePageStore = '';
+
+  const hasStore = invoicePageStore && invoicePageStore !== '';
+  if(!hasStore){
+    document.getElementById('main-body').innerHTML=`
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+        <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.8px">Store:</label>
+        <select onchange="invoicePageStore=this.value;invoiceExpandedId=null;invoiceGenerating=false;renderInvoices()"
+          style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:160px">
+          <option value="" selected>— Select Store —</option>
+          ${STORES.map(s=>`<option value="${s}">${s}</option>`).join('')}
+        </select>
+      </div>
+      <div class="card" style="text-align:center;padding:40px;color:#7080a0">
+        <div style="font-size:15px;font-weight:600">Select a store to view invoices</div>
+      </div>`;
+    return;
+  }
 
   const storeInvoices = invoicesList.filter(inv=>inv.store_name===invoicePageStore)
     .sort((a,b)=>b.invoice_date.localeCompare(a.invoice_date));
@@ -9654,6 +9737,7 @@ function renderInvoices(){
         <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.8px">Store:</label>
         <select onchange="invoicePageStore=this.value;invoiceExpandedId=null;invoiceGenerating=false;renderInvoices()"
           style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:160px">
+          <option value="">— Select Store —</option>
           ${STORES.map(s=>`<option value="${s}" ${s===invoicePageStore?'selected':''}>${s}</option>`).join('')}
         </select>
       </div>
