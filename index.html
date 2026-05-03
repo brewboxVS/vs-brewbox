@@ -6728,7 +6728,15 @@ function renderMobStoreOrders(){
             if(!catGroups[cat]) catGroups[cat] = [];
             catGroups[cat].push(item);
           }
-          const catOrder = [...catList, 'UNCATEGORIZED'].filter(c=>catGroups[c]);
+          const catOrder = Object.keys(catGroups).sort((a,b)=>{
+            // Sort by catList priority if matching (startsWith), then alphabetical
+            const ai = catList.findIndex(c=>a.toUpperCase().startsWith(c));
+            const bi = catList.findIndex(c=>b.toUpperCase().startsWith(c));
+            if(ai!==-1&&bi!==-1) return ai-bi;
+            if(ai!==-1) return -1;
+            if(bi!==-1) return 1;
+            return a.localeCompare(b);
+          });
           for(const c of catOrder) catGroups[c].sort((a,b)=>a.product_name.localeCompare(b.product_name));
 
           let s = label ? '<div style="margin:12px 0 6px;padding:8px 0;border-top:3px solid '+color+'"><div style="font-size:10px;font-weight:800;color:'+color+';letter-spacing:1.2px;text-transform:uppercase">'+label+' ('+items.length+')</div></div>' : '';
