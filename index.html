@@ -5370,7 +5370,7 @@ function renderWhOrderDetail(order){
                     ${isNA||item.bought_rec?'disabled':''}
                   />`:`<span style="color:#5060a0;font-weight:600">${item.actual_cases||'—'}</span>`}
                 </td>
-                <td style="font-weight:700;color:${isNA?'#b01c1c':qtyAdd>0?'#1a7a45':'#d0d5e0'}">${isNA?'N/A':qtyAdd>0?'+'+qtyAdd:'—'}</td>
+                <td id="wh-qty-add-${orderId}-${globalIdx}" style="font-weight:700;color:${isNA?'#b01c1c':qtyAdd>0?'#1a7a45':'#d0d5e0'}">${isNA?'N/A':qtyAdd>0?'+'+qtyAdd:'—'}</td>
                 <td>
                   ${isOpen?`<label style="display:flex;align-items:center;gap:5px;cursor:pointer">
                     <input type="checkbox" ${isNA?'checked':''}
@@ -5492,18 +5492,41 @@ async function addItemToWhOrder(orderId){
   renderWhOrders();
 }
 
+function updateWhQtyAddCell(orderId, idx){
+  const order = whOrders.find(o=>o.id===orderId);
+  if(!order) return;
+  const item = order.items[idx];
+  const isNA = item.not_available === true;
+  const casesUsed = isNA ? 0 : (item.bought_rec ? item.rec_cases : (item.actual_cases!==''?parseFloat(item.actual_cases)||0:0));
+  const qtyAdd = casesUsed * item.pieces_per_box;
+  // Desktop table cell
+  const cell = document.getElementById('wh-qty-add-'+orderId+'-'+idx);
+  if(cell){
+    cell.textContent = isNA ? 'N/A' : qtyAdd > 0 ? '+'+qtyAdd : '—';
+    cell.style.color = isNA ? '#b01c1c' : qtyAdd > 0 ? '#1a7a45' : '#d0d5e0';
+  }
+  // Mobile card display
+  const mobCell = document.getElementById('mob-wh-qty-'+orderId+'-'+idx);
+  if(mobCell){
+    mobCell.textContent = isNA ? 'N/A' : qtyAdd > 0 ? '+'+qtyAdd+' units' : '—';
+    mobCell.style.color = isNA ? '#b01c1c' : qtyAdd > 0 ? '#1a7a45' : '#d0d5e0';
+  }
+}
+
 function updateWhItemBoughtRec(orderId, idx, checked){
   const order = whOrders.find(o=>o.id===orderId);
   if(!order) return;
   order.items[idx].bought_rec = checked;
-  if(checked) order.items[idx].actual_cases = ''; // clear override if checking rec
-  // Update the row UI directly without full re-render
+  if(checked) order.items[idx].actual_cases = '';
+  // Update row UI
   const actualInput = document.querySelectorAll(`[oninput*="updateWhItemActualCases(${orderId},${idx}"]`)[0];
-  if(actualInput){ actualInput.disabled=checked; actualInput.style.opacity=checked?'0.4':'1'; }
+  if(actualInput){ actualInput.disabled=checked; actualInput.style.opacity=checked?'0.4':'1'; if(checked) actualInput.value=''; }
   const checkLabel = document.querySelectorAll(`[onchange*="updateWhItemBoughtRec(${orderId},${idx}"]`)[0]?.closest('label')?.querySelector('span');
   if(checkLabel){ checkLabel.textContent = checked?'✓ Yes':''; checkLabel.style.color=checked?'#1a7a45':'#7080a0'; }
-  // Update qty to add cell
-  const qtyCell = document.querySelectorAll(`tr`)[idx+1]?.querySelectorAll('td')[8];
+  // Update the row background
+  const row = document.getElementById('wh-qty-add-'+orderId+'-'+idx)?.closest('tr');
+  if(row) row.style.background = checked ? '#f0fff4' : '';
+  updateWhQtyAddCell(orderId, idx);
   saveWhOrderDebounced(order);
 }
 
@@ -5511,6 +5534,11 @@ function updateWhItemActualCases(orderId, idx, val){
   const order = whOrders.find(o=>o.id===orderId);
   if(!order) return;
   order.items[idx].actual_cases = val;
+  updateWhQtyAddCell(orderId, idx);
+  // Update row background
+  const confirmed = val !== '' && parseFloat(val) > 0;
+  const row = document.getElementById('wh-qty-add-'+orderId+'-'+idx)?.closest('tr');
+  if(row) row.style.background = confirmed ? '#f0fff4' : '';
   saveWhOrderDebounced(order);
 }
 
@@ -11020,7 +11048,7 @@ function renderMobWhOrderCard(order, isOpen){
               <input type="number" value="${item.actual_cases||''}" placeholder="Cases" min="0" ${item.bought_rec?'disabled':''}
                 oninput="updateWhItemActualCases(${order.id},${globalIdx},this.value)"
                 style="width:72px;padding:6px;border:1.5px solid ${!item.bought_rec&&item.actual_cases?'#c9a84c':'#d0d5e0'};border-radius:6px;font-size:14px;font-weight:700;text-align:center;outline:none;${item.bought_rec?'opacity:0.4':''}"/>
-              ${qtyAdd>0?`<div style="font-size:10px;color:#1a7a45;font-weight:700">+${qtyAdd} units</div>`:''}
+              ${qtyAdd>0?`<div id="mob-wh-qty-${order.id}-${globalIdx}" style="font-size:10px;color:#1a7a45;font-weight:700">+${qtyAdd} units</div>`:`<div id="mob-wh-qty-${order.id}-${globalIdx}" style="font-size:10px;color:#d0d5e0;font-weight:700">—</div>`}
               <label style="display:flex;align-items:center;gap:4px;cursor:pointer;margin-top:2px">
                 <input type="checkbox" onchange="updateWhItemNA(${order.id},${globalIdx},true)"
                   style="width:16px;height:16px;accent-color:#b01c1c;cursor:pointer"/>
