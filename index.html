@@ -9588,10 +9588,23 @@ function renderInvoices(){
   const storeInvoices = invoicesList.filter(inv=>inv.store_name===invoicePageStore)
     .sort((a,b)=>b.invoice_date.localeCompare(a.invoice_date));
 
-  // Check if current month invoice exists
+  // Find the next month that needs an invoice (check previous month first, then current)
+  const prevMonthDate = new Date(now.getFullYear(), now.getMonth()-1, 1);
+  const prevMonth = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth()+1).padStart(2,'0')}`;
   const curMonth = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
-  const curMonthLabel = now.toLocaleString('en-US',{month:'long', year:'numeric'});
-  const hasCurrentMonth = storeInvoices.some(inv=>inv.invoice_date.substring(0,7)===curMonth);
+  const hasPrevMonth = storeInvoices.some(inv=>inv.invoice_date.substring(0,7)===prevMonth);
+  const hasCurMonth = storeInvoices.some(inv=>inv.invoice_date.substring(0,7)===curMonth);
+
+  // Default to previous month if missing, otherwise current month if missing
+  let generateMonth = null;
+  let generateLabel = '';
+  if(!hasPrevMonth){
+    generateMonth = prevMonthDate;
+    generateLabel = prevMonthDate.toLocaleString('en-US',{month:'long', year:'numeric'});
+  } else if(!hasCurMonth){
+    generateMonth = now;
+    generateLabel = now.toLocaleString('en-US',{month:'long', year:'numeric'});
+  }
   const contract = coffeeContracts.find(c=>c.store_name===invoicePageStore);
 
   // Summary stats
@@ -9608,7 +9621,7 @@ function renderInvoices(){
           ${STORES.map(s=>`<option value="${s}" ${s===invoicePageStore?'selected':''}>${s}</option>`).join('')}
         </select>
       </div>
-      ${contract && !hasCurrentMonth && !invoiceGenerating ? `<button onclick="startGenerateInvoice()" class="primary-btn" style="margin-left:auto;padding:8px 16px;font-size:12px">+ Generate ${curMonthLabel} Invoice</button>` : ''}
+      ${contract && generateMonth && !invoiceGenerating ? `<button onclick="startGenerateInvoice()" class="primary-btn" style="margin-left:auto;padding:8px 16px;font-size:12px">+ Generate ${generateLabel} Invoice</button>` : ''}
     </div>
 
     ${unpaidCount > 0 ? `<div style="display:flex;gap:14px;margin-bottom:14px">
@@ -9796,13 +9809,25 @@ async function deleteInvoice(invId){
 function startGenerateInvoice(){
   const now = new Date();
   invoiceEditStore = invoicePageStore;
-  invoiceEditMonth = String(now.getMonth()+1).padStart(2,'0');
-  invoiceEditYear = String(now.getFullYear());
+
+  // Same logic as the button: previous month first if missing, then current
+  const storeInvs = invoicesList.filter(inv=>inv.store_name===invoicePageStore);
+  const prevMonthDate = new Date(now.getFullYear(), now.getMonth()-1, 1);
+  const prevKey = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth()+1).padStart(2,'0')}`;
+  const hasPrev = storeInvs.some(inv=>inv.invoice_date.substring(0,7)===prevKey);
+
+  if(!hasPrev){
+    invoiceEditMonth = String(prevMonthDate.getMonth()+1).padStart(2,'0');
+    invoiceEditYear = String(prevMonthDate.getFullYear());
+  } else {
+    invoiceEditMonth = String(now.getMonth()+1).padStart(2,'0');
+    invoiceEditYear = String(now.getFullYear());
+  }
+
   invoiceManualLines = [];
   invoiceGenerating = true;
   invoiceExpandedId = null;
   renderInvoices();
-  // Trigger preview generation
   generateInvoicePreview();
 }
 
