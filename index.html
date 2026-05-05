@@ -9736,7 +9736,7 @@ function renderCoffeeCounts(){
   }
 
   const stations = getStationsForStore(coffeeCountStore);
-  const hwDeduct = isStoreSettings(coffeeCountStore, 'hw_deduct');
+  const hwDeduct = true; // always show HW columns
   const monthLabel = new Date(parseInt(coffeeCountMonth.split('-')[0]), parseInt(coffeeCountMonth.split('-')[1])-1).toLocaleString('en-US',{month:'long', year:'numeric'});
 
   // Check for existing summary
@@ -9794,7 +9794,7 @@ function renderCoffeeCounts(){
 
       <div style="font-size:11px;color:#7080a0;margin-bottom:14px">
         Enter the end-of-month counter readings for each station. Cup rate: <strong>$${parseFloat(contract.cup_rate).toFixed(2)}/cup</strong>
-        ${hwDeduct ? ' · <span style="color:#b35a00">Hot water deductions enabled</span>' : ''}
+        · <span style="color:#b35a00">Hot water cups are deducted from billable total</span>
       </div>
 
       <div style="overflow-x:auto">
@@ -9867,7 +9867,7 @@ function recalcCoffeeCounts(){
   if(!contract) return;
 
   const stations = getStationsForStore(coffeeCountStore);
-  const hwDeduct = isStoreSettings(coffeeCountStore, 'hw_deduct');
+  const hwDeduct = true; // always show HW columns
   const monthYear = parseInt(coffeeCountMonth.split('-')[0]);
   const monthNum = parseInt(coffeeCountMonth.split('-')[1]);
 
@@ -9909,7 +9909,7 @@ async function saveCupReadings(){
   if(!contract) return;
 
   const stations = getStationsForStore(coffeeCountStore);
-  const hwDeduct = isStoreSettings(coffeeCountStore, 'hw_deduct');
+  const hwDeduct = true; // always show HW columns
   const monthYear = parseInt(coffeeCountMonth.split('-')[0]);
   const monthNum = parseInt(coffeeCountMonth.split('-')[1]);
   const periodEnd = new Date(monthYear, monthNum, 0).toISOString().slice(0,10);
@@ -10401,7 +10401,7 @@ async function generateInvoicePreview(){
             + '</div></div>';
         } else {
           return '<div style="background:#fff3cd;border-radius:8px;padding:16px;margin-bottom:14px;border:1.5px solid #e6c200;text-align:center">'
-            + '<div style="font-size:13px;font-weight:700;color:#856404;margin-bottom:6px">⚠ No Cup Reading Found for '+monthName+'</div>'
+            + '<div style="font-size:13px;font-weight:700;color:#856404;margin-bottom:6px">⚠ No coffee counts entered for '+monthName+'</div>'
             + '<div style="font-size:11px;color:#856404;margin-bottom:10px">Enter cup counter readings in Coffee Counts before generating the invoice.</div>'
             + '<button onclick="coffeeCountStore=\''+store.replace(/'/g,"\\'")+'\';coffeeCountMonth=\''+invMonth+'\';setView(\'coffee-counts\')" class="primary-btn" style="padding:8px 16px;font-size:12px">☕ Go to Coffee Counts →</button>'
             + '</div>';
