@@ -5301,8 +5301,8 @@ function renderWhOrders(){
       </div>
     </div>
 
-    <!-- Create new order — two options -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+    <!-- Create new order — three options -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:14px">
       <!-- Option A: Planned order -->
       <div class="card" style="border-top:3px solid #0d1f4e;margin-bottom:0">
         <div class="card-title" style="margin-bottom:4px">📋 Planned Order</div>
@@ -5315,7 +5315,17 @@ function renderWhOrders(){
           📋 New Planned Order
         </button>
       </div>
-      <!-- Option B: Quick capture -->
+      <!-- Option B: Quick Order -->
+      <div class="card" style="border-top:3px solid #c9a84c;margin-bottom:0">
+        <div class="card-title" style="margin-bottom:4px;color:#c9a84c">🛒 Quick Order</div>
+        <div style="font-size:11px;color:#7080a0;margin-bottom:12px;line-height:1.5">
+          Manually add specific items to an order. Use for unplanned or ad hoc purchases outside regular shopping runs.
+        </div>
+        <button onclick="openQuickOrderModal()" style="width:100%;padding:9px;background:#c9a84c;color:#fff;border:none;border-radius:7px;font-size:12px;font-weight:700;cursor:pointer">
+          🛒 New Quick Order
+        </button>
+      </div>
+      <!-- Option C: Quick capture -->
       <div class="card" style="border-top:3px solid #6b2fa0;margin-bottom:0">
         <div class="card-title" style="margin-bottom:4px;color:#6b2fa0">⚡ Quick Capture</div>
         <div style="font-size:11px;color:#7080a0;margin-bottom:12px;line-height:1.5">
@@ -5661,7 +5671,7 @@ function openWhOrderVendorPicker(){
           ${vendorList.map(v=>`
           <label style="display:flex;align-items:center;gap:12px;padding:12px 14px;border:1.5px solid #e8ecf4;border-radius:8px;margin-bottom:8px;cursor:pointer;transition:all .15s"
             onmouseover="this.style.borderColor='#0d1f4e'" onmouseout="this.style.borderColor=this.querySelector('input').checked?'#0d1f4e':'#e8ecf4'">
-            <input type="checkbox" value="${v}" checked style="width:18px;height:18px;accent-color:#0d1f4e;cursor:pointer;flex-shrink:0"/>
+            <input type="checkbox" value="${v}" style="width:18px;height:18px;accent-color:#0d1f4e;cursor:pointer;flex-shrink:0"/>
             <div style="flex:1">
               <div style="font-size:13px;font-weight:700;color:#0d1f4e">${v}</div>
               <div style="font-size:11px;color:#7080a0">${vendorCounts[v]} item${vendorCounts[v]!==1?'s':''} to order</div>
@@ -5685,6 +5695,16 @@ function showWhOrderPreview(){
   const items = calcWhOrderItems(checked);
   if(items.length===0){ showToast('No items need reordering for selected vendors'); return; }
 
+  // Store editable copy
+  window._whPreviewItems = items.map(i=>({...i}));
+
+  renderWhOrderPreview();
+}
+
+function renderWhOrderPreview(){
+  const items = window._whPreviewItems || [];
+  if(items.length === 0){ showToast('No items in order'); closeModal(); return; }
+
   const byVendor = {};
   for(const item of items){
     if(!byVendor[item.vendor]) byVendor[item.vendor]=[];
@@ -5693,6 +5713,7 @@ function showWhOrderPreview(){
 
   const totalCases = items.reduce((s,i)=>s+i.rec_cases,0);
   const totalUnits = items.reduce((s,i)=>s+(i.rec_cases*i.pieces_per_box),0);
+  const vendorCount = Object.keys(byVendor).length;
 
   document.getElementById('modal-container').innerHTML=`
     <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
@@ -5700,7 +5721,7 @@ function showWhOrderPreview(){
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
           <div>
             <div class="modal-title" style="margin-bottom:2px">Warehouse Order Preview</div>
-            <div style="font-size:11px;color:#7080a0">${items.length} items · ${totalCases} cases · ${totalUnits} units · ${checked.length} vendor${checked.length!==1?'s':''}</div>
+            <div style="font-size:11px;color:#7080a0">${items.length} items · ${totalCases} cases · ${totalUnits} units · ${vendorCount} vendor${vendorCount!==1?'s':''}</div>
           </div>
           <div style="display:flex;gap:8px;align-items:center">
             <button onclick="openWhOrderVendorPicker()" style="background:#f4f6fa;color:#5060a0;border:1.5px solid #d0d5e0;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer">← Change Vendors</button>
@@ -5715,19 +5736,23 @@ function showWhOrderPreview(){
               <table style="width:100%">
                 <thead><tr>
                   <th style="padding-left:4px;min-width:180px">ITEM</th>
-                  <th>CAT</th><th>QTY</th><th>MIN</th><th>MAX</th><th>PCS/CASE</th><th>CASES</th><th>QTY TO ADD</th>
+                  <th>CAT</th><th>QTY</th><th>MIN</th><th>MAX</th><th>PCS/CASE</th><th>CASES</th><th>QTY TO ADD</th><th></th>
                 </tr></thead>
                 <tbody>
-                ${vitems.map(item=>`<tr>
+                ${vitems.map(item=>{
+                  const idx = (window._whPreviewItems||[]).indexOf(item);
+                  return `<tr>
                   <td style="padding-left:4px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:200px">${item.product_name}</td>
                   <td style="font-size:10px;color:#5060a0">${item.cat1}</td>
                   <td style="color:#b01c1c;font-weight:700">${item.current_qty}</td>
                   <td>${item.min_level}</td>
                   <td style="color:#1a7a45">${item.max_level}</td>
                   <td>${item.pieces_per_box}</td>
-                  <td style="font-weight:700;color:#0d1f4e">${item.rec_cases}</td>
-                  <td style="color:#1a7a45;font-weight:700">+${item.rec_cases*item.pieces_per_box}</td>
-                </tr>`).join('')}
+                  <td><input type="number" value="${item.rec_cases}" min="0" style="width:55px;padding:4px;border:1.5px solid #d0d5e0;border-radius:5px;font-size:12px;font-weight:700;text-align:center;outline:none"
+                    oninput="whPreviewUpdateCases(${idx},this.value)"/></td>
+                  <td id="wh-prev-qty-${idx}" style="color:#1a7a45;font-weight:700">+${item.rec_cases*item.pieces_per_box}</td>
+                  <td><button onclick="whPreviewRemoveItem(${idx})" style="background:none;border:none;color:#b01c1c;cursor:pointer;font-size:14px" title="Remove">✕</button></td>
+                </tr>`}).join('')}
                 </tbody>
               </table>
             </div>`).join('')}
@@ -5743,11 +5768,26 @@ function showWhOrderPreview(){
     </div>`;
 }
 
+function whPreviewUpdateCases(idx, val){
+  const items = window._whPreviewItems;
+  if(!items || !items[idx]) return;
+  items[idx].rec_cases = Math.max(0, parseInt(val)||0);
+  const qtyEl = document.getElementById('wh-prev-qty-'+idx);
+  if(qtyEl) qtyEl.textContent = '+' + (items[idx].rec_cases * items[idx].pieces_per_box);
+}
+
+function whPreviewRemoveItem(idx){
+  const items = window._whPreviewItems;
+  if(!items) return;
+  items.splice(idx, 1);
+  renderWhOrderPreview();
+}
+
 async function createWhOrderWithExport(){
   const btn = document.getElementById('create-wh-order-btn');
   if(btn){ btn.disabled=true; btn.textContent='Creating…'; btn.style.opacity='0.6'; }
 
-  const items = calcWhOrderItems(_whOrderSelectedVendors);
+  const items = (window._whPreviewItems||[]).filter(i=>i.rec_cases > 0);
   const order = {
     id: Date.now(),
     status: 'open',
@@ -5813,6 +5853,172 @@ function exportWhOrderExcel(order){
 
 // Keep legacy function name for backward compat
 function previewNewWhOrder(){ openWhOrderVendorPicker(); }
+
+// ── Quick Order (unplanned/ad hoc) ──
+let _quickOrderItems = []; // [{product_id, product_name, qty, pieces_per_box, unit_cost, cat1}]
+let _quickOrderSearch = '';
+
+function openQuickOrderModal(){
+  _quickOrderItems = [];
+  _quickOrderSearch = '';
+  renderQuickOrderModal();
+}
+
+function renderQuickOrderModal(){
+  const allProducts = [...products.filter(p=>p.active).map(p=>({id:p.id, name:p.name, source:'mm', ppb:p.piecesPerBox, cost:p.unitCost, cat1:p.cat1, qty:p.qty})),
+    ...coffeeProducts.filter(p=>p.active).map(p=>({id:p.id, name:p.name, source:'coffee', ppb:p.piecesPerBox, cost:p.unitCost, cat1:p.cat1, qty:p.qty}))
+  ].sort((a,b)=>a.name.localeCompare(b.name));
+
+  const searchLower = _quickOrderSearch.toLowerCase();
+  const filtered = searchLower ? allProducts.filter(p=>p.name.toLowerCase().includes(searchLower)) : allProducts;
+  const addedIds = new Set(_quickOrderItems.map(i=>i.product_id));
+  const available = filtered.filter(p=>!addedIds.has(p.id));
+
+  const totalUnits = _quickOrderItems.reduce((s,i)=>s+i.qty,0);
+
+  document.getElementById('modal-container').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="width:700px;max-height:90vh">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <div>
+            <div class="modal-title" style="margin-bottom:2px">🛒 Quick Order</div>
+            <div style="font-size:11px;color:#7080a0">${_quickOrderItems.length} items · ${totalUnits} units</div>
+          </div>
+          <button onclick="closeModal()" style="background:none;border:none;color:#7080a0;cursor:pointer;font-size:20px">✕</button>
+        </div>
+
+        <!-- Search and add items -->
+        <div style="margin-bottom:12px">
+          <input type="text" placeholder="Search products to add…" value="${_quickOrderSearch}"
+            oninput="_quickOrderSearch=this.value;renderQuickOrderModal()"
+            style="width:100%;padding:8px 12px;border:1.5px solid #d0d5e0;border-radius:7px;font-size:13px;outline:none;box-sizing:border-box"/>
+        </div>
+
+        ${_quickOrderSearch && available.length > 0 ? `
+        <div style="max-height:180px;overflow-y:auto;border:1px solid #e8ecf4;border-radius:7px;margin-bottom:12px">
+          ${available.slice(0,20).map(p=>`
+          <div onclick="addQuickOrderItem(${p.id},'${p.source}')"
+            style="padding:8px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid #f0f2f8;display:flex;justify-content:space-between;align-items:center"
+            onmouseover="this.style.background='#f4f6fa'" onmouseout="this.style.background=''">
+            <div>
+              <span style="font-weight:600;color:#0d1f4e">${p.name}</span>
+              <span style="font-size:10px;color:#7080a0;margin-left:6px">${p.cat1||''}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span style="font-size:10px;color:#7080a0">Stock: ${p.qty}</span>
+              <span style="font-size:10px;background:${p.source==='coffee'?'#f3e8ff':'#e8edf8'};color:${p.source==='coffee'?'#6b2fa0':'#0d1f4e'};padding:1px 6px;border-radius:4px;font-weight:700">${p.source==='coffee'?'Coffee':'MM'}</span>
+              <span style="color:#1a7a45;font-weight:700;font-size:14px">+</span>
+            </div>
+          </div>`).join('')}
+          ${available.length > 20 ? `<div style="text-align:center;padding:6px;font-size:10px;color:#7080a0">Showing 20 of ${available.length} — refine search</div>` : ''}
+        </div>` : _quickOrderSearch && available.length === 0 ? `
+        <div style="text-align:center;padding:12px;color:#7080a0;font-size:12px;border:1px solid #e8ecf4;border-radius:7px;margin-bottom:12px">No matching products found</div>` : ''}
+
+        <!-- Order items list -->
+        ${_quickOrderItems.length > 0 ? `
+        <div style="max-height:280px;overflow-y:auto;margin-bottom:14px">
+          <table style="width:100%">
+            <thead><tr>
+              <th style="padding-left:4px;min-width:180px">ITEM</th>
+              <th>SOURCE</th>
+              <th>QTY (UNITS)</th>
+              <th></th>
+            </tr></thead>
+            <tbody>
+            ${_quickOrderItems.map((item,idx)=>`<tr>
+              <td style="padding-left:4px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:200px">${item.product_name}</td>
+              <td style="font-size:10px"><span style="background:${item.source==='coffee'?'#f3e8ff':'#e8edf8'};color:${item.source==='coffee'?'#6b2fa0':'#0d1f4e'};padding:2px 6px;border-radius:4px;font-weight:700">${item.source==='coffee'?'Coffee':'MM'}</span></td>
+              <td><input type="number" min="1" value="${item.qty}" style="width:70px;padding:5px;border:1.5px solid #d0d5e0;border-radius:5px;font-size:13px;font-weight:700;text-align:center;outline:none"
+                oninput="_quickOrderItems[${idx}].qty=Math.max(1,parseInt(this.value)||1)"/></td>
+              <td><button onclick="_quickOrderItems.splice(${idx},1);renderQuickOrderModal()" style="background:none;border:none;color:#b01c1c;cursor:pointer;font-size:14px">✕</button></td>
+            </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>` : `
+        <div style="text-align:center;padding:24px;color:#7080a0;font-size:12px;border:1px dashed #d0d5e0;border-radius:7px;margin-bottom:14px">
+          Search and add items above to build your order
+        </div>`}
+
+        <div style="display:flex;gap:10px">
+          <button onclick="saveQuickOrder()" class="primary-btn" style="padding:10px 20px" ${_quickOrderItems.length===0?'disabled style="opacity:0.4;cursor:not-allowed"':''}>
+            💾 Save Quick Order
+          </button>
+          <button onclick="closeModal()" class="secondary-btn">Cancel</button>
+        </div>
+      </div>
+    </div>`;
+
+  // Focus search input
+  setTimeout(()=>{
+    const inp = document.querySelector('.modal input[type="text"]');
+    if(inp) inp.focus();
+  }, 50);
+}
+
+function addQuickOrderItem(productId, source){
+  const p = source === 'coffee'
+    ? coffeeProducts.find(x=>x.id===productId)
+    : products.find(x=>x.id===productId);
+  if(!p) return;
+  if(_quickOrderItems.find(i=>i.product_id===productId)) return; // already added
+  _quickOrderItems.push({
+    product_id: p.id,
+    product_name: p.name,
+    source: source,
+    qty: 1,
+    pieces_per_box: p.piecesPerBox || 1,
+    unit_cost: p.unitCost || 0,
+    cat1: p.cat1 || '',
+    rec_cases: 1,
+    bought_rec: false,
+    actual_cases: '',
+    not_available: false
+  });
+  _quickOrderSearch = '';
+  renderQuickOrderModal();
+}
+
+async function saveQuickOrder(){
+  if(_quickOrderItems.length === 0) return;
+
+  // Build order items in warehouse_orders format
+  const orderItems = _quickOrderItems.map(item=>({
+    product_id: item.product_id,
+    product_name: item.product_name,
+    product_source: item.source,
+    current_qty: 0,
+    min_level: 0,
+    max_level: 0,
+    pieces_per_box: item.pieces_per_box,
+    rec_cases: Math.ceil(item.qty / item.pieces_per_box),
+    vendor: '',
+    cat1: item.cat1,
+    bought_rec: false,
+    actual_cases: '',
+    not_available: false
+  }));
+
+  const order = {
+    id: Date.now(),
+    status: 'open',
+    created_at: new Date().toISOString(),
+    received_at: null,
+    sheet_id: '',
+    sheet_url: '',
+    items: orderItems
+  };
+
+  try{
+    showToast('Saving quick order…');
+    await sbFetch('warehouse_orders', {method:'POST', prefer:'return=minimal', body:JSON.stringify(order)});
+    whOrders.unshift(order);
+    closeModal();
+    showToast('✓ Quick order saved — '+orderItems.length+' items');
+    renderWhOrders();
+  }catch(e){
+    showToast('⚠ Error saving: '+(e.message||'check connection'));
+  }
+}
 
 async function syncWhOrderFromSheet(orderId){
   const order = whOrders.find(o=>o.id===orderId);
@@ -11434,6 +11640,9 @@ function renderMobWhOrders(){
     <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">
       <button onclick="previewNewWhOrder()" style="width:100%;padding:14px;background:#0d1f4e;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;${lowCount===0?'opacity:0.5':''}" ${lowCount===0?'disabled':''}>
         📋 New Planned Order
+      </button>
+      <button onclick="openQuickOrderModal()" style="width:100%;padding:14px;background:#c9a84c;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer">
+        🛒 Quick Order
       </button>
       <button onclick="openQuickCapture()" style="width:100%;padding:14px;background:#6b2fa0;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer">
         📸 Quick Capture (Receipt / Text)
