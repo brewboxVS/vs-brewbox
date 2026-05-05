@@ -10810,10 +10810,6 @@ function renderUsageReport(){
   const isConsumption = usageReportTab === 'consumption';
   const tabLabel = isConsumption ? 'Consumption' : 'Theft / Walkoff';
   const tabColor = isConsumption ? '#6b2fa0' : '#b35a00';
-  const priceLabel = isConsumption ? 'UNIT COST' : 'SALE PRICE';
-  const priceNote = isConsumption
-    ? 'Shows coffee input items consumed at this store. Valued at <strong>unit cost</strong> (what you paid).'
-    : 'Shows items lost to theft/walkoff at this store. Valued at <strong>sale price</strong> (lost revenue).';
 
   document.getElementById('main-body').innerHTML = `
     <div class="card" style="border-top:3px solid #0d1f4e;margin-bottom:14px">
@@ -10847,8 +10843,9 @@ function renderUsageReport(){
           style="flex:1;padding:8px 16px;border:none;border-radius:5px;font-size:12px;font-weight:700;cursor:pointer;${!isConsumption?'background:#b35a00;color:#fff':'background:transparent;color:#5060a0'}">🚨 Theft</button>
       </div>
       <div style="font-size:11px;color:#7080a0;line-height:1.5">
-        ${priceNote}
-        <br>Prices include ${(USAGE_TAX_RATE*100).toFixed(1)}% taxes & fees.
+        ${isConsumption
+          ? 'Shows items consumed at this store. <strong>Cost</strong> = what you paid. <strong>Sale</strong> = revenue value of consumed items.'
+          : 'Shows items lost to theft/walkoff. <strong>Cost</strong> = your actual loss. <strong>Sale</strong> = lost potential revenue.'}
       </div>
     </div>
 
@@ -10872,10 +10869,10 @@ function renderUsageReport(){
             <th>CATEGORY</th>
             <th>SOURCE</th>
             <th>UNITS</th>
-            <th>${priceLabel}</th>
-            <th>SUBTOTAL</th>
-            <th>TAX/FEES</th>
-            <th>LINE TOTAL</th>
+            <th>UNIT COST</th>
+            <th>COST TOTAL</th>
+            <th>SALE PRICE</th>
+            <th>SALE TOTAL</th>
           </tr></thead>
           <tbody>
           ${usageReportData.map(r=>`<tr>
@@ -10883,10 +10880,10 @@ function renderUsageReport(){
             <td style="font-size:11px;color:#5060a0">${r.cat1||''}</td>
             <td style="font-size:10px"><span style="background:${r.source==='coffee'?'#f3e8ff':'#e8edf8'};color:${r.source==='coffee'?'#6b2fa0':'#0d1f4e'};padding:2px 6px;border-radius:4px;font-weight:700">${r.source==='coffee'?'Coffee':'MM'}</span></td>
             <td style="font-weight:700;color:#b01c1c">${r.units}</td>
-            <td>$${r.unitPrice.toFixed(2)}</td>
-            <td>$${r.subtotal.toFixed(2)}</td>
-            <td style="color:#7080a0">$${r.tax.toFixed(2)}</td>
-            <td style="font-weight:700;color:#0d1f4e">$${r.lineTotal.toFixed(2)}</td>
+            <td>$${r.unitCost.toFixed(2)}</td>
+            <td style="font-weight:600">$${r.costTotal.toFixed(2)}</td>
+            <td>$${r.salePrice.toFixed(2)}</td>
+            <td style="font-weight:700;color:#0d1f4e">$${r.saleTotal.toFixed(2)}</td>
           </tr>`).join('')}
           <tr style="border-top:2px solid #0d1f4e;font-weight:700">
             <td style="padding-left:8px">TOTAL</td>
@@ -10894,9 +10891,9 @@ function renderUsageReport(){
             <td></td>
             <td style="color:#b01c1c">${usageReportData.reduce((s,r)=>s+r.units,0)}</td>
             <td></td>
-            <td>$${usageReportData.reduce((s,r)=>s+r.subtotal,0).toFixed(2)}</td>
-            <td style="color:#7080a0">$${usageReportData.reduce((s,r)=>s+r.tax,0).toFixed(2)}</td>
-            <td style="color:#0d1f4e">$${usageReportData.reduce((s,r)=>s+r.lineTotal,0).toFixed(2)}</td>
+            <td>$${usageReportData.reduce((s,r)=>s+r.costTotal,0).toFixed(2)}</td>
+            <td></td>
+            <td style="color:#0d1f4e">$${usageReportData.reduce((s,r)=>s+r.saleTotal,0).toFixed(2)}</td>
           </tr>
           </tbody>
         </table>
@@ -10937,20 +10934,20 @@ async function runUsageReport(){
       const wh = source==='coffee'
         ? coffeeProducts.find(p=>p.id===item.product_id)
         : products.find(p=>p.id===item.product_id);
-      // Consumption = unit cost (what you paid); Theft = sale price (what you lost)
-      const unitPrice = wh ? (isConsumption ? wh.unitCost : wh.salePrice) : 0;
+      const unitCost = wh ? wh.unitCost : 0;
+      const salePrice = wh ? wh.salePrice : 0;
       const cat1 = si ? getStoreItemCat1(si) : (wh?.cat1||'');
-      const subtotal = item.units * unitPrice;
-      const tax = subtotal * USAGE_TAX_RATE;
+      const costTotal = item.units * unitCost;
+      const saleTotal = item.units * salePrice;
       return {
         name: item.name,
         cat1,
         source,
         units: item.units,
-        unitPrice,
-        subtotal,
-        tax,
-        lineTotal: subtotal + tax
+        unitCost,
+        salePrice,
+        costTotal,
+        saleTotal
       };
     }).sort((a,b)=>a.name.localeCompare(b.name));
 
@@ -10958,8 +10955,9 @@ async function runUsageReport(){
     renderUsageReport();
 
     if(reportData.length > 0){
-      const total = reportData.reduce((s,r)=>s+r.lineTotal,0);
-      showToast(`Report ready — ${reportData.length} items, $${total.toFixed(2)} total`);
+      const totalCost = reportData.reduce((s,r)=>s+r.costTotal,0);
+      const totalSale = reportData.reduce((s,r)=>s+r.saleTotal,0);
+      showToast(`Report ready — ${reportData.length} items, Cost: $${totalCost.toFixed(2)}, Sale: $${totalSale.toFixed(2)}`);
     } else {
       showToast('No records found for selected criteria');
     }
@@ -10974,20 +10972,19 @@ function exportUsageReportExcel(){
   if(!usageReportData || usageReportData.length===0){ showToast('No data to export'); return; }
   const isConsumption = usageReportTab === 'consumption';
   const label = isConsumption ? 'Consumption' : 'Theft';
-  const priceCol = isConsumption ? 'Unit Cost' : 'Sale Price';
 
   const doExport = ()=>{
-    const headers = ['Item Name','Category','Source','Units',priceCol,'Subtotal','Tax/Fees ('+((USAGE_TAX_RATE*100).toFixed(1))+'%)','Line Total'];
+    const headers = ['Item Name','Category','Source','Units','Unit Cost','Cost Total','Sale Price','Sale Total'];
     const rows = usageReportData.map(r=>[
       r.name, r.cat1||'', r.source==='coffee'?'Coffee':'MM', r.units,
-      r.unitPrice, r.subtotal, r.tax, r.lineTotal
+      r.unitCost, r.costTotal, r.salePrice, r.saleTotal
     ]);
     rows.push(['TOTAL','','',
       usageReportData.reduce((s,r)=>s+r.units,0),
       '',
-      usageReportData.reduce((s,r)=>s+r.subtotal,0),
-      usageReportData.reduce((s,r)=>s+r.tax,0),
-      usageReportData.reduce((s,r)=>s+r.lineTotal,0)
+      usageReportData.reduce((s,r)=>s+r.costTotal,0),
+      '',
+      usageReportData.reduce((s,r)=>s+r.saleTotal,0)
     ]);
 
     const wb = XLSX.utils.book_new();
@@ -11000,7 +10997,7 @@ function exportUsageReportExcel(){
       }
     }
 
-    ws['!cols'] = [{wch:35},{wch:18},{wch:8},{wch:8},{wch:12},{wch:12},{wch:14},{wch:12}];
+    ws['!cols'] = [{wch:35},{wch:18},{wch:8},{wch:8},{wch:12},{wch:12},{wch:12},{wch:12}];
     const sheetName = `${label} Report`;
     XLSX.utils.book_append_sheet(wb, ws, sheetName);
     const fileName = `${usageReportStore.replace(/\s+/g,'_')}_${label}_Report_${usageReportFrom}_to_${usageReportTo}.xlsx`;
