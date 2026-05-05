@@ -5889,30 +5889,13 @@ function renderQuickOrderModal(){
 
         <!-- Search and add items -->
         <div style="margin-bottom:12px">
-          <input type="text" placeholder="Search products to add…" value="${_quickOrderSearch}"
-            oninput="_quickOrderSearch=this.value;renderQuickOrderModal()"
+          <input type="text" id="qo-search" placeholder="Search products to add…" value="${_quickOrderSearch}"
+            oninput="_quickOrderSearch=this.value;updateQuickOrderResults()"
             style="width:100%;padding:8px 12px;border:1.5px solid #d0d5e0;border-radius:7px;font-size:13px;outline:none;box-sizing:border-box"/>
         </div>
+        <div id="qo-results">
 
-        ${_quickOrderSearch && available.length > 0 ? `
-        <div style="max-height:180px;overflow-y:auto;border:1px solid #e8ecf4;border-radius:7px;margin-bottom:12px">
-          ${available.slice(0,20).map(p=>`
-          <div onclick="addQuickOrderItem(${p.id},'${p.source}')"
-            style="padding:8px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid #f0f2f8;display:flex;justify-content:space-between;align-items:center"
-            onmouseover="this.style.background='#f4f6fa'" onmouseout="this.style.background=''">
-            <div>
-              <span style="font-weight:600;color:#0d1f4e">${p.name}</span>
-              <span style="font-size:10px;color:#7080a0;margin-left:6px">${p.cat1||''}</span>
-            </div>
-            <div style="display:flex;align-items:center;gap:8px">
-              <span style="font-size:10px;color:#7080a0">Stock: ${p.qty}</span>
-              <span style="font-size:10px;background:${p.source==='coffee'?'#f3e8ff':'#e8edf8'};color:${p.source==='coffee'?'#6b2fa0':'#0d1f4e'};padding:1px 6px;border-radius:4px;font-weight:700">${p.source==='coffee'?'Coffee':'MM'}</span>
-              <span style="color:#1a7a45;font-weight:700;font-size:14px">+</span>
-            </div>
-          </div>`).join('')}
-          ${available.length > 20 ? `<div style="text-align:center;padding:6px;font-size:10px;color:#7080a0">Showing 20 of ${available.length} — refine search</div>` : ''}
-        </div>` : _quickOrderSearch && available.length === 0 ? `
-        <div style="text-align:center;padding:12px;color:#7080a0;font-size:12px;border:1px solid #e8ecf4;border-radius:7px;margin-bottom:12px">No matching products found</div>` : ''}
+        <div id="qo-results"></div>
 
         <!-- Order items list -->
         ${_quickOrderItems.length > 0 ? `
@@ -5948,10 +5931,11 @@ function renderQuickOrderModal(){
       </div>
     </div>`;
 
-  // Focus search input
+  // Focus search input and populate results
   setTimeout(()=>{
-    const inp = document.querySelector('.modal input[type="text"]');
+    const inp = document.getElementById('qo-search');
     if(inp) inp.focus();
+    updateQuickOrderResults();
   }, 50);
 }
 
@@ -5960,7 +5944,7 @@ function addQuickOrderItem(productId, source){
     ? coffeeProducts.find(x=>x.id===productId)
     : products.find(x=>x.id===productId);
   if(!p) return;
-  if(_quickOrderItems.find(i=>i.product_id===productId)) return; // already added
+  if(_quickOrderItems.find(i=>i.product_id===productId)) return;
   _quickOrderItems.push({
     product_id: p.id,
     product_name: p.name,
@@ -5976,6 +5960,43 @@ function addQuickOrderItem(productId, source){
   });
   _quickOrderSearch = '';
   renderQuickOrderModal();
+}
+
+function updateQuickOrderResults(){
+  const container = document.getElementById('qo-results');
+  if(!container) return;
+
+  const allProducts = [...products.filter(p=>p.active).map(p=>({id:p.id, name:p.name, source:'mm', ppb:p.piecesPerBox, cost:p.unitCost, cat1:p.cat1, qty:p.qty})),
+    ...coffeeProducts.filter(p=>p.active).map(p=>({id:p.id, name:p.name, source:'coffee', ppb:p.piecesPerBox, cost:p.unitCost, cat1:p.cat1, qty:p.qty}))
+  ].sort((a,b)=>a.name.localeCompare(b.name));
+
+  const searchLower = _quickOrderSearch.toLowerCase();
+  const addedIds = new Set(_quickOrderItems.map(i=>i.product_id));
+  const available = searchLower ? allProducts.filter(p=>p.name.toLowerCase().includes(searchLower) && !addedIds.has(p.id)) : [];
+
+  if(searchLower && available.length > 0){
+    container.innerHTML = `<div style="max-height:180px;overflow-y:auto;border:1px solid #e8ecf4;border-radius:7px;margin-bottom:12px">
+      ${available.slice(0,20).map(p=>`
+      <div onclick="addQuickOrderItem(${p.id},'${p.source}')"
+        style="padding:8px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid #f0f2f8;display:flex;justify-content:space-between;align-items:center"
+        onmouseover="this.style.background='#f4f6fa'" onmouseout="this.style.background=''">
+        <div>
+          <span style="font-weight:600;color:#0d1f4e">${p.name}</span>
+          <span style="font-size:10px;color:#7080a0;margin-left:6px">${p.cat1||''}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:10px;color:#7080a0">Stock: ${p.qty}</span>
+          <span style="font-size:10px;background:${p.source==='coffee'?'#f3e8ff':'#e8edf8'};color:${p.source==='coffee'?'#6b2fa0':'#0d1f4e'};padding:1px 6px;border-radius:4px;font-weight:700">${p.source==='coffee'?'Coffee':'MM'}</span>
+          <span style="color:#1a7a45;font-weight:700;font-size:14px">+</span>
+        </div>
+      </div>`).join('')}
+      ${available.length > 20 ? '<div style="text-align:center;padding:6px;font-size:10px;color:#7080a0">Showing 20 of '+available.length+' — refine search</div>' : ''}
+    </div>`;
+  } else if(searchLower && available.length === 0){
+    container.innerHTML = '<div style="text-align:center;padding:12px;color:#7080a0;font-size:12px;border:1px solid #e8ecf4;border-radius:7px;margin-bottom:12px">No matching products found</div>';
+  } else {
+    container.innerHTML = '';
+  }
 }
 
 async function saveQuickOrder(){
