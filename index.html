@@ -10370,7 +10370,7 @@ async function generateInvoicePreview(){
   // Equipment fees from contract
   const equipFees = JSON.parse(typeof contract.equipment_fees === 'string' ? contract.equipment_fees : JSON.stringify(contract.equipment_fees||[]));
 
-  invoiceManualLines = [];
+  // Only reset manual lines on first generation (startGenerateInvoice handles this)
   window._invSupplyItems = aggregatedItems;
   window._invEquipFees = equipFees;
 
@@ -10434,6 +10434,19 @@ async function generateInvoicePreview(){
         </div>`).join('')}
       </div>
 
+      <!-- Service & Other Fees -->
+      <div style="background:#f4f6fa;border-radius:8px;padding:12px;margin-bottom:14px">
+        <div style="font-size:11px;font-weight:800;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">📋 Service & Other Fees</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:12px">
+          <span style="font-size:11px;color:#0d1f4e;font-weight:600;flex:1">MicroMarket Monthly Employee Credits</span>
+          <span style="margin-right:4px">$</span><input type="number" step="0.01" id="inv-svc-0" value="0.00" oninput="recalcInvoiceTotals()" style="width:80px;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 8px;font-size:11px;font-weight:700;outline:none"/>
+        </div>
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:12px">
+          <span style="font-size:11px;color:#0d1f4e;font-weight:600;flex:1">MicroMarket Monthly Walk-off</span>
+          <span style="margin-right:4px">$</span><input type="number" step="0.01" id="inv-svc-1" value="0.00" oninput="recalcInvoiceTotals()" style="width:80px;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 8px;font-size:11px;font-weight:700;outline:none"/>
+        </div>
+      </div>
+
       <!-- Manual Line Items -->
       <div style="background:#f4f6fa;border-radius:8px;padding:12px;margin-bottom:14px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -10479,9 +10492,10 @@ function recalcInvoiceTotals(){
 
   let lines = [];
 
-  // Cup revenue
-  const billableEl = document.getElementById('cups-billable');
-  const billable = parseInt(billableEl?.textContent?.replace(/,/g,''))||0;
+  // Cup revenue — from cup_monthly_summary
+  const invMonth = invoiceEditYear+'-'+invoiceEditMonth;
+  const cupSummary = cupMonthlySummary.find(s=>s.store_name===store && s.month===invMonth);
+  const billable = cupSummary ? cupSummary.billable_cups : 0;
   const cupRate = parseFloat(contract.cup_rate)||0;
   if(billable > 0) lines.push({desc:contract.cup_label||'Coffee Consumption', amt:billable*cupRate, taxable:false});
 
@@ -10490,6 +10504,13 @@ function recalcInvoiceTotals(){
   for(let i=0; i<equipFees.length; i++){
     const amt = parseFloat(document.getElementById('inv-eq-amt-'+i)?.value)||0;
     if(amt > 0) lines.push({desc:equipFees[i].desc, amt, taxable:false});
+  }
+
+  // Service & Other Fees
+  const svcFeeNames = ['MicroMarket Monthly Employee Credits','MicroMarket Monthly Walk-off'];
+  for(let i=0; i<svcFeeNames.length; i++){
+    const amt = parseFloat(document.getElementById('inv-svc-'+i)?.value)||0;
+    if(amt !== 0) lines.push({desc:svcFeeNames[i], amt, taxable:false});
   }
 
   // Charged supplies
@@ -10617,6 +10638,13 @@ async function _buildAndSaveInvoice(store){
     const desc = document.getElementById('inv-eq-desc-'+i)?.value || equipFees[i].desc;
     const amt = parseFloat(document.getElementById('inv-eq-amt-'+i)?.value)||0;
     if(amt > 0) lineItems.push({desc, qty:1, rate:amt, amount:amt, taxable:false});
+  }
+
+  // Service & Other Fees — read from DOM
+  const svcFeeNames = ['MicroMarket Monthly Employee Credits','MicroMarket Monthly Walk-off'];
+  for(let i=0; i<svcFeeNames.length; i++){
+    const amt = parseFloat(document.getElementById('inv-svc-'+i)?.value)||0;
+    if(amt !== 0) lineItems.push({desc:svcFeeNames[i], qty:1, rate:amt, amount:amt, taxable:false});
   }
 
   // Charged supplies — read from DOM
