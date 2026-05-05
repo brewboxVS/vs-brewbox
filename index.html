@@ -583,6 +583,7 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
           <button class="nav-btn nav-sub" onclick="setView('store-inventory')">📊 &nbsp;<span>Store Inventory</span></button>
           <button class="nav-btn nav-sub" onclick="setView('store-orders')">🛒 &nbsp;<span>Store Orders</span></button>
           <button class="nav-btn nav-sub" onclick="setView('store-count')">📋 &nbsp;<span>Store Inventory Count</span></button>
+          <button class="nav-btn nav-sub" onclick="setView('coffee-counts')">☕ &nbsp;<span>Coffee Counts</span></button>
           <button class="nav-btn nav-sub" onclick="setView('invoices')">🧾 &nbsp;<span>Invoices</span></button>
         </div>
       </div>
@@ -1393,6 +1394,7 @@ let vendingPriceMap = []; // loaded from DB
 let coffeeContracts = []; // loaded from DB
 let invoicesList = []; // loaded from DB
 let cupReadings = []; // loaded from DB
+let cupMonthlySummary = []; // monthly cup totals
 
 async function loadVendingPriceMap(){
   if(useSupabase){
@@ -1416,6 +1418,7 @@ async function loadInvoices(){
 async function loadCupReadings(){
   if(useSupabase){
     try{ cupReadings = await sbFetch('cup_readings?order=reading_date.desc&limit=500',{method:'GET',prefer:'return=representation'}); }catch(e){ cupReadings=[]; }
+    try{ cupMonthlySummary = await sbFetch('cup_monthly_summary?order=month.desc',{method:'GET',prefer:'return=representation'}); }catch(e){ cupMonthlySummary=[]; }
   }
 }
 
@@ -1519,7 +1522,7 @@ function updateSidebar(){
   if(currentView==='wh-orders') document.querySelector('.nav-btn[onclick*="wh-orders"]')?.classList.add('active');
   // Auto-open warehouse submenu when on warehouse views
   if(currentView==='inventory'||currentView==='coffee'||currentView==='count'||currentView==='wh-orders'||currentView==='vendor-mgmt') openWarehouseMenu();
-  if(currentView==='store-inventory'||currentView==='store-orders'||currentView==='store-count'||currentView==='invoices') openStoresMenu();
+  if(currentView==='store-inventory'||currentView==='store-orders'||currentView==='store-count'||currentView==='invoices'||currentView==='coffee-counts') openStoresMenu();
   // Auto-open import submenu when on import views
   if(currentView==='orders') openImportMenu();
   if(currentView==='usage-report'||currentView==='insights') { openReportsMenu(); document.querySelector('.nav-btn[onclick*="'+currentView+'"]')?.classList.add('active'); }
@@ -1602,7 +1605,7 @@ function openStoresMenu(){
 
 function setView(v){
   currentView=v;
-  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log','sales-import':'Sales Import','hist-import':'Historical Data Import',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log','usage-report':'Consumption & Theft Reports','vendor-mgmt':'Vendor Management','insights':'Insights Dashboard','invoices':'Invoices'};
+  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log','sales-import':'Sales Import','hist-import':'Historical Data Import',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log','usage-report':'Consumption & Theft Reports','vendor-mgmt':'Vendor Management','insights':'Insights Dashboard','invoices':'Invoices','coffee-counts':'Coffee Counts'};
   if(v==='count' && Object.keys(countState).length===0) initCountState();
   if(v==='store-count' && Object.keys(storeCountState).length===0) initStoreCountState();
   document.getElementById('page-title').textContent=titles[v]||v;
@@ -1637,6 +1640,7 @@ function render(){
   else if(currentView==='usage-report') renderUsageReport();
   else if(currentView==='insights') renderInsights();
   else if(currentView==='invoices') renderInvoices();
+  else if(currentView==='coffee-counts') renderCoffeeCounts();
   else if(currentView==='vendor-mgmt') renderVendorManagement();
   else renderRestock();
 }
@@ -9675,6 +9679,315 @@ function renderInsightsWidgets(){
   return html;
 }
 
+// ═══════════════════════════════════════════════════
+//  COFFEE COUNTS (Monthly Cup Readings)
+// ═══════════════════════════════════════════════════
+let coffeeCountStore = '';
+let coffeeCountMonth = '';
+
+function getCoffeeCountMonthOptions(){
+  const now = new Date();
+  const opts = [];
+  for(let i = 1; i <= 4; i++){
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const key = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+    const label = d.toLocaleString('en-US',{month:'long', year:'numeric'});
+    opts.push({key, label});
+  }
+  return opts;
+}
+
+function renderCoffeeCounts(){
+  const hasStore = coffeeCountStore && coffeeCountStore !== '';
+  const monthOpts = getCoffeeCountMonthOptions();
+  if(!coffeeCountMonth) coffeeCountMonth = monthOpts[0]?.key || '';
+
+  if(!hasStore){
+    document.getElementById('main-body').innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+        <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.8px">Store:</label>
+        <select onchange="coffeeCountStore=this.value;renderCoffeeCounts()"
+          style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:160px">
+          <option value="" selected>— Select Store —</option>
+          ${STORES.map(s=>'<option value="'+s+'">'+s+'</option>').join('')}
+        </select>
+      </div>
+      <div class="card" style="text-align:center;padding:40px;color:#7080a0">
+        <div style="font-size:15px;font-weight:600">Select a store to enter cup readings</div>
+      </div>`;
+    return;
+  }
+
+  const contract = coffeeContracts.find(c=>c.store_name===coffeeCountStore);
+  if(!contract || parseFloat(contract.cup_rate||0) <= 0){
+    document.getElementById('main-body').innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+        <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase">Store:</label>
+        <select onchange="coffeeCountStore=this.value;renderCoffeeCounts()"
+          style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:160px">
+          <option value="">— Select Store —</option>
+          ${STORES.map(s=>'<option value="'+s+'" '+(s===coffeeCountStore?'selected':'')+'>'+s+'</option>').join('')}
+        </select>
+      </div>
+      <div class="card" style="text-align:center;padding:40px;color:#7080a0">
+        <div style="font-size:15px;font-weight:600">No coffee contract found for ${coffeeCountStore}</div>
+      </div>`;
+    return;
+  }
+
+  const stations = getStationsForStore(coffeeCountStore);
+  const hwDeduct = isStoreSettings(coffeeCountStore, 'hw_deduct');
+  const monthLabel = new Date(parseInt(coffeeCountMonth.split('-')[0]), parseInt(coffeeCountMonth.split('-')[1])-1).toLocaleString('en-US',{month:'long', year:'numeric'});
+
+  // Check for existing summary
+  const existingSummary = cupMonthlySummary.find(s=>s.store_name===coffeeCountStore && s.month===coffeeCountMonth);
+
+  // Find previous and current readings per station
+  const monthYear = parseInt(coffeeCountMonth.split('-')[0]);
+  const monthNum = parseInt(coffeeCountMonth.split('-')[1]);
+  const periodEnd = new Date(monthYear, monthNum, 0); // last day of month
+  const periodEndStr = periodEnd.toISOString().slice(0,10);
+  const prevMonth = new Date(monthYear, monthNum-1, 0);
+
+  const stationRows = stations.map(stn=>{
+    const prevReadings = cupReadings.filter(r=>r.store_name===coffeeCountStore && r.station_name===stn.station_name && r.reading_date < coffeeCountMonth+'-01').sort((a,b)=>b.reading_date.localeCompare(a.reading_date));
+    const curReadings = cupReadings.filter(r=>r.store_name===coffeeCountStore && r.station_name===stn.station_name && r.reading_date >= coffeeCountMonth+'-01' && r.reading_date <= periodEndStr).sort((a,b)=>b.reading_date.localeCompare(a.reading_date));
+
+    const prevVal = prevReadings.length > 0 ? prevReadings[0].counter_value : 0;
+    const prevHW = prevReadings.length > 0 ? (prevReadings[0].hot_water_value||0) : 0;
+
+    // If existing summary has this station, use those values
+    let curVal = '', curHW = '';
+    if(existingSummary){
+      const savedStn = (typeof existingSummary.readings === 'string' ? JSON.parse(existingSummary.readings) : existingSummary.readings).find(r=>r.station===stn.station_name);
+      if(savedStn){ curVal = savedStn.end; curHW = savedStn.hw_end || ''; }
+    } else if(curReadings.length > 0){
+      curVal = curReadings[0].counter_value;
+      curHW = curReadings[0].hot_water_value || '';
+    }
+
+    const key = stn.station_name.replace(/[^a-zA-Z0-9]/g,'');
+    return {stn, key, prevVal, prevHW, curVal, curHW};
+  });
+
+  document.getElementById('main-body').innerHTML = `
+    <div class="card" style="border-top:3px solid #6b2fa0;margin-bottom:14px">
+      <div class="card-title" style="margin-bottom:12px">☕ Coffee Counts — Monthly Cup Readings</div>
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase">Store:</label>
+          <select onchange="coffeeCountStore=this.value;renderCoffeeCounts()"
+            style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:140px">
+            <option value="">— Select Store —</option>
+            ${STORES.map(s=>'<option value="'+s+'" '+(s===coffeeCountStore?'selected':'')+'>'+s+'</option>').join('')}
+          </select>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase">Month:</label>
+          <select onchange="coffeeCountMonth=this.value;renderCoffeeCounts()"
+            style="background:#fff;border:1.5px solid #6b2fa0;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#6b2fa0;outline:none;cursor:pointer">
+            ${monthOpts.map(o=>'<option value="'+o.key+'" '+(o.key===coffeeCountMonth?'selected':'')+'>'+o.label+'</option>').join('')}
+          </select>
+        </div>
+        ${existingSummary ? '<span style="font-size:11px;font-weight:700;color:#1a7a45;background:#e6f4ee;padding:4px 10px;border-radius:5px">✓ Saved</span>' : ''}
+      </div>
+
+      <div style="font-size:11px;color:#7080a0;margin-bottom:14px">
+        Enter the end-of-month counter readings for each station. Cup rate: <strong>$${parseFloat(contract.cup_rate).toFixed(2)}/cup</strong>
+        ${hwDeduct ? ' · <span style="color:#b35a00">Hot water deductions enabled</span>' : ''}
+      </div>
+
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th style="min-width:120px">STATION</th>
+            <th>PREV COUNTER</th>
+            ${hwDeduct ? '<th>PREV HW</th>' : ''}
+            <th>END COUNTER</th>
+            ${hwDeduct ? '<th>END HW</th>' : ''}
+            <th>GROSS CUPS</th>
+            ${hwDeduct ? '<th>HW DEDUCT</th>' : ''}
+            <th>NET CUPS</th>
+          </tr></thead>
+          <tbody>
+          ${stationRows.map(r=>{
+            const gross = r.curVal !== '' ? Math.max(0, parseInt(r.curVal) - r.prevVal) : 0;
+            const hwDed = hwDeduct && r.curHW !== '' ? Math.max(0, parseInt(r.curHW) - r.prevHW) : 0;
+            const net = Math.max(0, gross - hwDed);
+            return '<tr>'
+              + '<td style="font-weight:700;color:#6b2fa0">'+r.stn.station_name+(r.stn.station_label?' <span style="font-size:10px;color:#7080a0;font-weight:400">'+r.stn.station_label+'</span>':'')+'</td>'
+              + '<td style="color:#7080a0">'+r.prevVal.toLocaleString()+'</td>'
+              + (hwDeduct ? '<td style="color:#b35a00;font-size:11px">'+r.prevHW.toLocaleString()+'</td>' : '')
+              + '<td><input type="number" id="cc-end-'+r.key+'" value="'+r.curVal+'" placeholder="Counter" oninput="recalcCoffeeCounts()" style="width:90px;background:#fff;border:1.5px solid #d0d5e0;border-radius:5px;padding:5px 6px;font-size:12px;font-weight:700;outline:none"/></td>'
+              + (hwDeduct ? '<td><input type="number" id="cc-hw-'+r.key+'" value="'+r.curHW+'" placeholder="HW" oninput="recalcCoffeeCounts()" style="width:80px;background:#fff;border:1.5px solid #e0c8c8;border-radius:5px;padding:5px 6px;font-size:12px;outline:none;color:#b35a00"/></td>' : '')
+              + '<td style="font-weight:600">'+gross.toLocaleString()+'</td>'
+              + (hwDeduct ? '<td style="color:#b35a00;font-weight:600">-'+hwDed.toLocaleString()+'</td>' : '')
+              + '<td style="font-weight:800;color:#0d1f4e">'+net.toLocaleString()+'</td>'
+              + '</tr>';
+          }).join('')}
+          </tbody>
+          <tfoot>
+            <tr style="border-top:2px solid #0d1f4e;font-weight:700">
+              <td>TOTAL</td>
+              <td></td>
+              ${hwDeduct ? '<td></td>' : ''}
+              <td></td>
+              ${hwDeduct ? '<td></td>' : ''}
+              <td id="cc-gross-total">0</td>
+              ${hwDeduct ? '<td id="cc-hw-total" style="color:#b35a00">0</td>' : ''}
+              <td id="cc-net-total" style="color:#0d1f4e">0</td>
+            </tr>
+            <tr>
+              <td style="font-weight:700">ADJUSTMENT</td>
+              <td colspan="${hwDeduct?5:3}"></td>
+              <td><input type="number" id="cc-adjustment" value="${existingSummary?existingSummary.adjustment:0}" oninput="recalcCoffeeCounts()" style="width:80px;background:#fff;border:1.5px solid #d0d5e0;border-radius:5px;padding:5px 8px;font-size:12px;font-weight:700;outline:none;color:#5060a0"/></td>
+            </tr>
+            <tr style="font-size:14px">
+              <td style="font-weight:800;color:#6b2fa0">BILLABLE CUPS</td>
+              <td colspan="${hwDeduct?5:3}"></td>
+              <td id="cc-billable" style="font-weight:800;color:#6b2fa0;font-size:16px">0</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+        <button onclick="saveCupReadings()" class="primary-btn" style="padding:10px 24px;font-size:13px">💾 Save Cup Reading</button>
+      </div>
+    </div>
+  `;
+
+  // Run initial calc
+  recalcCoffeeCounts();
+}
+
+function recalcCoffeeCounts(){
+  if(!coffeeCountStore || !coffeeCountMonth) return;
+  const contract = coffeeContracts.find(c=>c.store_name===coffeeCountStore);
+  if(!contract) return;
+
+  const stations = getStationsForStore(coffeeCountStore);
+  const hwDeduct = isStoreSettings(coffeeCountStore, 'hw_deduct');
+  const monthYear = parseInt(coffeeCountMonth.split('-')[0]);
+  const monthNum = parseInt(coffeeCountMonth.split('-')[1]);
+
+  let totalGross = 0, totalHW = 0, totalNet = 0;
+  for(const stn of stations){
+    const key = stn.station_name.replace(/[^a-zA-Z0-9]/g,'');
+    const prevReadings = cupReadings.filter(r=>r.store_name===coffeeCountStore && r.station_name===stn.station_name && r.reading_date < coffeeCountMonth+'-01').sort((a,b)=>b.reading_date.localeCompare(a.reading_date));
+    const prevVal = prevReadings.length > 0 ? prevReadings[0].counter_value : 0;
+    const prevHW = prevReadings.length > 0 ? (prevReadings[0].hot_water_value||0) : 0;
+
+    const curVal = parseInt(document.getElementById('cc-end-'+key)?.value)||0;
+    const curHW = hwDeduct ? (parseInt(document.getElementById('cc-hw-'+key)?.value)||0) : 0;
+
+    const gross = Math.max(0, curVal - prevVal);
+    const hwDed = hwDeduct ? Math.max(0, curHW - prevHW) : 0;
+    const net = Math.max(0, gross - hwDed);
+
+    totalGross += gross;
+    totalHW += hwDed;
+    totalNet += net;
+  }
+
+  const adj = parseInt(document.getElementById('cc-adjustment')?.value)||0;
+  const billable = Math.max(0, totalNet + adj);
+
+  const g = document.getElementById('cc-gross-total');
+  if(g) g.textContent = totalGross.toLocaleString();
+  const h = document.getElementById('cc-hw-total');
+  if(h) h.textContent = '-'+totalHW.toLocaleString();
+  const n = document.getElementById('cc-net-total');
+  if(n) n.textContent = totalNet.toLocaleString();
+  const b = document.getElementById('cc-billable');
+  if(b) b.textContent = billable.toLocaleString();
+}
+
+async function saveCupReadings(){
+  if(!coffeeCountStore || !coffeeCountMonth) return;
+  const contract = coffeeContracts.find(c=>c.store_name===coffeeCountStore);
+  if(!contract) return;
+
+  const stations = getStationsForStore(coffeeCountStore);
+  const hwDeduct = isStoreSettings(coffeeCountStore, 'hw_deduct');
+  const monthYear = parseInt(coffeeCountMonth.split('-')[0]);
+  const monthNum = parseInt(coffeeCountMonth.split('-')[1]);
+  const periodEnd = new Date(monthYear, monthNum, 0).toISOString().slice(0,10);
+
+  const readingsArr = [];
+  let totalGross = 0, totalHW = 0, totalNet = 0;
+  const newCupReadings = [];
+
+  for(const stn of stations){
+    const key = stn.station_name.replace(/[^a-zA-Z0-9]/g,'');
+    const prevReadings = cupReadings.filter(r=>r.store_name===coffeeCountStore && r.station_name===stn.station_name && r.reading_date < coffeeCountMonth+'-01').sort((a,b)=>b.reading_date.localeCompare(a.reading_date));
+    const prevVal = prevReadings.length > 0 ? prevReadings[0].counter_value : 0;
+    const prevHW = prevReadings.length > 0 ? (prevReadings[0].hot_water_value||0) : 0;
+
+    const curVal = parseInt(document.getElementById('cc-end-'+key)?.value)||0;
+    const curHW = hwDeduct ? (parseInt(document.getElementById('cc-hw-'+key)?.value)||0) : 0;
+
+    if(curVal === 0) continue; // skip empty stations
+
+    const gross = Math.max(0, curVal - prevVal);
+    const hwDed = hwDeduct ? Math.max(0, curHW - prevHW) : 0;
+    const net = Math.max(0, gross - hwDed);
+
+    totalGross += gross;
+    totalHW += hwDed;
+    totalNet += net;
+
+    readingsArr.push({station:stn.station_name, start:prevVal, end:curVal, hw_start:prevHW, hw_end:curHW, gross_cups:gross, hw_deduction:hwDed, net_cups:net});
+
+    // Also save individual reading to cup_readings table
+    newCupReadings.push({id:Date.now()+Math.floor(Math.random()*10000), store_name:coffeeCountStore, station_name:stn.station_name, reading_date:periodEnd, counter_value:curVal, hot_water_value:curHW, notes:'Cup count '+coffeeCountMonth});
+  }
+
+  const adj = parseInt(document.getElementById('cc-adjustment')?.value)||0;
+  const billable = Math.max(0, totalNet + adj);
+
+  // Save summary
+  const existing = cupMonthlySummary.find(s=>s.store_name===coffeeCountStore && s.month===coffeeCountMonth);
+  const summaryRow = {
+    id: existing ? existing.id : Date.now(),
+    store_name: coffeeCountStore,
+    month: coffeeCountMonth,
+    readings: readingsArr,
+    total_cups: totalNet,
+    adjustment: adj,
+    billable_cups: billable,
+    updated_at: new Date().toISOString()
+  };
+
+  try{
+    showToast('Saving cup readings…');
+    // Upsert summary
+    await sbFetch('cup_monthly_summary', {method:'POST', prefer:'resolution=merge-duplicates,return=minimal', body:JSON.stringify(summaryRow)});
+
+    // Save individual readings
+    for(const r of newCupReadings){
+      await sbFetch('cup_readings', {method:'POST', prefer:'resolution=merge-duplicates,return=minimal', body:JSON.stringify(r)});
+    }
+
+    // Update in-memory
+    if(existing){
+      Object.assign(existing, summaryRow);
+    } else {
+      cupMonthlySummary.push(summaryRow);
+    }
+    // Update cupReadings cache
+    cupReadings = [...newCupReadings, ...cupReadings.filter(r=>!(r.store_name===coffeeCountStore && r.reading_date===periodEnd))];
+
+    showToast('✓ Cup reading saved — '+billable.toLocaleString()+' billable cups for '+coffeeCountMonth);
+    renderCoffeeCounts();
+  }catch(e){
+    showToast('⚠ Error saving: '+(e.message||'check connection'));
+  }
+}
+
+// ═══════════════════════════════════════════════════
+//  INVOICES
+// ═══════════════════════════════════════════════════
 let invoicePageStore = '';
 let invoiceExpandedId = null;
 let invoiceGenerating = false; // true when the generate form is open
@@ -10028,16 +10341,6 @@ async function generateInvoicePreview(){
   // Get stations for this store
   const stations = getStationsForStore(store);
 
-  // Previous readings = latest reading BEFORE this month (auto-populated)
-  // Current readings = reading within this month (auto-populated if exists, otherwise entered manually)
-  const stationReadings = stations.map(stn=>{
-    const prevReadings = cupReadings.filter(r=>r.store_name===store && r.station_name===stn.station_name && r.reading_date < periodStart);
-    const prev = prevReadings.length > 0 ? prevReadings[0] : null; // sorted desc
-    const curReadings = cupReadings.filter(r=>r.store_name===store && r.station_name===stn.station_name && r.reading_date >= periodStart && r.reading_date <= periodEnd);
-    const cur = curReadings.length > 0 ? curReadings[0] : null;
-    return {station:stn, prev, cur};
-  });
-
   // Get charged coffee supplies from received store orders in this month
   const chargedItems = [];
   const periodOrders = storeOrders.filter(o=>o.store_name===store && o.status==='received' && o.created_at >= periodStart && o.created_at <= periodEnd+'T23:59:59');
@@ -10078,46 +10381,32 @@ async function generateInvoicePreview(){
       <div class="card-title" style="margin-bottom:4px">🧾 ${store} — ${monthName}</div>
       <div style="font-size:11px;color:#7080a0;margin-bottom:14px">${parseFloat(contract.cup_rate)>0 ? `Period: ${periodStart} → ${periodEnd} · Rate: $${contract.cup_rate}/cup` : `Invoice Period: ${monthName}`}</div>
 
-      ${parseFloat(contract.cup_rate) > 0 ? `
-      <!-- Cup Readings -->
-      <div style="background:#f4f6fa;border-radius:8px;padding:12px;margin-bottom:14px">
-        <div style="font-size:11px;font-weight:800;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase;margin-bottom:10px">☕ Cup Readings by Station</div>
-        <div style="overflow-x:auto"><table><thead><tr>
-          <th style="padding-left:8px">STATION</th><th>PREV TOTAL</th><th>CUR TOTAL</th><th>PREV HW</th><th>CUR HW</th><th>TOTAL CUPS</th><th>HOT WATER</th><th>BILLABLE</th>
-        </tr></thead><tbody>
-        ${stationReadings.map(sr=>{
-          const prevVal = sr.prev ? sr.prev.counter_value : 0;
-          const prevHW = sr.prev ? (sr.prev.hot_water_value||0) : 0;
-          const curVal = sr.cur ? sr.cur.counter_value : '';
-          const curHW = sr.cur ? (sr.cur.hot_water_value||0) : '';
-          const key = sr.station.station_name.replace(/\s/g,'_');
-          return `<tr>
-            <td style="padding-left:8px;font-weight:600;color:#6b2fa0">${sr.station.station_name}${sr.station.station_label?' — '+sr.station.station_label:''}</td>
-            <td style="color:#7080a0;font-size:11px">${prevVal>0?prevVal.toLocaleString():'<span style="color:#b35a00;font-size:10px">—</span>'}</td>
-            <td><input type="number" id="cup-${key}" value="${curVal}" placeholder="Total" oninput="recalcInvoiceCups()" style="width:85px;background:#fff;border:1.5px solid #d0d5e0;border-radius:5px;padding:5px 6px;font-size:12px;font-weight:700;outline:none"/></td>
-            <td style="color:#7080a0;font-size:11px">${prevHW>0?prevHW.toLocaleString():'—'}</td>
-            <td><input type="number" id="hw-${key}" value="${curHW}" placeholder="HW" oninput="recalcInvoiceCups()" style="width:85px;background:#fff;border:1.5px solid #e0c8c8;border-radius:5px;padding:5px 6px;font-size:12px;outline:none;color:#b35a00"/></td>
-            <td style="font-weight:600;color:#0d1f4e" id="cups-calc-${key}">-</td>
-            <td style="font-weight:600;color:#b35a00" id="hw-calc-${key}">-</td>
-            <td style="font-weight:700;color:#1a7a45" id="net-calc-${key}">-</td>
-          </tr>`;
-        }).join('')}
-        <tr style="border-top:2px solid #d0d5e0">
-          <td style="padding-left:8px;font-weight:800;color:#0d1f4e" colspan="5">TOTALS</td>
-          <td style="font-weight:800;color:#0d1f4e" id="cups-total">-</td>
-          <td style="font-weight:800;color:#b35a00" id="hw-total">-</td>
-          <td style="font-weight:800;color:#1a7a45;font-size:14px" id="net-total">-</td>
-        </tr>
-        <tr>
-          <td style="padding-left:8px;font-weight:600;color:#5060a0" colspan="7">Adjustment (+/-)</td>
-          <td><input type="number" id="cup-adjustment" value="0" oninput="recalcInvoiceCups()" style="width:80px;background:#fff;border:1.5px solid #d0d5e0;border-radius:5px;padding:5px 8px;font-size:12px;font-weight:700;outline:none;color:#5060a0"/></td>
-        </tr>
-        <tr>
-          <td style="padding-left:8px;font-weight:800;color:#1a7a45" colspan="7">BILLABLE CUPS</td>
-          <td style="font-weight:800;color:#1a7a45;font-size:14px" id="cups-billable">-</td>
-        </tr>
-        </tbody></table></div>
-      </div>` : '<!-- No cup readings for this store -->'}
+      ${parseFloat(contract.cup_rate) > 0 ? (function(){
+        const invMonth = year+'-'+month;
+        const cupSummary = cupMonthlySummary.find(s=>s.store_name===store && s.month===invMonth);
+        if(cupSummary){
+          const readings = typeof cupSummary.readings === 'string' ? JSON.parse(cupSummary.readings) : (cupSummary.readings||[]);
+          return '<div style="background:#e6f4ee;border-radius:8px;padding:12px;margin-bottom:14px;border:1.5px solid #1a7a45">'
+            + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">'
+            + '<div style="font-size:12px;font-weight:800;color:#1a7a45">✓ Cup Reading Found</div>'
+            + '<button onclick="coffeeCountStore=\''+store.replace(/'/g,"\\'")+'\';coffeeCountMonth=\''+invMonth+'\';setView(\'coffee-counts\')" style="font-size:10px;color:#6b2fa0;background:none;border:1px solid #6b2fa0;border-radius:5px;padding:3px 8px;cursor:pointer;font-weight:700">Edit in Coffee Counts →</button>'
+            + '</div>'
+            + '<div style="overflow-x:auto"><table style="font-size:11px"><thead><tr><th style="padding-left:8px">Station</th><th>Gross</th><th>HW Ded.</th><th>Net</th></tr></thead><tbody>'
+            + readings.map(function(r){ return '<tr><td style="padding-left:8px;font-weight:600;color:#6b2fa0">'+r.station+'</td><td>'+r.gross_cups+'</td><td style="color:#b35a00">-'+(r.hw_deduction||0)+'</td><td style="font-weight:700">'+r.net_cups+'</td></tr>'; }).join('')
+            + '</tbody></table></div>'
+            + '<div style="display:flex;gap:16px;margin-top:8px;padding-top:8px;border-top:1px solid #c8e6d8">'
+            + '<div style="font-size:11px;color:#7080a0">Net: <strong>'+cupSummary.total_cups.toLocaleString()+'</strong></div>'
+            + '<div style="font-size:11px;color:#7080a0">Adj: <strong>'+cupSummary.adjustment+'</strong></div>'
+            + '<div style="font-size:13px;font-weight:800;color:#1a7a45">Billable: '+cupSummary.billable_cups.toLocaleString()+' cups</div>'
+            + '</div></div>';
+        } else {
+          return '<div style="background:#fff3cd;border-radius:8px;padding:16px;margin-bottom:14px;border:1.5px solid #e6c200;text-align:center">'
+            + '<div style="font-size:13px;font-weight:700;color:#856404;margin-bottom:6px">⚠ No Cup Reading Found for '+monthName+'</div>'
+            + '<div style="font-size:11px;color:#856404;margin-bottom:10px">Enter cup counter readings in Coffee Counts before generating the invoice.</div>'
+            + '<button onclick="coffeeCountStore=\''+store.replace(/'/g,"\\'")+'\';coffeeCountMonth=\''+invMonth+'\';setView(\'coffee-counts\')" class="primary-btn" style="padding:8px 16px;font-size:12px">☕ Go to Coffee Counts →</button>'
+            + '</div>';
+        }
+      })() : '<!-- No cup readings for this store -->'}
 
       <!-- Charged Supplies -->
       <div style="background:#f4f6fa;border-radius:8px;padding:12px;margin-bottom:14px">
@@ -10174,7 +10463,7 @@ async function generateInvoicePreview(){
     </div>
   `;
 
-  recalcInvoiceCups();
+  recalcInvoiceTotals();
 }
 
 function isNonFoodConsumable(name){
@@ -10309,27 +10598,10 @@ async function _buildAndSaveInvoice(store){
   const invoiceDate = periodEnd;
   const invNum = contract.store_code + month + String(lastDay).padStart(2,'0') + year.slice(2);
 
-  // Collect cup readings
-  let totalCups = 0, totalHW = 0;
-  const newReadings = [];
-  for(const stn of stations){
-    const key = stn.station_name.replace(/\s/g,'_');
-    const inp = document.getElementById('cup-'+key);
-    const hwInp = document.getElementById('hw-'+key);
-    if(!inp) continue;
-    const curVal = parseInt(inp.value)||0;
-    const curHW = parseInt(hwInp?.value)||0;
-    if(curVal <= 0) continue;
-    const prevReadings = cupReadings.filter(r=>r.store_name===store && r.station_name===stn.station_name && r.reading_date < periodStart);
-    const prev = prevReadings.length > 0 ? prevReadings[0].counter_value : 0;
-    const prevHW = prevReadings.length > 0 ? (prevReadings[0].hot_water_value||0) : 0;
-    totalCups += Math.max(0, curVal - prev);
-    totalHW += Math.max(0, curHW - prevHW);
-    newReadings.push({id:Date.now()+Math.random()*1000|0, store_name:store, station_name:stn.station_name, reading_date:periodEnd, counter_value:curVal, hot_water_value:curHW, notes:`Invoice ${invNum}`});
-  }
-  const netCups = Math.max(0, totalCups - totalHW);
-  const cupAdj = parseInt(document.getElementById('cup-adjustment')?.value)||0;
-  const billableCups = Math.max(0, netCups + cupAdj);
+  // Get billable cups from cup_monthly_summary
+  const invMonth = year+'-'+month;
+  const cupSummary = cupMonthlySummary.find(s=>s.store_name===store && s.month===invMonth);
+  const billableCups = cupSummary ? cupSummary.billable_cups : 0;
 
   // Build line items
   const lineItems = [];
@@ -10379,12 +10651,6 @@ async function _buildAndSaveInvoice(store){
     status: 'draft',
     notes: ''
   };
-
-  // Save cup readings
-  for(const r of newReadings){
-    try{ await sbFetch('cup_readings',{method:'POST',prefer:'resolution=merge-duplicates,return=minimal',body:JSON.stringify([r])}); }catch(e){}
-  }
-  cupReadings = [...newReadings, ...cupReadings];
 
   // Save invoice
   try{
