@@ -9225,11 +9225,11 @@ function renderInsightsWidgets(){
 
   // ── Helper: classify invoice line items ──
   function classifyInvoiceLine(desc){
-    const d = (desc||'').toLowerCase();
+    const d = (desc||'').toLowerCase().replace(/-/g,' ').replace(/\s+/g,' ');
     if(d.includes('walk off') || d.includes('walkoff')) return 'walkoff';
     if(d.includes('credit adjustment') || d.includes('credit adjustments')) return 'exclude';
     if(d.includes('employee credit') || d.includes('monthly employee')) return 'exclude';
-    if(d.includes('micro market consumption')) return 'mm_consumption';
+    if(d.includes('micro market consumption') || d.includes('micromarket consumption')) return 'mm_consumption';
     if(d.includes('consumption') && d.includes('cup')) return 'cups';
     if(d.includes('billing adjustment')) return 'adjustment';
     if(d.includes('lease') || d.includes('machine') || d.includes('cooler') || d.includes('rental') || d.includes('service fee')) return 'equipment';
@@ -9287,6 +9287,19 @@ function renderInsightsWidgets(){
       }
       mmUnits = storeSales.length;
       mmUniqueItems = new Set(storeSales.map(r=>r.product_id).filter(Boolean)).size;
+
+      // Fallback: if no per-sale COGS (unmatched product_ids), use received store orders
+      if(mmCOGS === 0 && storeSales.length > 0){
+        const rcvdOrders = storeOrders.filter(o=>o.store_name===storeName && o.status==='received' && (o.closed_at||o.created_at) >= from && (o.closed_at||o.created_at) <= to+'T23:59:59');
+        for(const order of rcvdOrders){
+          for(const item of (order.items||[])){
+            if(item.product_source === 'coffee') continue; // only MM items
+            const qty = parseInt(item.order_qty)||0;
+            const wh = products.find(p=>p.id===item.product_id);
+            if(wh && qty > 0) mmCOGS += wh.unitCost * qty;
+          }
+        }
+      }
     }
 
     // ── Theft / Walkoff ──
