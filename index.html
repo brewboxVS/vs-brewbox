@@ -10343,7 +10343,7 @@ async function generateInvoicePreview(){
 
   // Get charged coffee supplies from received store orders in this month
   const chargedItems = [];
-  const periodOrders = storeOrders.filter(o=>o.store_name===store && o.status==='received' && o.created_at >= periodStart && o.created_at <= periodEnd+'T23:59:59');
+  const periodOrders = storeOrders.filter(o=>o.store_name===store && o.status==='received' && (o.closed_at||o.created_at) >= periodStart && (o.closed_at||o.created_at) <= periodEnd+'T23:59:59');
   for(const order of periodOrders){
     for(const item of (order.items||[])){
       if(item.product_source !== 'coffee') continue;
