@@ -45,7 +45,7 @@ body{font-family:'Segoe UI',system-ui,sans-serif;font-size:13px;background:#f0f2
 .main-header{background:#fff;border-bottom:1px solid #d0d5e0;padding:12px 20px;display:flex;justify-content:space-between;align-items:center;flex-shrink:0}
 .page-title{font-size:16px;font-weight:700;color:#0d1f4e}
 .page-sub{font-size:10px;color:#8090b0;margin-top:1px}
-.main-body{flex:1;overflow-y:auto;padding:14px 18px}
+.main-body{flex:1;overflow-y:auto;padding:14px 18px 120px 18px}
 
 /* ── Cards / Stats ── */
 .stats-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:14px}
@@ -244,7 +244,7 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
   /* Main body fills all remaining space */
   #main { flex: 1; overflow: hidden; width: 100%; }
   .main-body {
-    padding: 10px 10px !important;
+    padding: 10px 10px 120px 10px !important;
     overflow-y: auto; overflow-x: hidden;
     width: 100%; box-sizing: border-box;
   }
@@ -294,8 +294,8 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
   .mob-count-name .mob-correct-btn {
     flex-shrink: 0;
     background: #f4f6fa; border: 1.5px solid #d0d5e0;
-    border-radius: 20px; padding: 4px 10px;
-    font-size: 11px; font-weight: 700; color: #5060a0;
+    border-radius: 20px; padding: 8px 16px;
+    font-size: 13px; font-weight: 700; color: #5060a0;
     cursor: pointer; white-space: nowrap;
   }
   .mob-count-name .mob-correct-btn.active {
@@ -314,9 +314,9 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
     margin-bottom: 10px;
   }
   .mob-stepper-btn {
-    width: 52px; height: 48px;
+    width: 64px; height: 56px;
     background: none; border: none;
-    font-size: 24px; font-weight: 300; color: #0d1f4e;
+    font-size: 28px; font-weight: 300; color: #0d1f4e;
     cursor: pointer; display: flex; align-items: center; justify-content: center;
     flex-shrink: 0; -webkit-tap-highlight-color: transparent;
   }
@@ -325,24 +325,24 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
   .mob-stepper-btn.plus { color: #1a7a45; }
   .mob-stepper-val {
     flex: 1; text-align: center;
-    font-size: 22px; font-weight: 800; color: #0d1f4e;
+    font-size: 24px; font-weight: 800; color: #0d1f4e;
     border-left: 1px solid #d0d5e0;
     border-right: 1px solid #d0d5e0;
-    height: 48px; line-height: 48px;
+    height: 56px; line-height: 56px;
   }
   .mob-stepper-val.changed { color: #c9a84c; }
 
   .mob-count-diff {
-    font-size: 12px; color: #7080a0; margin-bottom: 8px;
+    font-size: 13px; color: #7080a0; margin-bottom: 8px;
   }
   .mob-count-diff .diff-val { font-weight: 700; }
   .mob-count-diff .diff-val.neg { color: #b01c1c; }
   .mob-count-diff .diff-val.pos { color: #1a7a45; }
 
   .mob-count-reason select {
-    width: 100%; padding: 10px 12px;
+    width: 100%; padding: 12px 14px;
     background: #fff; border: 1.5px solid #e8943a;
-    border-radius: 8px; font-size: 13px; color: #1a2340;
+    border-radius: 8px; font-size: 14px; color: #1a2340;
     outline: none; cursor: pointer;
   }
 
@@ -353,7 +353,7 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
     display: flex; gap: 8px;
     box-sizing: border-box; width: 100%;
   }
-  .mob-count-submit button { flex: 1; padding: 14px; font-size: 14px; font-weight: 700; border-radius: 8px; border: none; cursor: pointer; }
+  .mob-count-submit button { flex: 1; padding: 16px; font-size: 15px; font-weight: 700; border-radius: 8px; border: none; cursor: pointer; }
   .mob-count-submit .submit-btn { background: #0d1f4e; color: #fff; }
   .mob-count-submit .cancel-btn { background: #f4f6fa; color: #b01c1c; border: 1.5px solid #b01c1c; }
 
@@ -1388,6 +1388,15 @@ function getStoreNegReasons(storeName, productSource){
   const isCoffee = productSource === 'coffee';
   const primary = (isFV || isCoffee) ? 'Consumption' : 'Theft/Walkoff';
   return [primary,'Complimentary','Spoilage','Return to Warehouse','Manual Decrease'];
+}
+function getDefaultCountReason(diff, storeName, productSource){
+  if(diff > 0) return 'Manual Increase';
+  if(diff < 0){
+    const isFV = isStoreSettings(storeName, 'free_vend');
+    const isCoffee = productSource === 'coffee';
+    return (isFV || isCoffee) ? 'Consumption' : 'Theft/Walkoff';
+  }
+  return '';
 }
 
 let vendingPriceMap = []; // loaded from DB
@@ -4612,6 +4621,18 @@ function renderStoreCount(){
   `;
 }
 
+function storeCountStep(id, direction){
+  const item = storeInventory.find(x=>x.id===id);
+  const s = storeCountState[id];
+  if(!s || !item) return;
+  const current = s.actualQty !== '' ? parseFloat(s.actualQty) : parseFloat(item.qty);
+  const newVal = Math.max(0, current + direction);
+  s.verified = false;
+  const input = document.querySelector(`#sc-row-${id} input[type="number"]`);
+  if(input) input.value = newVal;
+  updateStoreCountQty(id, String(newVal));
+}
+
 function renderStoreCountRow(item){
   const s = storeCountState[item.id] || {verified:false, actualQty:'', reason:''};
   const currentQty = item.qty;
@@ -4628,16 +4649,20 @@ function renderStoreCountRow(item){
     <td>
       <label style="display:flex;align-items:center;gap:7px;cursor:pointer">
         <input type="checkbox" ${s.verified?'checked':''} onchange="toggleStoreCountVerified(${item.id},this.checked)"
-          style="width:16px;height:16px;accent-color:#1a7a45;cursor:pointer"/>
+          style="width:18px;height:18px;accent-color:#1a7a45;cursor:pointer"/>
         <span style="font-size:11px;color:${s.verified?'#1a7a45':'#7080a0'};font-weight:${s.verified?'700':'500'}">
           ${s.verified?'✓ Correct':'Mark correct'}
         </span>
       </label>
     </td>
     <td>
-      ${!s.verified?`<input type="number" value="${s.actualQty}" placeholder="Enter qty"
-        style="width:80px;background:#f4f6fa;border:1.5px solid ${isDiff?'#c9a84c':'#d0d5e0'};border-radius:5px;padding:4px 7px;font-size:12px;color:#1a2340;outline:none"
-        oninput="updateStoreCountQty(${item.id},this.value)"/>`
+      ${!s.verified?`<div style="display:flex;align-items:center;gap:4px">
+        <button onclick="storeCountStep(${item.id},-1)" style="width:32px;height:32px;border:1.5px solid #d0d5e0;border-radius:6px;background:#f4f6fa;font-size:16px;font-weight:700;cursor:pointer;color:#0d1f4e;line-height:1">−</button>
+        <input type="number" value="${s.actualQty}" placeholder="${currentQty}"
+          style="width:70px;background:#f4f6fa;border:1.5px solid ${isDiff?'#c9a84c':'#d0d5e0'};border-radius:5px;padding:5px 7px;font-size:13px;font-weight:700;color:#1a2340;outline:none;text-align:center"
+          oninput="updateStoreCountQty(${item.id},this.value)"/>
+        <button onclick="storeCountStep(${item.id},1)" style="width:32px;height:32px;border:1.5px solid #d0d5e0;border-radius:6px;background:#f4f6fa;font-size:16px;font-weight:700;cursor:pointer;color:#0d1f4e;line-height:1">+</button>
+      </div>`
       :`<span style="color:#8090b0;font-size:11px">—</span>`}
     </td>
     <td class="sc-diff-${item.id}" style="font-weight:700;color:${diff===null?'#8090b0':diff>0?'#1a7a45':'#b01c1c'}">
@@ -4667,12 +4692,18 @@ function toggleStoreCountVerified(id, checked){
 function updateStoreCountQty(id, val){
   storeCountState[id].actualQty = val;
   storeCountState[id].verified = false;
-  storeCountState[id].reason = ''; // always reset — user must pick
   const item = storeInventory.find(x=>x.id===id);
   const currentQty = item ? item.qty : 0;
   const newQty = val==='' ? null : parseFloat(val);
   const diff = newQty !== null ? newQty - currentQty : null;
   const isDiff = diff !== null && newQty !== currentQty;
+
+  // Auto-default reason based on diff direction
+  if(isDiff){
+    storeCountState[id].reason = getDefaultCountReason(diff, storeCountStore, item?.product_source);
+  } else {
+    storeCountState[id].reason = '';
+  }
 
   // DOM patch — no full re-render
   const rowEl = document.getElementById(`sc-row-${id}`);
@@ -4694,10 +4725,11 @@ function updateStoreCountQty(id, val){
     if(reasonTd){
       if(isDiff){
         const reasons = diff < 0 ? getStoreNegReasons(storeCountStore, item?.product_source) : STORE_COUNT_POS_REASONS;
+        const defaultReason = storeCountState[id].reason;
         reasonTd.innerHTML = `<select onchange="updateStoreCountReason(${id},this.value)"
-          style="background:#f4f6fa;border:1.5px solid #e8943a;border-radius:5px;padding:4px 7px;font-size:11px;color:#1a2340;outline:none;cursor:pointer">
+          style="background:#f4f6fa;border:1.5px solid ${defaultReason?'#0d1f4e':'#e8943a'};border-radius:5px;padding:4px 7px;font-size:11px;color:#1a2340;outline:none;cursor:pointer">
           <option value="">-- Select --</option>
-          ${reasons.map(r=>`<option value="${r}">${r}</option>`).join('')}
+          ${reasons.map(r=>`<option value="${r}" ${defaultReason===r?'selected':''}>${r}</option>`).join('')}
         </select>`;
       } else {
         reasonTd.innerHTML = `<span style="color:#8090b0;font-size:11px">${newQty!==null?'No change':''}</span>`;
@@ -6527,14 +6559,12 @@ function mobCountStep(id, delta){
   s.stepperVal = Math.max(0, s.stepperVal + delta);
   s.actualQty = String(s.stepperVal);
   s.verified = false;
-  // Reset reason if diff direction changed
   const diff = s.stepperVal - item.qty;
-  if(s.reason){
-    const negReasons = getStoreNegReasons(storeCountStore, item.product_source);
-    const posReasons = STORE_COUNT_POS_REASONS;
-    if(diff < 0 && posReasons.includes(s.reason)) s.reason = '';
-    if(diff > 0 && negReasons.includes(s.reason)) s.reason = '';
-    if(diff === 0) s.reason = '';
+  // Auto-default reason based on diff direction
+  if(diff !== 0){
+    s.reason = getDefaultCountReason(diff, storeCountStore, item.product_source);
+  } else {
+    s.reason = '';
   }
   // DOM patch — avoid full re-render for snappy feel
   const card = document.getElementById('mcc-'+id);
@@ -6553,8 +6583,13 @@ function mobCountStep(id, delta){
         card.outerHTML = renderMobCountCard(item);
       } else {
         diffSection.innerHTML = `Difference: <span class="diff-val ${diff<0?'neg':'pos'}">${diff>0?'+':''}${diff}</span>`;
+        // Re-render reason dropdown with auto-default
         if(reasonSection){
-          reasonSection.querySelector('select').style.borderColor = s.reason?'#0d1f4e':'#e8943a';
+          reasonSection.innerHTML = `<select onchange="mobCountSetReason(${id},this.value)"
+            style="width:100%;padding:12px 14px;background:#fff;border:1.5px solid ${s.reason?'#0d1f4e':'#e8943a'};border-radius:8px;font-size:14px;color:#1a2340;outline:none;cursor:pointer">
+            <option value="">-- Select reason --</option>
+            ${reasons.map(r=>'<option value="'+r+'" '+(s.reason===r?'selected':'')+'>'+r+'</option>').join('')}
+          </select>`;
         }
       }
     } else {
@@ -8151,6 +8186,18 @@ function renderCount(){
   `;
 }
 
+function whCountStep(id, direction){
+  const p = products.find(x=>x.id===id);
+  const s = countState[id];
+  if(!s || !p) return;
+  const current = s.actualQty !== '' ? parseFloat(s.actualQty) : parseFloat(p.qty);
+  const newVal = Math.max(0, current + direction);
+  s.verified = false;
+  const input = document.querySelector(`#count-row-${id} input[type="number"]`);
+  if(input) input.value = newVal;
+  updateActualQty(id, String(newVal));
+}
+
 function renderCountRow(p){
   const s = countState[p.id] || {verified:false, actualQty:'', reason:'', skip:false};
   const currentQty = p.qty;
@@ -8166,16 +8213,20 @@ function renderCountRow(p){
     <td>
       <label style="display:flex;align-items:center;gap:7px;cursor:pointer">
         <input type="checkbox" ${s.verified?'checked':''} onchange="toggleVerified(${p.id},this.checked)"
-          style="width:16px;height:16px;accent-color:#1a7a45;cursor:pointer"/>
+          style="width:18px;height:18px;accent-color:#1a7a45;cursor:pointer"/>
         <span style="font-size:11px;color:${s.verified?'#1a7a45':'#7080a0'};font-weight:${s.verified?'700':'500'}">
           ${s.verified?'✓ Correct':'Mark correct'}
         </span>
       </label>
     </td>
     <td>
-      ${!s.verified?`<input type="number" value="${s.actualQty}" placeholder="Enter qty"
-        style="width:80px;background:#f4f6fa;border:1.5px solid ${isDiff?'#c9a84c':'#d0d5e0'};border-radius:5px;padding:4px 7px;font-size:12px;color:#1a2340;outline:none"
-        oninput="updateActualQty(${p.id},this.value)"/>`:
+      ${!s.verified?`<div style="display:flex;align-items:center;gap:4px">
+        <button onclick="whCountStep(${p.id},-1)" style="width:32px;height:32px;border:1.5px solid #d0d5e0;border-radius:6px;background:#f4f6fa;font-size:16px;font-weight:700;cursor:pointer;color:#0d1f4e;line-height:1">−</button>
+        <input type="number" value="${s.actualQty}" placeholder="${currentQty}"
+          style="width:70px;background:#f4f6fa;border:1.5px solid ${isDiff?'#c9a84c':'#d0d5e0'};border-radius:5px;padding:5px 7px;font-size:13px;font-weight:700;color:#1a2340;outline:none;text-align:center"
+          oninput="updateActualQty(${p.id},this.value)"/>
+        <button onclick="whCountStep(${p.id},1)" style="width:32px;height:32px;border:1.5px solid #d0d5e0;border-radius:6px;background:#f4f6fa;font-size:16px;font-weight:700;cursor:pointer;color:#0d1f4e;line-height:1">+</button>
+      </div>`:
         `<span style="color:#8090b0;font-size:11px">—</span>`}
     </td>
     <td class="count-diff" style="font-weight:700;color:${diff===null?'#8090b0':diff>0?'#1a7a45':'#b01c1c'}">
@@ -8255,22 +8306,39 @@ function renderCoffeeCountRow(p){
   const verifiedQty = s.verified ? currentQty : (actualQty !== null ? actualQty : '');
   const rowBg = s.verified ? '#f0fff4' : (isDiff ? '#fff8f0' : '');
 
+function whCoffeeCountStep(id, direction){
+  const p = coffeeProducts.find(x=>x.id===id);
+  const key = 'c_'+id;
+  const s = countState[key];
+  if(!s || !p) return;
+  const current = s.actualQty !== '' ? parseFloat(s.actualQty) : parseFloat(p.qty);
+  const newVal = Math.max(0, current + direction);
+  s.verified = false;
+  const input = document.querySelector(`#count-row-c_${id} input[type="number"]`);
+  if(input) input.value = newVal;
+  updateCoffeeActualQty(id, String(newVal));
+}
+
   return `<tr id="count-row-c_${p.id}" style="background:${rowBg}">
     <td style="padding-left:8px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:200px;line-height:1.3">${p.name}</td>
     <td style="font-weight:700;color:#0d1f4e">${currentQty}</td>
     <td>
       <label style="display:flex;align-items:center;gap:7px;cursor:pointer">
         <input type="checkbox" ${s.verified?'checked':''} onchange="toggleCoffeeVerified(${p.id},this.checked)"
-          style="width:16px;height:16px;accent-color:#1a7a45;cursor:pointer"/>
+          style="width:18px;height:18px;accent-color:#1a7a45;cursor:pointer"/>
         <span style="font-size:11px;color:${s.verified?'#1a7a45':'#7080a0'};font-weight:${s.verified?'700':'500'}">
           ${s.verified?'✓ Correct':'Mark correct'}
         </span>
       </label>
     </td>
     <td>
-      ${!s.verified?`<input type="number" value="${s.actualQty}" placeholder="Enter qty"
-        style="width:80px;background:#f4f6fa;border:1.5px solid ${isDiff?'#c9a84c':'#d0d5e0'};border-radius:5px;padding:4px 7px;font-size:12px;color:#1a2340;outline:none"
-        oninput="updateCoffeeActualQty(${p.id},this.value)"/>`:
+      ${!s.verified?`<div style="display:flex;align-items:center;gap:4px">
+        <button onclick="whCoffeeCountStep(${p.id},-1)" style="width:32px;height:32px;border:1.5px solid #d0d5e0;border-radius:6px;background:#f4f6fa;font-size:16px;font-weight:700;cursor:pointer;color:#0d1f4e;line-height:1">−</button>
+        <input type="number" value="${s.actualQty}" placeholder="${currentQty}"
+          style="width:70px;background:#f4f6fa;border:1.5px solid ${isDiff?'#c9a84c':'#d0d5e0'};border-radius:5px;padding:5px 7px;font-size:13px;font-weight:700;color:#1a2340;outline:none;text-align:center"
+          oninput="updateCoffeeActualQty(${p.id},this.value)"/>
+        <button onclick="whCoffeeCountStep(${p.id},1)" style="width:32px;height:32px;border:1.5px solid #d0d5e0;border-radius:6px;background:#f4f6fa;font-size:16px;font-weight:700;cursor:pointer;color:#0d1f4e;line-height:1">+</button>
+      </div>`:
         `<span style="color:#8090b0;font-size:11px">—</span>`}
     </td>
     <td class="count-diff" style="font-weight:700;color:${diff===null?'#8090b0':diff>0?'#1a7a45':'#b01c1c'}">
@@ -8304,7 +8372,7 @@ function updateCoffeeActualQty(id, val){
   countState[key].actualQty = val;
   countState[key].verified = false;
   if(newQty !== null && newQty !== currentQty){
-    countState[key].reason = newQty < currentQty ? 'Spoilage' : 'Manual Increase';
+    countState[key].reason = newQty < currentQty ? 'Consumption' : 'Manual Increase';
   } else {
     countState[key].reason = '';
   }
@@ -11184,13 +11252,11 @@ function mobWhCountStep(id, delta){
   s.actualQty = String(s.stepperVal);
   s.verified = false;
   const diff = s.stepperVal - p.qty;
-  // Reset reason if direction changed
-  if(s.reason){
-    const negR = ['Spoilage','Theft/Walkoff','Manual Decrease'];
-    const posR = ['Manual Increase','Restock from Order'];
-    if(diff < 0 && posR.includes(s.reason)) s.reason = '';
-    if(diff > 0 && negR.includes(s.reason)) s.reason = '';
-    if(diff === 0) s.reason = '';
+  // Auto-default reason
+  if(diff !== 0){
+    s.reason = diff < 0 ? 'Spoilage' : 'Manual Increase';
+  } else {
+    s.reason = '';
   }
   // DOM patch
   const card = document.getElementById('mwc-'+id);
@@ -11203,8 +11269,11 @@ function mobWhCountStep(id, delta){
       const diffEl = card.querySelector('.mob-count-diff');
       if(!diffEl){ card.outerHTML = renderMobWhCountCard(p); return; }
       diffEl.innerHTML = `Difference: <span class="diff-val ${diff<0?'neg':'pos'}">${diff>0?'+':''}${diff}</span>`;
-      const selEl = card.querySelector('.mob-count-reason select');
-      if(selEl) selEl.style.borderColor = s.reason?'#0d1f4e':'#e8943a';
+      const reasonSection = card.querySelector('.mob-count-reason');
+      if(reasonSection){
+        const reasons = diff < 0 ? ['Spoilage','Theft/Walkoff','Manual Decrease'] : ['Manual Increase','Restock from Order'];
+        reasonSection.innerHTML = '<select onchange="mobWhCountSetReason('+id+',this.value)" style="width:100%;padding:12px 14px;background:#fff;border:1.5px solid '+(s.reason?'#0d1f4e':'#e8943a')+';border-radius:8px;font-size:14px;color:#1a2340;outline:none;cursor:pointer"><option value="">-- Select reason --</option>'+reasons.map(function(r){return '<option value="'+r+'" '+(s.reason===r?'selected':'')+'>'+r+'</option>';}).join('')+'</select>';
+      }
     } else {
       const diffEl = card.querySelector('.mob-count-diff');
       if(diffEl) card.outerHTML = renderMobWhCountCard(p);
