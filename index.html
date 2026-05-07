@@ -5502,23 +5502,33 @@ function filterWhAddItem(orderId, query){
   const order = whOrders.find(o=>o.id===orderId);
   const existingIds = new Set((order?.items||[]).map(i=>i.product_id));
   const q = query.toLowerCase();
-  const matches = products.filter(p=>p.active && !existingIds.has(p.id) && (p.name.toLowerCase().includes(q) || (p.upc&&p.upc.includes(q)))).slice(0,8);
+
+  // Search both MM and Coffee products
+  const mmMatches = products.filter(p=>p.active && !existingIds.has(p.id) && (p.name.toLowerCase().includes(q) || (p.upc&&p.upc.includes(q)))).map(p=>({...p, _source:'mm'}));
+  const coffeeMatches = coffeeProducts.filter(p=>p.active && !existingIds.has(p.id) && (p.name.toLowerCase().includes(q) || (p.upc&&p.upc.includes(q)))).map(p=>({...p, _source:'coffee'}));
+  const matches = [...mmMatches, ...coffeeMatches].sort((a,b)=>a.name.localeCompare(b.name)).slice(0,8);
 
   if(matches.length===0){ resultsEl.style.display='none'; return; }
 
   resultsEl.style.display='block';
   resultsEl.innerHTML = matches.map(p=>`
-    <div onclick="selectWhAddItem(${orderId},${p.id})" style="padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid #f0f2f8;display:flex;justify-content:space-between;align-items:center"
+    <div onclick="selectWhAddItem(${orderId},${p.id},'${p._source}')" style="padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid #f0f2f8;display:flex;justify-content:space-between;align-items:center"
       onmouseover="this.style.background='#f4f6fa'" onmouseout="this.style.background='#fff'">
-      <span style="font-weight:600;color:#0d1f4e">${p.name}</span>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="font-weight:600;color:#0d1f4e">${p.name}</span>
+        <span style="font-size:9px;background:${p._source==='coffee'?'#f3e8ff':'#e8edf8'};color:${p._source==='coffee'?'#6b2fa0':'#0d1f4e'};padding:1px 5px;border-radius:3px;font-weight:700">${p._source==='coffee'?'Coffee':'MM'}</span>
+      </div>
       <span style="font-size:10px;color:#7080a0">${p.piecesPerBox} pcs/case · qty: ${p.qty}</span>
     </div>
   `).join('');
 }
 
-function selectWhAddItem(orderId, productId){
-  whAddSelectedProduct = products.find(p=>p.id===productId);
+function selectWhAddItem(orderId, productId, source){
+  whAddSelectedProduct = source === 'coffee'
+    ? coffeeProducts.find(p=>p.id===productId)
+    : products.find(p=>p.id===productId);
   if(!whAddSelectedProduct) return;
+  whAddSelectedProduct._source = source || 'mm';
   const searchEl = document.getElementById('wh-add-search-'+orderId) || document.getElementById('mob-wh-add-search-'+orderId);
   const resultsEl = document.getElementById('wh-add-results-'+orderId);
   const selectedEl = document.getElementById('wh-add-selected-'+orderId);
@@ -5536,12 +5546,12 @@ async function addItemToWhOrder(orderId){
   const cases = parseInt(casesEl?.value)||1;
   const p = whAddSelectedProduct;
 
-  // Determine vendor (first vendor from product, or 'Other')
   const vendor = p.vendors && p.vendors.length > 0 ? p.vendors[0] : 'Other';
 
   const newItem = {
     product_id: p.id,
     product_name: p.name,
+    product_source: p._source || 'mm',
     cat1: p.cat1||'',
     vendor: vendor,
     current_qty: p.qty,
