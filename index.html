@@ -4269,6 +4269,8 @@ function toggleOrderExpand(id){
 }
 
 async function receiveStoreOrder(orderId){
+  if(!confirm('Are you sure you want to receive this order? This will update store and warehouse inventory.')) return;
+
   const btn = document.getElementById(`recv-btn-${orderId}`);
   if(btn){ btn.disabled=true; btn.textContent='Processing…'; btn.style.opacity='0.6'; }
 
@@ -6066,6 +6068,8 @@ async function syncWhOrderFromSheet(orderId){
 }
 
 async function receiveWhOrder(orderId){
+  if(!confirm('Are you sure you want to receive this order? This will update warehouse inventory.')) return;
+
   const btn = document.getElementById(`wh-recv-btn-${orderId}`);
   if(btn){ btn.disabled=true; btn.textContent='Processing…'; btn.style.opacity='0.6'; }
 
