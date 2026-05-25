@@ -1,3 +1,24 @@
+<!--
+  ╔═══════════════════════════════════════════════════════════════════════════╗
+  ║  BrewBox Warehouse OS — Vendors Service Inventory Management System     ║
+  ║  Single-file PWA deployed via Netlify (brewboxims.netlify.app)          ║
+  ║  Backend: Supabase (PostgreSQL + REST API)                              ║
+  ║                                                                         ║
+  ║  Architecture: All HTML, CSS, and JS in one file (index.html)           ║
+  ║  + sw.js (service worker for PWA) + manifest.json                       ║
+  ║                                                                         ║
+  ║  Stores: SM Toyota, Safran, Exodus, Elevated Brandz, SR Honda           ║
+  ║  Products: MM (micromarket snacks/drinks) + Coffee (beans, supplies)    ║
+  ║                                                                         ║
+  ║  Key pages: Dashboard, Warehouse Inventory (MM/Coffee), Warehouse       ║
+  ║  Orders, Store Inventory, Store Orders, Store Count, Coffee Counts,     ║
+  ║  Invoices, Sales Import, Insights, Consumption & Theft Reports          ║
+  ║                                                                         ║
+  ║  Mobile: Responsive design with dedicated mobile renderers for          ║
+  ║  Store Count, Store Inventory, Store Orders, and Warehouse Count.       ║
+  ║  Patched via IIFE at end of file (patchMobile pattern).                 ║
+  ╚═══════════════════════════════════════════════════════════════════════════╝
+-->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -493,6 +514,7 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
 #mob-overlay { display: none; }
 
 </style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 </head>
 <body>
 
@@ -542,6 +564,43 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
 
 <!-- Toast -->
 <div id="toast"></div>
+
+<!-- Login Screen -->
+<div id="login-screen" style="display:none;position:fixed;inset:0;background:linear-gradient(135deg,#0d1f4e 0%,#1a2f6e 100%);z-index:9000;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:14px;padding:32px;width:360px;max-width:90vw;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px">
+      <div style="width:44px;height:44px;background:#0d1f4e;border-radius:9px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:17px;color:#c9a84c">VS</div>
+      <div>
+        <div style="font-size:17px;font-weight:800;color:#0d1f4e">BrewBox Warehouse OS</div>
+        <div style="font-size:11px;color:#8090b0">Sign in to continue</div>
+      </div>
+    </div>
+    <div id="login-error" style="display:none;background:#fde8e8;color:#b01c1c;border-radius:7px;padding:9px 12px;font-size:12px;margin-bottom:14px;font-weight:600"></div>
+    <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.5px">Email</label>
+    <input type="email" id="login-email" autocomplete="username" style="width:100%;padding:11px 13px;border:1.5px solid #d0d5e0;border-radius:8px;font-size:14px;margin:5px 0 14px;outline:none;box-sizing:border-box" onkeydown="if(event.key==='Enter')document.getElementById('login-password').focus()"/>
+    <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.5px">Password</label>
+    <input type="password" id="login-password" autocomplete="current-password" style="width:100%;padding:11px 13px;border:1.5px solid #d0d5e0;border-radius:8px;font-size:14px;margin:5px 0 14px;outline:none;box-sizing:border-box" onkeydown="if(event.key==='Enter')doLogin()"/>
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:18px">
+      <input type="checkbox" id="login-stay" checked style="width:16px;height:16px;accent-color:#0d1f4e;cursor:pointer"/>
+      <span style="font-size:12px;color:#5060a0">Stay signed in</span>
+    </label>
+    <button id="login-btn" onclick="doLogin()" style="width:100%;padding:12px;background:#0d1f4e;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer">Sign In</button>
+  </div>
+</div>
+
+<!-- Password Change Screen (forced on first login) -->
+<div id="pwchange-screen" style="display:none;position:fixed;inset:0;background:linear-gradient(135deg,#0d1f4e 0%,#1a2f6e 100%);z-index:9000;align-items:center;justify-content:center">
+  <div style="background:#fff;border-radius:14px;padding:32px;width:360px;max-width:90vw;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+    <div style="font-size:17px;font-weight:800;color:#0d1f4e;margin-bottom:6px">Set a New Password</div>
+    <div style="font-size:12px;color:#7080a0;margin-bottom:18px">For security, please set your own password before continuing.</div>
+    <div id="pwchange-error" style="display:none;background:#fde8e8;color:#b01c1c;border-radius:7px;padding:9px 12px;font-size:12px;margin-bottom:14px;font-weight:600"></div>
+    <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.5px">New Password</label>
+    <input type="password" id="pwchange-new" autocomplete="new-password" style="width:100%;padding:11px 13px;border:1.5px solid #d0d5e0;border-radius:8px;font-size:14px;margin:5px 0 14px;outline:none;box-sizing:border-box"/>
+    <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.5px">Confirm Password</label>
+    <input type="password" id="pwchange-confirm" autocomplete="new-password" style="width:100%;padding:11px 13px;border:1.5px solid #d0d5e0;border-radius:8px;font-size:14px;margin:5px 0 18px;outline:none;box-sizing:border-box" onkeydown="if(event.key==='Enter')doPasswordChange()"/>
+    <button onclick="doPasswordChange()" style="width:100%;padding:12px;background:#0d1f4e;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer">Set Password & Continue</button>
+  </div>
+</div>
 
 <!-- Main App -->
 <div id="mob-overlay" onclick="closeMobMenu()"></div>
@@ -631,6 +690,8 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
 <script>
 // ═══════════════════════════════════════════════════
 //  CONFIGURATION — filled in by user via setup screen
+// Supabase connection credentials (URL + anon key). Baked into the HTML for
+// single-file deployment via Netlify. RLS policies enforce access control.
 // ═══════════════════════════════════════════════════
 const CONFIG_KEY = 'vs_brewbox_config';
 let SUPABASE_URL = 'https://lckigaqjheswhivabhss.supabase.co';
@@ -639,6 +700,8 @@ let useSupabase = true;
 
 // ═══════════════════════════════════════════════════
 //  SETUP SQL — paste into Supabase SQL Editor
+// SQL schema for initial database setup. Users paste this into Supabase SQL Editor
+// to create all required tables (products, coffee_products, store_inventory, etc.).
 // ═══════════════════════════════════════════════════
 const SETUP_SQL = `
 -- Run this once in your Supabase SQL Editor
@@ -695,6 +758,8 @@ function copySetupSQL(){
 
 // ═══════════════════════════════════════════════════
 //  SUPABASE API HELPERS
+// Core fetch wrapper for all Supabase REST API calls. Handles authentication,
+// pagination (sbFetchAll for >1000 rows), and common CRUD patterns (select, upsert, delete).
 // ═══════════════════════════════════════════════════
 async function sbFetch(path, options={}){
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
@@ -760,6 +825,9 @@ async function sbDelete(table, id){
 
 // ═══════════════════════════════════════════════════
 //  VENDORS & DEFAULT DATA
+// Vendor registry, store color schemes, abbreviations, and default product data.
+// Vendors are loaded from Supabase; colors/abbreviations are used across all UI views
+// for consistent store/vendor identification badges.
 // ═══════════════════════════════════════════════════
 let vendorsList = []; // loaded from DB
 
@@ -1028,6 +1096,8 @@ const DEFAULT_PRODUCTS=[
 
 // ═══════════════════════════════════════════════════
 //  APP STATE
+// Global app state: current view, filter states (search, category, stock, margin),
+// editing mode tracking, and AI assistant state. These variables drive all UI rendering.
 // ═══════════════════════════════════════════════════
 let products = [];
 let restockLog = [];
@@ -1110,6 +1180,8 @@ function dateToPST(dateStr){
 
 // ═══════════════════════════════════════════════════
 //  SETUP SCREEN
+// First-run setup screen for entering Supabase credentials. Normally bypassed
+// since credentials are baked in. Includes reset functionality for troubleshooting.
 // ═══════════════════════════════════════════════════
 function loadConfig(){
   try{
@@ -1171,6 +1243,8 @@ function resetConfig(){
 
 // ═══════════════════════════════════════════════════
 //  LOADING / TOAST
+// UI feedback utilities: full-screen loading overlay for async operations,
+// toast notifications for success/error messages with auto-dismiss.
 // ═══════════════════════════════════════════════════
 function showLoading(msg='Loading…'){
   document.getElementById('loading-msg').textContent=msg;
@@ -1190,6 +1264,8 @@ function showToast(msg, duration=2500){
 
 // ═══════════════════════════════════════════════════
 //  SUPABASE ↔ LOCAL DATA MAPPING
+// Bidirectional data mapping between Supabase row format (snake_case) and
+// JavaScript object format (camelCase). Used by all load/save operations.
 // ═══════════════════════════════════════════════════
 function rowToProduct(row){
   return {
@@ -1245,6 +1321,9 @@ function rowToRestock(row){
 
 // ═══════════════════════════════════════════════════
 //  DATA LOAD / SAVE
+// Data persistence layer: load from Supabase on init, save individual records on edit.
+// Covers products, coffee_products, restock_log, store_orders, warehouse_orders,
+// invoices, sales imports, coffee contracts, store settings, and cup readings.
 // ═══════════════════════════════════════════════════
 async function loadData(){
   if(useSupabase){
@@ -1353,6 +1432,8 @@ function setSyncStatus(type, msg){
 
 // ═══════════════════════════════════════════════════
 //  APP INIT
+// App initialization: loads all data from Supabase in parallel, then renders
+// the initial view. Called on page load after credentials are confirmed.
 // ═══════════════════════════════════════════════════
 let storeSettings = {}; // {storeName: {free_vend: bool}}
 let storeStations = []; // [{id, store_name, station_name, station_label, active}]
@@ -1454,6 +1535,9 @@ async function initApp(){
 
 // ═══════════════════════════════════════════════════
 //  CORE HELPERS
+// Shared UI components: navigation sidebar, mobile hamburger menu, modal system,
+// view routing (setView dispatcher), and the main render() function that delegates
+// to the appropriate page renderer based on currentView.
 // ═══════════════════════════════════════════════════
 function getLow(){return products.filter(p=>p.active&&p.qty<=p.minLevel&&p.minLevel>0);}
 function getTotalValue(){return products.filter(p=>p.active).reduce((s,p)=>s+Math.max(0,p.qty)*p.unitCost,0);}
@@ -1656,6 +1740,9 @@ function render(){
 
 // ═══════════════════════════════════════════════════
 //  VIEWS
+// Dashboard view: renders the main landing page with inventory alerts (low/out of stock),
+// recent activity feed, financial stats widget (MM margins, coffee inventory breakdown,
+// per-store cost-per-cup analysis), and quick navigation cards.
 // ═══════════════════════════════════════════════════
 let _dashStoreExpanded = new Set();
 function toggleDashStore(store){
@@ -2073,6 +2160,9 @@ function renderRestock(){
 
 // ═══════════════════════════════════════════════════
 //  CRUD
+// CRUD operations for MM products: add new item form, inline row editing,
+// save all edits (batch update), toggle active status, delete product.
+// Follows the pattern: update in-memory array → render → save to Supabase async.
 // ═══════════════════════════════════════════════════
 async function deleteProduct(id){
   if(!confirm('Delete this item from inventory?')) return;
@@ -2398,6 +2488,8 @@ function closeModal(){document.getElementById('modal-container').innerHTML='';}
 
 // ═══════════════════════════════════════════════════
 //  AI ASSISTANT
+// AI Assistant panel: chat interface powered by Claude API for inventory questions,
+// order suggestions, and data analysis. Sends product/inventory context with each query.
 // ═══════════════════════════════════════════════════
 function toggleAI(){
   aiOpen=!aiOpen;
@@ -2450,6 +2542,8 @@ async function sendAI(){
 
 // ═══════════════════════════════════════════════════
 //  EXPORT TO EXCEL
+// Excel export for warehouse MM inventory. Uses SheetJS (xlsx) library
+// loaded on-demand from CDN. Generates formatted .xlsx with column widths and number formats.
 // ═══════════════════════════════════════════════════
 function toggleExportMenu(){
   const menu = document.getElementById('export-menu');
@@ -2521,6 +2615,9 @@ function exportExcel(mode){
 
 // ═══════════════════════════════════════════════════
 //  WAREHOUSE ORDERS
+// Warehouse Coffee Inventory page: same structure as MM inventory but for coffee products.
+// Includes input vs charged (supply) item toggle, category filtering with coffee-specific
+// categories (WB Espresso, Soluble Powders, etc.), and separate CRUD operations.
 // ═══════════════════════════════════════════════════
 let orderPreview = []; // [{name, casesOrdered, piecesPerBox, qtyToAdd, productId, matched, newItemData, showAddForm}]
 let orderSubmitResult = null;
@@ -2934,6 +3031,9 @@ function recalcAddUnitCost(){
 
 // ═══════════════════════════════════════════════════
 //  WAREHOUSE COFFEE INVENTORY
+// Coffee product CRUD: add, edit, save, delete operations mirroring the MM pattern.
+// Coffee products have an additional is_input flag distinguishing consumable inputs
+// (beans, powders) from charged supplies (filters, cups, lids).
 // ═══════════════════════════════════════════════════
 let coffeeProducts = [];
 let coffeeSearchTerm = '';
@@ -3359,6 +3459,9 @@ async function doCoffeeRestock(id){
 
 // ═══════════════════════════════════════════════════
 //  STORES
+// Store Inventory management: per-store item tracking with qty/min/max levels.
+// Items are synced from warehouse products via the stores[] array on each product.
+// Supports category filtering, stock status pills, and inline editing.
 // ═══════════════════════════════════════════════════
 const STORES = ['SM Toyota','Safran','Exodus','Elevated Brandz','SR Honda'];
 const COFFEE_STORES = ['Safran','Exodus']; // stores with coffee service
@@ -3930,6 +4033,9 @@ async function handleStoreSelectionChange(productId, source, selectEl){
 
 // ═══════════════════════════════════════════════════
 //  STORE ORDERS
+// Store Orders: create orders to restock store locations from warehouse inventory.
+// Flow: select store → pick items → set quantities → save as open → receive order
+// (which increases store qty, decreases warehouse qty, and logs activity).
 // ═══════════════════════════════════════════════════
 let storeOrders = [];      // all store_orders rows
 let currentOrderStore = '';
@@ -4357,6 +4463,9 @@ async function receiveStoreOrder(orderId){
 
 // ═══════════════════════════════════════════════════
 //  ORDER ACTIVITY LOG
+// Order Activity Log: searchable, filterable history of all inventory changes.
+// Badges: ORDER OPEN, ORDER RCVD, STORE ORDER, WH ORDER, COUNT, EDIT, RESTOCK, Sales.
+// Supports filtering by type and free-text search across all log entries.
 // ═══════════════════════════════════════════════════
 let expandedActivityOrderIds = new Set();
 
@@ -4436,6 +4545,10 @@ function toggleActivityOrder(id){
 
 // ═══════════════════════════════════════════════════
 //  STORE INVENTORY COUNT
+// Store Inventory Count: field-use page for physical inventory verification.
+// Per-item: mark as correct (qty matches) or enter actual qty with reason dropdown.
+// Reasons auto-default based on store type and product source (Theft vs Consumption).
+// Includes +/- stepper buttons and category-grouped sections.
 // ═══════════════════════════════════════════════════
 let storeCountState = {};      // {storeItemId: {verified, actualQty, reason}}
 let storeCountStore = '';
@@ -4999,6 +5112,10 @@ function renderStoreCountResult(){
 
 // ═══════════════════════════════════════════════════
 //  WAREHOUSE ORDERS (Google Sheets integrated)
+// Warehouse Orders with Google Sheets integration: planned orders (auto-calculated
+// from min/max levels, grouped by vendor priority), quick orders (ad hoc item selection),
+// and quick capture (receipt photo/text parsed by AI). Orders export to Google Sheets
+// for shopping lists and sync back after purchase. Receive flow updates warehouse qty.
 // ═══════════════════════════════════════════════════
 function getVendorPriority(){ return getActiveVendors().map(v=>v.name); }
 const WH_ORDERS_FOLDER = 'BrewBox Orders';
@@ -6154,6 +6271,9 @@ async function receiveWhOrder(orderId){
 
 // ═══════════════════════════════════════════════════
 //  QUICK CAPTURE — Receipt photo / text parse
+// Quick Capture: upload a receipt photo or type a description of purchased items.
+// Claude Vision API parses the input, matches items to warehouse products,
+// and creates an editable order for review before saving.
 // ═══════════════════════════════════════════════════
 let qcParsedItems = [];   // [{product_id, product_name, vendor, cat1, pieces_per_box, rec_cases, parsed_cases, current_qty, min_level, max_level, confirmed}]
 let qcParsing = false;
@@ -6600,6 +6720,8 @@ async function cancelWhOrder(orderId){
 
 // ═══════════════════════════════════════════════════
 //  MOBILE UTILITIES
+// Mobile layout utilities: hamburger menu, page title bar, responsive breakpoint
+// detection (IS_MOBILE = ≤768px). Used by all mobile-specific page renderers.
 // ═══════════════════════════════════════════════════
 const IS_MOBILE = () => window.innerWidth <= 768;
 
@@ -6627,6 +6749,9 @@ document.addEventListener('click', e=>{
 
 // ═══════════════════════════════════════════════════
 //  MOBILE STORE COUNT
+// Mobile Store Inventory Count: card-based layout with large stepper buttons
+// (64×56px tap targets) for field use on Samsung S24/S11 Ultra. Each item card
+// shows current qty, stepper, diff badge, and reason dropdown. Fixed submit bar at bottom.
 // ═══════════════════════════════════════════════════
 // State lives in storeCountState (shared with desktop)
 
@@ -6861,6 +6986,9 @@ function mobCountSetReason(id, val){
 
 // ═══════════════════════════════════════════════════
 //  MOBILE STORE INVENTORY
+// Mobile Store Inventory: card-based view replacing the desktop table.
+// Shows qty/min/max per item with inline edit mode. Includes store selector,
+// stock filter pills, category pills, and search.
 // ═══════════════════════════════════════════════════
 let mobInvEditingIds = new Set();
 
@@ -7027,6 +7155,9 @@ async function mobInvSave(id){
 
 // ═══════════════════════════════════════════════════
 //  MOBILE STORE ORDERS
+// Mobile Store Orders: full-width cards for open/received orders.
+// New order creation with category-grouped item list and qty inputs.
+// Optimized for touch interaction on mobile devices.
 // ═══════════════════════════════════════════════════
 function renderMobStoreOrders(){
   updateMobTitle('Store Orders');
@@ -7195,6 +7326,10 @@ window.addEventListener('resize', ()=>{
 
 // ═══════════════════════════════════════════════════
 //  SALES IMPORT
+// Sales Import: upload Cantaloupe Item Sales CSV/XLSX files to import transaction data.
+// Auto-detects stores from file, deduplicates by timestamp (last_sale_ts per store),
+// matches items by UPC or name, and tracks import history. SR Honda is automated
+// via Google Apps Script + Supabase Edge Function (excluded from manual upload).
 // ═══════════════════════════════════════════════════
 const LS_SALES_IMPORTS = 'vs_brewbox_sales_imports';
 let salesImportHistory = [];
@@ -8275,12 +8410,168 @@ async function backfillSalesImport(store){
 
 // ═══════════════════════════════════════════════════
 //  BOOT — credentials baked in, go straight to app
+// Boot sequence: credentials are baked in, so skip setup and go straight to app init.
+// Loads all data from Supabase, then renders the dashboard.
 // ═══════════════════════════════════════════════════
-initApp();
+
+// ── Supabase Auth client ──
+let sbAuth = null;
+let currentUser = null;        // { id, email, display_name, role, assigned_stores }
+let currentPermissions = {};   // { "dashboard":{view,edit}, ... }
+
+function initAuthClient(){
+  if(sbAuth) return sbAuth;
+  // Use sessionStorage if "stay signed in" is off; default localStorage otherwise.
+  // This is decided at login time by swapping storage; default to localStorage here.
+  sbAuth = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+    auth: { persistSession: true, autoRefreshToken: true, storageKey: 'brewbox-auth' }
+  });
+  return sbAuth;
+}
+
+async function bootAuth(){
+  initAuthClient();
+  // Check for existing session
+  const { data: { session } } = await sbAuth.auth.getSession();
+  if(session && session.user){
+    await onAuthenticated(session.user);
+  } else {
+    showLoginScreen();
+  }
+}
+
+function showLoginScreen(){
+  document.getElementById('setup-screen').style.display='none';
+  document.getElementById('app').style.display='none';
+  document.getElementById('pwchange-screen').style.display='none';
+  document.getElementById('login-screen').style.display='flex';
+  const emailEl = document.getElementById('login-email');
+  if(emailEl) emailEl.focus();
+}
+
+async function doLogin(){
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const stay = document.getElementById('login-stay').checked;
+  const errEl = document.getElementById('login-error');
+  const btn = document.getElementById('login-btn');
+  errEl.style.display='none';
+
+  if(!email || !password){ errEl.textContent='Enter email and password'; errEl.style.display='block'; return; }
+
+  btn.disabled=true; btn.textContent='Signing in…'; btn.style.opacity='0.6';
+
+  // Recreate client with appropriate persistence
+  sbAuth = supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+    auth: { persistSession: true, autoRefreshToken: true, storageKey: 'brewbox-auth',
+      storage: stay ? window.localStorage : window.sessionStorage }
+  });
+
+  const { data, error } = await sbAuth.auth.signInWithPassword({ email, password });
+  btn.disabled=false; btn.textContent='Sign In'; btn.style.opacity='1';
+
+  if(error){
+    errEl.textContent = error.message.includes('Invalid') ? 'Invalid email or password' : error.message;
+    errEl.style.display='block';
+    return;
+  }
+  await onAuthenticated(data.user);
+}
+
+async function onAuthenticated(authUser){
+  // Load user profile
+  const profiles = await sbFetch('user_profiles?id=eq.'+authUser.id, {method:'GET', prefer:'return=representation'});
+  const profile = profiles && profiles[0];
+  if(!profile){
+    document.getElementById('login-error').textContent='No profile found for this account. Contact admin.';
+    document.getElementById('login-error').style.display='block';
+    await sbAuth.auth.signOut();
+    showLoginScreen();
+    return;
+  }
+  if(!profile.active){
+    document.getElementById('login-error').textContent='This account has been deactivated.';
+    document.getElementById('login-error').style.display='block';
+    await sbAuth.auth.signOut();
+    showLoginScreen();
+    return;
+  }
+
+  currentUser = {
+    id: profile.id,
+    email: profile.email,
+    display_name: profile.display_name,
+    role: profile.role,
+    assigned_stores: profile.assigned_stores || []
+  };
+
+  // Forced password change on first login
+  if(profile.must_change_password){
+    document.getElementById('login-screen').style.display='none';
+    document.getElementById('pwchange-screen').style.display='flex';
+    document.getElementById('pwchange-new').focus();
+    return;
+  }
+
+  // Load permission set for the user's role
+  const permSets = await sbFetch('permission_sets?role_name=eq.'+encodeURIComponent(profile.role), {method:'GET', prefer:'return=representation'});
+  currentPermissions = (permSets && permSets[0]) ? permSets[0].permissions : {};
+
+  // Proceed into the app
+  document.getElementById('login-screen').style.display='none';
+  document.getElementById('pwchange-screen').style.display='none';
+  initApp();
+}
+
+async function doPasswordChange(){
+  const np = document.getElementById('pwchange-new').value;
+  const cp = document.getElementById('pwchange-confirm').value;
+  const errEl = document.getElementById('pwchange-error');
+  errEl.style.display='none';
+
+  if(np !== cp){ errEl.textContent='Passwords do not match'; errEl.style.display='block'; return; }
+  if(np.length < 6){ errEl.textContent='Password must be at least 6 characters'; errEl.style.display='block'; return; }
+
+  const { error } = await sbAuth.auth.updateUser({ password: np });
+  if(error){ errEl.textContent=error.message; errEl.style.display='block'; return; }
+
+  // Clear the must_change_password flag
+  await sbFetch('user_profiles?id=eq.'+currentUser.id, {method:'PATCH', prefer:'return=minimal', body:JSON.stringify({must_change_password:false, updated_at:new Date().toISOString()})});
+
+  // Load permissions and proceed
+  const permSets = await sbFetch('permission_sets?role_name=eq.'+encodeURIComponent(currentUser.role), {method:'GET', prefer:'return=representation'});
+  currentPermissions = (permSets && permSets[0]) ? permSets[0].permissions : {};
+  document.getElementById('pwchange-screen').style.display='none';
+  showToast('Password updated');
+  initApp();
+}
+
+async function doLogout(){
+  if(sbAuth) await sbAuth.auth.signOut();
+  currentUser = null;
+  currentPermissions = {};
+  document.getElementById('app').style.display='none';
+  showLoginScreen();
+}
+
+// ── Permission helpers ──
+function canView(page){ return currentUser?.role==='admin' || (currentPermissions[page] && currentPermissions[page].view); }
+function canEdit(page){ return currentUser?.role==='admin' || (currentPermissions[page] && currentPermissions[page].edit); }
+function isAdmin(){ return currentUser?.role==='admin'; }
+function userStores(){ // stores this user may see
+  if(isAdmin() || currentUser?.role==='warehouse_stocker') return STORES;
+  return (currentUser?.assigned_stores||[]).filter(s=>STORES.includes(s));
+}
+
+// Start auth flow instead of direct app init
+bootAuth();
 
 
 // ═══════════════════════════════════════════════════
 //  WAREHOUSE INVENTORY COUNT
+// Warehouse Inventory Count: physical count verification for warehouse MM and coffee items.
+// Same pattern as store count: mark correct or enter actual qty with reason.
+// Grouped by category with +/- steppers. Submits diffs to inventory_count_log.
 // ═══════════════════════════════════════════════════
 const COUNT_CAT_ORDER = ['DRINKS','CHIPS','SNACKS','CANDY','PASTRY','COLD FOOD','FROZEN FOOD'];
 let countState = {};       // {productId: {verified, actualQty, reason, skip}}
@@ -8904,6 +9195,8 @@ function renderCountResult(){
 // ═══════════════════════════════════════════════════
 // ═══════════════════════════════════════════════════
 //  HISTORICAL DATA IMPORT (Cantaloupe Inventory Changes)
+// Historical Data Import: bulk import tool for Cantaloupe inventory change reports.
+// Used for backfilling historical consumption/theft data from exported CSV files.
 // ═══════════════════════════════════════════════════
 const HIST_REASON_MAP = {
   'Manual Decrease': 'Manual Decrease',
@@ -9170,6 +9463,9 @@ async function executeHistImport(store){
 }
 
 //  VENDOR MANAGEMENT
+// Vendor Management: admin page for adding, editing, and sorting vendors.
+// Each vendor has name, active status, sort order, and flags for serves_mm/serves_coffee.
+// Sort order determines vendor priority in planned warehouse orders.
 // ═══════════════════════════════════════════════════
 function renderVendorManagement(){
   const active = vendorsList.filter(v=>v.active).sort((a,b)=>a.sort_order-b.sort_order);
@@ -9417,6 +9713,10 @@ async function moveVendor(vendorId, direction){
 
 // ═══════════════════════════════════════════════════
 //  INSIGHTS DASHBOARD
+// Insights Dashboard: financial analytics with date range filtering (MTD, QTD, YTD, etc.).
+// Per-store P&L for MM (revenue from sales, COGS from product costs or received orders)
+// and Coffee (cup revenue, supply revenue, equipment fees, theft recovery from invoices).
+// Combined P&L view across all stores. Includes slow movers analysis.
 // ═══════════════════════════════════════════════════
 let insightsStore = '';
 let insightsRange = 'last_month'; // 'mtd','last_month','qtd','ytd','all','custom'
@@ -10007,6 +10307,10 @@ function renderInsightsWidgets(){
 
 // ═══════════════════════════════════════════════════
 //  COFFEE COUNTS (Monthly Cup Readings)
+// Coffee Counts: monthly cup counter readings per station, per store.
+// Enter end-of-month counter values and hot water values; system calculates
+// net billable cups (gross - hot water deduction + adjustment).
+// Saves to cup_monthly_summary for invoice generation to pull from.
 // ═══════════════════════════════════════════════════
 let coffeeCountStore = '';
 let coffeeCountMonth = '';
@@ -10313,6 +10617,11 @@ async function saveCupReadings(){
 
 // ═══════════════════════════════════════════════════
 //  INVOICES
+// Invoices: per-store monthly invoice generation and management.
+// Store selector → expandable invoice list (newest first) → paid/unpaid toggle.
+// Generate flow pulls billable cups from Coffee Counts, charged supplies from
+// received store orders (by closed_at date), equipment fees from contracts,
+// and service fees (employee credits, walkoff). Export to PDF.
 // ═══════════════════════════════════════════════════
 let invoicePageStore = '';
 let invoiceExpandedId = null;
@@ -11115,6 +11424,10 @@ function viewInvoice(id){
 
 // ═══════════════════════════════════════════════════
 //  USAGE / THEFT REPORT
+// Consumption & Theft Reports: two-tab report page under Reports section.
+// Consumption tab: items consumed (valued at unit cost) — coffee inputs, free-vend MM.
+// Theft tab: items lost to theft/walkoff (valued at sale price — lost revenue).
+// Both tabs show unit cost AND sale price columns. Exportable to Excel.
 // ═══════════════════════════════════════════════════
 let usageReportStore = '';
 let usageReportFrom = '';
@@ -11355,6 +11668,9 @@ if('serviceWorker' in navigator){
 
 // ═══════════════════════════════════════════════════
 //  MOBILE WAREHOUSE COUNT
+// Mobile Warehouse Count: card-based layout for warehouse inventory counting
+// on mobile/tablet devices. Same stepper pattern as mobile store count.
+// Groups items by category with collapsible sections.
 // ═══════════════════════════════════════════════════
 function renderMobWhCount(){
   updateMobTitle('WH Count');
@@ -11650,6 +11966,8 @@ function cancelWhCount(){
 
 // ═══════════════════════════════════════════════════
 //  MOBILE WAREHOUSE ORDERS
+// Mobile Warehouse Orders: full-width buttons for Planned Order, Quick Order,
+// Quick Capture. Expandable order cards with per-item checkboxes and case qty inputs.
 // ═══════════════════════════════════════════════════
 function renderMobWhOrders(){
   updateMobTitle('WH Orders');
@@ -11819,6 +12137,19 @@ function mobWhToggleExpand(id){
 //  MOBILE PATCH — runs after ALL functions are defined
 //  Patches setView and the 3 store render functions
 // ══════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
+//  MOBILE PATCH IIFE
+// ═══════════════════════════════════════════════════
+// This IIFE (Immediately Invoked Function Expression) MUST be at the very end
+// of the file, after ALL functions are defined. It wraps desktop render functions
+// with mobile-aware versions that check IS_MOBILE() and redirect to the card-based
+// mobile renderers (renderMobStoreCount, renderMobStoreInventory, etc.).
+//
+// DO NOT use function hoisting overrides — they break because mobile JS runs
+// before the app functions exist. This IIFE pattern captures the original function
+// reference, then replaces it with a wrapper that checks screen width first.
+//
+// Also patches setView to update the mobile title bar on page navigation.
 (function patchMobile(){
   // Patch renderStoreCount
   const _sc = renderStoreCount;
