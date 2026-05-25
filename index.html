@@ -513,6 +513,9 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
 #mob-topbar { display: none; }
 #mob-overlay { display: none; }
 
+/* Hide financial columns (cost/margin/sale) for non-admin users */
+body.hide-fin .fin-col { display: none !important; }
+
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 </head>
@@ -1137,7 +1140,7 @@ function stockFilterPills(current, counts, varName, renderFn){
     {key:'low', label:'Low', count:counts.low, color:'#c9a84c'},
     {key:'ok',  label:'In Stock', count:counts.ok, color:'#1a7a45'}
   ];
-  if(counts.lowMargin !== undefined){
+  if(counts.lowMargin !== undefined && isAdmin()){
     pills.push({key:'lowMargin', label:'⚠ Low Margin', count:counts.lowMargin, color:'#c62828'});
   }
   return `<div style="display:flex;gap:4px;background:#f4f6fa;border-radius:7px;padding:3px;flex-wrap:wrap">${pills.map(p=>
@@ -1537,7 +1540,8 @@ async function initApp(){
   await loadCupReadings();
   hideLoading();
   updateUserFooter();
-  setView('dashboard');
+  applyNavPermissions();
+  setView(canView('dashboard') ? 'dashboard' : firstAllowedView());
 }
 
 function updateUserFooter(){
@@ -1713,6 +1717,11 @@ function openStoresMenu(){
 }
 
 function setView(v){
+  // Permission guard: redirect if user lacks view access for this page
+  if(currentUser && !isAdmin()){
+    const effective = (v==='hist-import') ? 'sales-import' : v;
+    if(!canView(effective)) v = firstAllowedView();
+  }
   currentView=v;
   const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log','sales-import':'Sales Import','hist-import':'Historical Data Import',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log','usage-report':'Consumption & Theft Reports','vendor-mgmt':'Vendor Management','insights':'Insights Dashboard','invoices':'Invoices','coffee-counts':'Coffee Counts'};
   if(v==='count' && Object.keys(countState).length===0) initCountState();
@@ -1970,7 +1979,7 @@ function renderDashboard(){
       }).join('');
     })()}
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+    <div style="display:grid;grid-template-columns:${isAdmin()?'1fr 1fr':'1fr'};gap:14px;margin-bottom:14px">
 
       <!-- LEFT: Warehouse Inventory Par % -->
       <div class="card" style="border-top:3px solid #0d1f4e">
@@ -1999,8 +2008,8 @@ function renderDashboard(){
         </div>
       </div>
 
-      <!-- RIGHT: Financial Stats -->
-      <div class="card" style="border-top:3px solid #1a7a45">
+      <!-- RIGHT: Financial Stats (admin only) -->
+      ${isAdmin()?`<div class="card" style="border-top:3px solid #1a7a45">
         <div class="card-title" style="margin-bottom:12px">Warehouse Inv Financial Stats</div>
 
         <!-- MM Section -->
@@ -2058,7 +2067,7 @@ function renderDashboard(){
             }).join('')}
           </tbody>
         </table>
-      </div>
+      </div>`:''}
 
     </div>
   `;
@@ -2104,7 +2113,7 @@ function renderInventory(){
         <thead><tr>
           <th style="padding-left:12px;min-width:200px">NAME</th>
           <th>UPC</th><th>QTY</th><th>MIN</th><th>MAX</th>
-          <th>UNIT COST</th><th>SALE PRICE</th><th>MARGIN</th><th>COST/BOX</th><th>PCS/BOX</th>
+          <th class="fin-col">UNIT COST</th><th class="fin-col">SALE PRICE</th><th class="fin-col">MARGIN</th><th class="fin-col">COST/BOX</th><th>PCS/BOX</th>
           <th>CAT 1</th><th>CAT 2</th><th>VENDOR</th>
           <th>STORES</th><th>STATUS</th><th>ACTIVE</th><th>ACTIONS</th>
         </tr></thead>
@@ -2256,10 +2265,10 @@ function renderInventoryRow(p){
       <td><input class="edit-input" id="ei-qty-${p.id}" type="number" value="${p.qty}" style="width:55px"/></td>
       <td><input class="edit-input" id="ei-min-${p.id}" type="number" value="${p.minLevel}" style="width:45px"/></td>
       <td><input class="edit-input" id="ei-max-${p.id}" type="number" value="${p.maxLevel}" style="width:45px"/></td>
-      <td><span class="edit-unit-cost" id="ei-uc-${p.id}">$${uc.toFixed(4)}</span></td>
-      <td><input class="edit-input" id="ei-price-${p.id}" type="number" value="${p.salePrice}" step="0.01" style="width:60px"/></td>
-      <td>${marginBadge(p)}</td>
-      <td><input class="edit-input" id="ei-cpb-${p.id}" type="number" value="${p.costPerBox}" step="0.01" style="width:65px" oninput="mmRecalcUC(${p.id})"/></td>
+      <td class="fin-col"><span class="edit-unit-cost" id="ei-uc-${p.id}">$${uc.toFixed(4)}</span></td>
+      <td class="fin-col"><input class="edit-input" id="ei-price-${p.id}" type="number" value="${p.salePrice}" step="0.01" style="width:60px"/></td>
+      <td class="fin-col">${marginBadge(p)}</td>
+      <td class="fin-col"><input class="edit-input" id="ei-cpb-${p.id}" type="number" value="${p.costPerBox}" step="0.01" style="width:65px" oninput="mmRecalcUC(${p.id})"/></td>
       <td><input class="edit-input" id="ei-ppb-${p.id}" type="number" value="${p.piecesPerBox}" style="width:45px" oninput="mmRecalcUC(${p.id})"/></td>
       <td><select class="edit-select" id="ei-cat1-${p.id}" style="width:90px">
         <option value="">—</option>
@@ -2287,10 +2296,10 @@ function renderInventoryRow(p){
     <td style="font-family:monospace;font-size:10px;color:#7080a0;max-width:110px;overflow:hidden;text-overflow:ellipsis" title="${p.upc}">${p.upc.substring(0,15)}</td>
     <td style="font-weight:700;color:${qtyColor(p.qty,p.minLevel,p.maxLevel)}">${p.qty}</td>
     <td>${p.minLevel}</td><td style="color:#7080a0">${p.maxLevel}</td>
-    <td>$${uc.toFixed(4)}</td>
-    <td style="color:#1a7a45">$${p.salePrice.toFixed(2)}</td>
-    <td>${marginBadge(p)}</td>
-    <td>$${p.costPerBox.toFixed(2)}</td>
+    <td class="fin-col">$${uc.toFixed(4)}</td>
+    <td class="fin-col" style="color:#1a7a45">$${p.salePrice.toFixed(2)}</td>
+    <td class="fin-col">${marginBadge(p)}</td>
+    <td class="fin-col">$${p.costPerBox.toFixed(2)}</td>
     <td>${p.piecesPerBox}</td>
     <td style="font-size:11px;color:#5060a0">${p.cat1||'—'}</td>
     <td style="font-size:11px;color:#5060a0">${p.cat2||'—'}</td>
@@ -3197,7 +3206,7 @@ function renderCoffeeInventory(){
         <thead><tr>
           <th style="padding-left:12px;min-width:200px">NAME</th>
           <th>UPC</th><th>QTY</th><th>MIN</th><th>MAX</th>
-          <th>UNIT COST</th><th>SALE PRICE</th><th>MARGIN</th><th>COST/BOX</th><th>PCS/BOX</th>
+          <th class="fin-col">UNIT COST</th><th class="fin-col">SALE PRICE</th><th class="fin-col">MARGIN</th><th class="fin-col">COST/BOX</th><th>PCS/BOX</th>
           <th>CAT 1</th><th>CAT 2</th><th>VENDOR</th>
           <th>STORES</th><th>TYPE</th><th>STATUS</th><th>ACTIVE</th><th>ACTIONS</th>
         </tr></thead>
@@ -3221,10 +3230,10 @@ function renderCoffeeRow(p){
       <td><input class="edit-input" id="ci-qty-${p.id}" type="number" value="${p.qty}" style="width:55px"/></td>
       <td><input class="edit-input" id="ci-min-${p.id}" type="number" value="${p.minLevel}" style="width:45px"/></td>
       <td><input class="edit-input" id="ci-max-${p.id}" type="number" value="${p.maxLevel}" style="width:45px"/></td>
-      <td><span class="edit-unit-cost" id="ci-uc-${p.id}">$${uc.toFixed(4)}</span></td>
-      <td><input class="edit-input" id="ci-price-${p.id}" type="number" value="${p.salePrice}" step="0.01" style="width:60px"/></td>
-      <td>${p.isInput ? '<span style="color:#b0b8cc;font-size:10px">—</span>' : marginBadge(p)}</td>
-      <td><input class="edit-input" id="ci-cpb-${p.id}" type="number" value="${p.costPerBox}" step="0.01" style="width:65px" oninput="ciRecalcUC(${p.id})"/></td>
+      <td class="fin-col"><span class="edit-unit-cost" id="ci-uc-${p.id}">$${uc.toFixed(4)}</span></td>
+      <td class="fin-col"><input class="edit-input" id="ci-price-${p.id}" type="number" value="${p.salePrice}" step="0.01" style="width:60px"/></td>
+      <td class="fin-col">${p.isInput ? '<span style="color:#b0b8cc;font-size:10px">—</span>' : marginBadge(p)}</td>
+      <td class="fin-col"><input class="edit-input" id="ci-cpb-${p.id}" type="number" value="${p.costPerBox}" step="0.01" style="width:65px" oninput="ciRecalcUC(${p.id})"/></td>
       <td><input class="edit-input" id="ci-ppb-${p.id}" type="number" value="${p.piecesPerBox}" style="width:45px" oninput="ciRecalcUC(${p.id})"/></td>
       <td><select class="edit-select" id="ci-cat1-${p.id}" style="width:100px">
         <option value="">—</option>
@@ -3251,10 +3260,10 @@ function renderCoffeeRow(p){
     <td style="font-family:monospace;font-size:10px;color:#7080a0;max-width:110px;overflow:hidden;text-overflow:ellipsis" title="${p.upc}">${p.upc.substring(0,15)}</td>
     <td style="font-weight:700;color:${qtyColor(p.qty,p.minLevel,p.maxLevel)}">${p.qty}</td>
     <td>${p.minLevel}</td><td style="color:#7080a0">${p.maxLevel}</td>
-    <td>$${uc.toFixed(4)}</td>
-    <td style="color:#1a7a45">$${p.salePrice.toFixed(2)}</td>
-    <td>${p.isInput ? '<span style="color:#b0b8cc;font-size:10px">—</span>' : marginBadge(p)}</td>
-    <td>$${p.costPerBox.toFixed(2)}</td>
+    <td class="fin-col">$${uc.toFixed(4)}</td>
+    <td class="fin-col" style="color:#1a7a45">$${p.salePrice.toFixed(2)}</td>
+    <td class="fin-col">${p.isInput ? '<span style="color:#b0b8cc;font-size:10px">—</span>' : marginBadge(p)}</td>
+    <td class="fin-col">$${p.costPerBox.toFixed(2)}</td>
     <td>${p.piecesPerBox}</td>
     <td style="font-size:11px;color:#5060a0">${p.cat1||'—'}</td>
     <td style="font-size:11px;color:#5060a0">${p.cat2||'—'}</td>
@@ -3586,7 +3595,7 @@ function renderStoreInventory(){
         <select onchange="currentStore=this.value;renderStoreInventory()"
           style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:160px">
           <option value="" selected>— Select Store —</option>
-          ${STORES.map(s=>`<option value="${s}">${s}</option>`).join('')}
+          ${userStores().map(s=>`<option value="${s}">${s}</option>`).join('')}
         </select>
       </div>
       <div class="card" style="text-align:center;padding:40px;color:#7080a0">
@@ -3626,7 +3635,7 @@ function renderStoreInventory(){
         <select onchange="currentStore=this.value;storeSearchTerm='';storeCategoryFilters.clear();storeSourceFilter='all';storeStockFilter='all';renderStoreInventory()"
           style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:160px">
           <option value="">— Select Store —</option>
-          ${STORES.map(s=>`<option value="${s}" ${s===currentStore?'selected':''}>${s}</option>`).join('')}
+          ${userStores().map(s=>`<option value="${s}" ${s===currentStore?'selected':''}>${s}</option>`).join('')}
         </select>
       </div>
       ${hasBoth?`<div style="display:flex;gap:4px;background:#f4f6fa;border-radius:7px;padding:3px">
@@ -4029,7 +4038,7 @@ function storeMultiSelect(productId, source, currentStoresList){
   return `<select multiple id="stores-sel-${productId}"
     style="width:110px;height:62px;background:#fff;border:1.5px solid #d0d5e0;border-radius:5px;font-size:10px;color:#1a2340;outline:none;padding:2px"
     onchange="handleStoreSelectionChange(${productId},'${source}',this)">
-    ${STORES.map(s=>`<option value="${s}" ${selected.includes(s)?'selected':''}>${s}</option>`).join('')}
+    ${userStores().map(s=>`<option value="${s}" ${selected.includes(s)?'selected':''}>${s}</option>`).join('')}
   </select>`;
 }
 
@@ -4127,7 +4136,7 @@ function renderStoreOrders(){
       <select onchange="currentOrderStore=this.value;storeOrderRecQtySet=false;renderStoreOrders()"
         style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:160px">
         <option value="" ${!hasStore?'selected':''}>— Select Store —</option>
-        ${STORES.map(s=>`<option value="${s}" ${s===currentOrderStore?'selected':''}>${s}</option>`).join('')}
+        ${userStores().map(s=>`<option value="${s}" ${s===currentOrderStore?'selected':''}>${s}</option>`).join('')}
       </select>
     </div>
 
@@ -4594,7 +4603,7 @@ function renderStoreCount(){
         <select onchange="storeCountStore=this.value;initStoreCountState();renderStoreCount()"
           style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:160px">
           <option value="" selected>— Select Store —</option>
-          ${STORES.map(s=>`<option value="${s}">${s}</option>`).join('')}
+          ${userStores().map(s=>`<option value="${s}">${s}</option>`).join('')}
         </select>
       </div>
       <div class="card" style="text-align:center;padding:40px;color:#7080a0">
@@ -4672,7 +4681,7 @@ function renderStoreCount(){
         <select onchange="storeCountStore=this.value;initStoreCountState();renderStoreCount()"
           style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:6px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer">
           <option value="">— Select Store —</option>
-          ${STORES.map(s=>`<option value="${s}" ${s===storeCountStore?'selected':''}>${s}</option>`).join('')}
+          ${userStores().map(s=>`<option value="${s}" ${s===storeCountStore?'selected':''}>${s}</option>`).join('')}
         </select>
         <div class="stat-card" style="padding:6px 12px;min-width:0;display:inline-flex;gap:8px;align-items:center">
           <span style="font-size:14px;font-weight:800;color:#0d1f4e">${total}</span><span style="font-size:9px;color:#5060a0;font-weight:700;text-transform:uppercase">Total</span>
@@ -6780,7 +6789,7 @@ function renderMobStoreCount(){
         <select onchange="storeCountStore=this.value;initStoreCountState();renderStoreCount()"
           style="width:100%;padding:12px;border:1.5px solid #0d1f4e;border-radius:8px;font-size:14px;font-weight:700;color:#0d1f4e;background:#fff;outline:none">
           <option value="" selected>— Select Store —</option>
-          ${STORES.map(s=>`<option value="${s}">${s}</option>`).join('')}
+          ${userStores().map(s=>`<option value="${s}">${s}</option>`).join('')}
         </select>
       </div>
       <div style="text-align:center;padding:40px 20px;color:#7080a0">
@@ -6828,7 +6837,7 @@ function renderMobStoreCount(){
       <select onchange="storeCountStore=this.value;initStoreCountState();renderStoreCount()"
         style="flex:1;padding:10px 12px;border:1.5px solid #0d1f4e;border-radius:8px;font-size:14px;font-weight:700;color:#0d1f4e;background:#fff;outline:none">
         <option value="">— Select Store —</option>
-        ${STORES.map(s=>`<option value="${s}" ${s===storeCountStore?'selected':''}>${s}</option>`).join('')}
+        ${userStores().map(s=>`<option value="${s}" ${s===storeCountStore?'selected':''}>${s}</option>`).join('')}
       </select>
       <div style="font-size:12px;color:#5060a0;font-weight:600;white-space:nowrap">${verified}/${total} done</div>
     </div>
@@ -7017,7 +7026,7 @@ function renderMobStoreInventory(){
         <select onchange="currentStore=this.value;renderStoreInventory()"
           style="width:100%;padding:12px;border:1.5px solid #0d1f4e;border-radius:8px;font-size:14px;font-weight:700;color:#0d1f4e;background:#fff;outline:none">
           <option value="" selected>— Select Store —</option>
-          ${STORES.map(s=>`<option value="${s}">${s}</option>`).join('')}
+          ${userStores().map(s=>`<option value="${s}">${s}</option>`).join('')}
         </select>
       </div>
       <div style="text-align:center;padding:40px 20px;color:#7080a0">
@@ -7048,7 +7057,7 @@ function renderMobStoreInventory(){
       <select onchange="currentStore=this.value;storeSearchTerm='';storeCategoryFilters.clear();storeSourceFilter='all';storeStockFilter='all';mobInvEditingIds=new Set();renderStoreInventory()"
         style="flex:1;padding:10px 12px;border:1.5px solid #0d1f4e;border-radius:8px;font-size:14px;font-weight:700;color:#0d1f4e;background:#fff;outline:none">
         <option value="">— Select Store —</option>
-        ${STORES.map(s=>`<option value="${s}" ${s===currentStore?'selected':''}>${s}</option>`).join('')}
+        ${userStores().map(s=>`<option value="${s}" ${s===currentStore?'selected':''}>${s}</option>`).join('')}
       </select>
       <button class="primary-btn" onclick="openImportStoreItemModal()" style="padding:10px 12px;white-space:nowrap">+ Add</button>
     </div>
@@ -7189,7 +7198,7 @@ function renderMobStoreOrders(){
     <div class="mob-order-store-bar">
       <select onchange="currentOrderStore=this.value;storeOrderRecQtySet=false;renderStoreOrders()">
         <option value="" ${!hasStore?'selected':''}>— Select Store —</option>
-        ${STORES.map(s=>`<option value="${s}" ${s===currentOrderStore?'selected':''}>${s}</option>`).join('')}
+        ${userStores().map(s=>`<option value="${s}" ${s===currentOrderStore?'selected':''}>${s}</option>`).join('')}
       </select>
     </div>
 
@@ -8579,6 +8588,51 @@ function userStores(){ // stores this user may see
   return (currentUser?.assigned_stores||[]).filter(s=>STORES.includes(s));
 }
 
+// Returns the first page the user is allowed to view (fallback for redirects)
+function firstAllowedView(){
+  const order = ['dashboard','my-sales','inventory','coffee','count','wh-orders','store-inventory','store-orders','store-count','coffee-counts','sales-import','invoices','insights','usage-report','vendor-mgmt','restock','order-activity'];
+  for(const v of order){ if(canView(v)) return v; }
+  return 'dashboard';
+}
+
+// Hide/show nav items + parent menus based on the user's view permissions
+function applyNavPermissions(){
+  if(!currentUser) return;
+  // Hide cost/margin/sale columns for non-admins
+  document.body.classList.toggle('hide-fin', !isAdmin());
+  // Map each nav button to its permission key
+  const navMap = {
+    'inventory':'inventory','coffee':'coffee','count':'count','wh-orders':'wh-orders','vendor-mgmt':'vendor-mgmt',
+    'store-inventory':'store-inventory','store-orders':'store-orders','store-count':'store-count','coffee-counts':'coffee-counts','invoices':'invoices',
+    'sales-import':'sales-import','hist-import':'sales-import',
+    'restock':'restock','order-activity':'order-activity',
+    'insights':'insights','usage-report':'usage-report','my-sales':'my-sales'
+  };
+  // Show/hide each nav button by matching its onclick setView target
+  document.querySelectorAll('#sidebar .nav-btn.nav-sub').forEach(btn=>{
+    const m = (btn.getAttribute('onclick')||'').match(/setView\('([^']+)'\)/);
+    if(!m) return;
+    const key = navMap[m[1]] || m[1];
+    btn.style.display = canView(key) ? '' : 'none';
+  });
+  // Hide parent menu groups whose children are all hidden
+  const groups = [
+    {wrap:'warehouse-nav', submenu:'warehouse-submenu'},
+    {wrap:'stores-nav', submenu:'stores-submenu'},
+    {wrap:'import-nav', submenu:'import-submenu'},
+    {wrap:'activity-nav', submenu:'activity-submenu'},
+    {wrap:'reports-nav', submenu:'reports-submenu'}
+  ];
+  for(const g of groups){
+    const sub = document.getElementById(g.submenu);
+    const wrap = document.getElementById(g.wrap);
+    if(!sub || !wrap) continue;
+    const visibleChildren = Array.from(sub.querySelectorAll('.nav-btn.nav-sub')).filter(b=>b.style.display !== 'none');
+    wrap.style.display = visibleChildren.length > 0 ? '' : 'none';
+  }
+  // Dashboard is visible to everyone with a profile; My Sales nav added dynamically (Phase 4)
+}
+
 // Start auth flow instead of direct app init
 bootAuth();
 
@@ -9265,7 +9319,7 @@ function renderHistImport(){
           <label style="font-size:10px;font-weight:700;color:#5060a0;text-transform:uppercase;display:block;margin-bottom:4px">Store</label>
           <select id="hist-store" onchange="histImportStore=this.value" style="background:#fff;border:1.5px solid #d0d5e0;border-radius:7px;padding:7px 10px;font-size:13px;font-weight:600;color:#0d1f4e;outline:none;min-width:160px">
             <option value="">— Select Store —</option>
-            ${STORES.map(s=>`<option value="${s}" ${s===histImportStore?'selected':''}>${s}${fvStores.includes(s)?' (Free Vend)':''}</option>`).join('')}
+            ${userStores().map(s=>`<option value="${s}" ${s===histImportStore?'selected':''}>${s}${fvStores.includes(s)?' (Free Vend)':''}</option>`).join('')}
           </select>
         </div>
         <div onclick="if(!document.getElementById('hist-store').value){showToast('Select a store first');return;}document.getElementById('hist-file-input').click()"
@@ -9791,7 +9845,7 @@ function renderInsights(){
           style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:160px">
           <option value="">— Select Store —</option>
           <option value="ALL" ${insightsStore==='ALL'?'selected':''}>📊 All Stores (Compare)</option>
-          ${STORES.map(s=>`<option value="${s}" ${s===insightsStore?'selected':''}>${s}</option>`).join('')}
+          ${userStores().map(s=>`<option value="${s}" ${s===insightsStore?'selected':''}>${s}</option>`).join('')}
         </select>
       </div>
       <div style="display:flex;gap:4px;background:#f4f6fa;border-radius:7px;padding:3px">
@@ -10355,7 +10409,7 @@ function renderCoffeeCounts(){
         <select onchange="coffeeCountStore=this.value;renderCoffeeCounts()"
           style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:160px">
           <option value="" selected>— Select Store —</option>
-          ${STORES.map(s=>'<option value="'+s+'">'+s+'</option>').join('')}
+          ${userStores().map(s=>'<option value="'+s+'">'+s+'</option>').join('')}
         </select>
       </div>
       <div class="card" style="text-align:center;padding:40px;color:#7080a0">
@@ -10372,7 +10426,7 @@ function renderCoffeeCounts(){
         <select onchange="coffeeCountStore=this.value;renderCoffeeCounts()"
           style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:160px">
           <option value="">— Select Store —</option>
-          ${STORES.map(s=>'<option value="'+s+'" '+(s===coffeeCountStore?'selected':'')+'>'+s+'</option>').join('')}
+          ${userStores().map(s=>'<option value="'+s+'" '+(s===coffeeCountStore?'selected':'')+'>'+s+'</option>').join('')}
         </select>
       </div>
       <div class="card" style="text-align:center;padding:40px;color:#7080a0">
@@ -10425,7 +10479,7 @@ function renderCoffeeCounts(){
           <select onchange="coffeeCountStore=this.value;renderCoffeeCounts()"
             style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:140px">
             <option value="">— Select Store —</option>
-            ${STORES.map(s=>'<option value="'+s+'" '+(s===coffeeCountStore?'selected':'')+'>'+s+'</option>').join('')}
+            ${userStores().map(s=>'<option value="'+s+'" '+(s===coffeeCountStore?'selected':'')+'>'+s+'</option>').join('')}
           </select>
         </div>
         <div style="display:flex;align-items:center;gap:8px">
@@ -10659,7 +10713,7 @@ function renderInvoices(){
         <select onchange="invoicePageStore=this.value;invoiceExpandedId=null;invoiceGenerating=false;renderInvoices()"
           style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:160px">
           <option value="" selected>— Select Store —</option>
-          ${STORES.map(s=>`<option value="${s}">${s}</option>`).join('')}
+          ${userStores().map(s=>`<option value="${s}">${s}</option>`).join('')}
         </select>
       </div>
       <div class="card" style="text-align:center;padding:40px;color:#7080a0">
@@ -10702,7 +10756,7 @@ function renderInvoices(){
         <select onchange="invoicePageStore=this.value;invoiceExpandedId=null;invoiceGenerating=false;renderInvoices()"
           style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer;min-width:160px">
           <option value="">— Select Store —</option>
-          ${STORES.map(s=>`<option value="${s}" ${s===invoicePageStore?'selected':''}>${s}</option>`).join('')}
+          ${userStores().map(s=>`<option value="${s}" ${s===invoicePageStore?'selected':''}>${s}</option>`).join('')}
         </select>
       </div>
       ${contract && generateMonth && !invoiceGenerating ? `<button onclick="startGenerateInvoice()" class="primary-btn" style="margin-left:auto;padding:8px 16px;font-size:12px">+ Generate ${generateLabel} Invoice</button>` : ''}
@@ -11474,7 +11528,7 @@ function renderUsageReport(){
           <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase">Store:</label>
           <select onchange="usageReportStore=this.value;usageReportData=null;renderUsageReport()"
             style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer">
-            ${STORES.map(s=>`<option value="${s}" ${s===usageReportStore?'selected':''}>${s}</option>`).join('')}
+            ${userStores().map(s=>`<option value="${s}" ${s===usageReportStore?'selected':''}>${s}</option>`).join('')}
           </select>
         </div>
         <div style="display:flex;align-items:center;gap:8px">
