@@ -1955,7 +1955,7 @@ function renderDashboard(){
   document.getElementById('main-body').innerHTML=`
     <!-- Store Inventory Widgets -->
     ${(function(){
-      const storeData = STORES.map(store=>{
+      const storeData = userStores().map(store=>{
         const items = storeInventory.filter(x=>x.store_name===store && x.max_level>0);
         if(items.length===0) return {store, pct:0, count:0, catData:[]};
         const pct = (items.reduce((s,x)=>s+Math.min(1,Math.max(0,x.qty)/x.max_level),0)/items.length)*100;
@@ -8636,9 +8636,10 @@ async function doLogout(){
 function canView(page){ return isAdmin() || (currentPermissions[page] && currentPermissions[page].view); }
 function canEdit(page){ return isAdmin() || (currentPermissions[page] && currentPermissions[page].edit); }
 function isAdmin(){ return (currentUser?.roles||[]).includes('admin'); }
-function userStores(){ // stores for store-stocking operations (Store Inventory/Orders/Count/Coffee Counts/Invoices)
-  const roles = currentUser?.roles || [];
-  if(roles.includes('admin') || roles.includes('warehouse_stocker')) return STORES;
+function userStores(){ // stores for store-level operations (Store Inventory/Orders/Count/Coffee Counts/Invoices + dashboard store widgets)
+  // Based on the store_stocker role's assigned stores. Admin sees all. The warehouse_stocker
+  // role is warehouse-level and does NOT grant store-level access here.
+  if(isAdmin()) return STORES;
   const rs = currentUser?.role_stores || {};
   return (rs['store_stocker'] || []).filter(s=>STORES.includes(s));
 }
