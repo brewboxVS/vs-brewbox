@@ -670,6 +670,13 @@ body.hide-fin .fin-col { display: none !important; }
           <button class="nav-btn nav-sub" onclick="setView('usage-report')">📋 &nbsp;<span>Consumption & Theft</span></button>
         </div>
       </div>
+      <div id="admin-nav" style="display:none">
+        <button class="nav-btn" id="admin-toggle" onclick="toggleAdminMenu()">🔐 &nbsp;<span>Admin</span><span class="nav-arrow" id="admin-arrow">›</span></button>
+        <div id="admin-submenu" style="display:none">
+          <button class="nav-btn nav-sub" onclick="setView('user-mgmt')">👥 &nbsp;<span>User Management</span></button>
+          <button class="nav-btn nav-sub" onclick="setView('permissions')">🔑 &nbsp;<span>Permissions</span></button>
+        </div>
+      </div>
     </div>
     <div id="low-alert-sb"></div>
     <div class="sync-status" id="sync-status"></div>
@@ -1639,6 +1646,7 @@ function updateSidebar(){
   // Auto-open import submenu when on import views
   if(currentView==='orders') openImportMenu();
   if(currentView==='usage-report'||currentView==='insights') { openReportsMenu(); document.querySelector('.nav-btn[onclick*="'+currentView+'"]')?.classList.add('active'); }
+  if(currentView==='user-mgmt'||currentView==='permissions') { openAdminMenu(); document.querySelector('.nav-btn[onclick*="'+currentView+'"]')?.classList.add('active'); }
 }
 
 function toggleWarehouseMenu(){
@@ -1701,6 +1709,21 @@ function openReportsMenu(){
   if(arrow) arrow.classList.add('open');
 }
 
+function toggleAdminMenu(){
+  const sub=document.getElementById('admin-submenu');
+  const arrow=document.getElementById('admin-arrow');
+  if(!sub) return;
+  const isOpen=sub.style.display!=='none';
+  sub.style.display=isOpen?'none':'block';
+  arrow?.classList.toggle('open',!isOpen);
+}
+function openAdminMenu(){
+  const sub=document.getElementById('admin-submenu');
+  const arrow=document.getElementById('admin-arrow');
+  if(sub) sub.style.display='block';
+  if(arrow) arrow.classList.add('open');
+}
+
 function toggleStoresMenu(){
   const sub=document.getElementById('stores-submenu');
   const arrow=document.getElementById('stores-arrow');
@@ -1723,7 +1746,7 @@ function setView(v){
     if(!canView(effective)) v = firstAllowedView();
   }
   currentView=v;
-  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log','sales-import':'Sales Import','hist-import':'Historical Data Import',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log','usage-report':'Consumption & Theft Reports','vendor-mgmt':'Vendor Management','insights':'Insights Dashboard','invoices':'Invoices','coffee-counts':'Coffee Counts'};
+  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log','sales-import':'Sales Import','hist-import':'Historical Data Import',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log','usage-report':'Consumption & Theft Reports','vendor-mgmt':'Vendor Management','insights':'Insights Dashboard','invoices':'Invoices','coffee-counts':'Coffee Counts','user-mgmt':'User Management','permissions':'Permissions'};
   if(v==='count' && Object.keys(countState).length===0) initCountState();
   if(v==='store-count' && Object.keys(storeCountState).length===0) initStoreCountState();
   document.getElementById('page-title').textContent=titles[v]||v;
@@ -1760,6 +1783,8 @@ function render(){
   else if(currentView==='invoices') renderInvoices();
   else if(currentView==='coffee-counts') renderCoffeeCounts();
   else if(currentView==='vendor-mgmt') renderVendorManagement();
+  else if(currentView==='user-mgmt') renderUserManagement();
+  else if(currentView==='permissions') renderPermissions();
   else renderRestock();
 }
 
@@ -8631,6 +8656,9 @@ function applyNavPermissions(){
     wrap.style.display = visibleChildren.length > 0 ? '' : 'none';
   }
   // Dashboard is visible to everyone with a profile; My Sales nav added dynamically (Phase 4)
+  // Admin section: only for admins
+  const adminNav = document.getElementById('admin-nav');
+  if(adminNav) adminNav.style.display = isAdmin() ? '' : 'none';
 }
 
 // Start auth flow instead of direct app init
@@ -9782,11 +9810,386 @@ async function moveVendor(vendorId, direction){
 }
 
 // ═══════════════════════════════════════════════════
-//  INSIGHTS DASHBOARD
-// Insights Dashboard: financial analytics with date range filtering (MTD, QTD, YTD, etc.).
-// Per-store P&L for MM (revenue from sales, COGS from product costs or received orders)
-// and Coffee (cup revenue, supply revenue, equipment fees, theft recovery from invoices).
-// Combined P&L view across all stores. Includes slow movers analysis.
+//  ADMIN — USER MANAGEMENT
+// Admin-only page to create, edit, deactivate users and reset passwords.
+// User creation/password ops go through the admin-manage-user Edge Function
+// (requires service role key, can't be done from the frontend directly).
+// ═══════════════════════════════════════════════════
+let allUsers = []; // loaded from user_profiles
+
+const ROLE_OPTIONS = [
+  {value:'admin', label:'Administrator'},
+  {value:'warehouse_stocker', label:'Warehouse Stocker'},
+  {value:'store_stocker', label:'Store Stocker'},
+  {value:'sales_rep', label:'Sales Rep'}
+];
+function roleLabel(r){ return (ROLE_OPTIONS.find(o=>o.value===r)||{label:r}).label; }
+
+// Call the admin-manage-user edge function with the current user's access token
+async function callAdminFn(payload){
+  const { data: { session } } = await sbAuth.auth.getSession();
+  const token = session?.access_token;
+  const res = await fetch(SUPABASE_URL+'/functions/v1/admin-manage-user', {
+    method:'POST',
+    headers:{ 'Content-Type':'application/json', 'apikey':SUPABASE_KEY, 'Authorization':'Bearer '+token },
+    body: JSON.stringify(payload)
+  });
+  const json = await res.json().catch(()=>({error:'Invalid response'}));
+  if(!res.ok) throw new Error(json.error || ('HTTP '+res.status));
+  return json;
+}
+
+async function loadAllUsers(){
+  try{ allUsers = await sbFetch('user_profiles?order=created_at.asc', {method:'GET', prefer:'return=representation'}); }
+  catch(e){ allUsers = []; }
+}
+
+function renderUserManagement(){
+  if(!isAdmin()){ setView(firstAllowedView()); return; }
+  loadAllUsers().then(()=>renderUserManagementInner());
+  document.getElementById('main-body').innerHTML = `<div class="card" style="text-align:center;padding:40px;color:#7080a0">Loading users…</div>`;
+}
+
+function renderUserManagementInner(){
+  const rows = allUsers.map(u=>{
+    const storeStr = (u.assigned_stores&&u.assigned_stores.length>0) ? u.assigned_stores.join(', ') : (u.role==='admin'||u.role==='warehouse_stocker'?'All stores':'—');
+    const isSelf = currentUser && u.id===currentUser.id;
+    return `<tr style="${u.active?'':'opacity:0.5'}">
+      <td style="padding-left:8px;font-weight:600;color:#0d1f4e">${u.display_name}${isSelf?' <span style="font-size:9px;color:#1a7a45;font-weight:700">(you)</span>':''}</td>
+      <td style="font-size:12px;color:#5060a0">${u.email}</td>
+      <td><span style="font-size:11px;background:#e8edf8;color:#0d1f4e;padding:3px 9px;border-radius:5px;font-weight:700">${roleLabel(u.role)}</span></td>
+      <td style="font-size:11px;color:#5060a0">${storeStr}</td>
+      <td>${u.active?'<span style="font-size:11px;color:#1a7a45;font-weight:700">● Active</span>':'<span style="font-size:11px;color:#b01c1c;font-weight:700">● Inactive</span>'}</td>
+      <td style="white-space:nowrap">
+        <button onclick="openEditUserModal('${u.id}')" style="background:#f4f6fa;color:#1a5296;border:1px solid #b0c8e8;border-radius:5px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;margin-right:4px">Edit</button>
+        <button onclick="openResetPasswordModal('${u.id}')" style="background:#f4f6fa;color:#b35a00;border:1px solid #e8c8a0;border-radius:5px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer">Reset PW</button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('main-body').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <div style="font-size:13px;color:#7080a0">${allUsers.length} user${allUsers.length!==1?'s':''}</div>
+      <button onclick="openCreateUserModal()" class="primary-btn" style="padding:9px 18px">+ Create User</button>
+    </div>
+    <div class="card">
+      <div style="overflow-x:auto"><table>
+        <thead><tr>
+          <th style="padding-left:8px">NAME</th><th>EMAIL</th><th>ROLE</th><th>STORES</th><th>STATUS</th><th>ACTIONS</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </div>`;
+}
+
+function userStoreCheckboxes(selected, idPrefix){
+  selected = selected || [];
+  return STORES.map(s=>`<label style="display:flex;align-items:center;gap:7px;padding:6px 8px;cursor:pointer;font-size:12px">
+    <input type="checkbox" id="${idPrefix}-${s.replace(/[^a-zA-Z]/g,'')}" value="${s}" ${selected.includes(s)?'checked':''} style="width:15px;height:15px;accent-color:#0d1f4e"/>
+    ${s}
+  </label>`).join('');
+}
+function collectStoreCheckboxes(idPrefix){
+  return STORES.filter(s=>document.getElementById(idPrefix+'-'+s.replace(/[^a-zA-Z]/g,''))?.checked);
+}
+
+function openCreateUserModal(){
+  document.getElementById('modal-container').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="width:460px;max-height:90vh;overflow-y:auto">
+        <div class="modal-title">Create User</div>
+        <div id="cu-error" style="display:none;background:#fde8e8;color:#b01c1c;border-radius:7px;padding:9px 12px;font-size:12px;margin-bottom:12px;font-weight:600"></div>
+        <label style="font-size:11px;font-weight:700;color:#5060a0">DISPLAY NAME</label>
+        <input id="cu-name" style="width:100%;padding:9px 11px;border:1.5px solid #d0d5e0;border-radius:7px;font-size:13px;margin:4px 0 12px;outline:none;box-sizing:border-box"/>
+        <label style="font-size:11px;font-weight:700;color:#5060a0">EMAIL</label>
+        <input id="cu-email" type="email" style="width:100%;padding:9px 11px;border:1.5px solid #d0d5e0;border-radius:7px;font-size:13px;margin:4px 0 12px;outline:none;box-sizing:border-box"/>
+        <label style="font-size:11px;font-weight:700;color:#5060a0">INITIAL PASSWORD</label>
+        <input id="cu-password" type="text" value="welcome1" style="width:100%;padding:9px 11px;border:1.5px solid #d0d5e0;border-radius:7px;font-size:13px;margin:4px 0 4px;outline:none;box-sizing:border-box"/>
+        <div style="font-size:10px;color:#8090b0;margin-bottom:12px">User will be required to change this on first login.</div>
+        <label style="font-size:11px;font-weight:700;color:#5060a0">ROLE</label>
+        <select id="cu-role" onchange="toggleCreateUserStores()" style="width:100%;padding:9px 11px;border:1.5px solid #d0d5e0;border-radius:7px;font-size:13px;margin:4px 0 12px;outline:none;box-sizing:border-box">
+          ${ROLE_OPTIONS.map(o=>`<option value="${o.value}">${o.label}</option>`).join('')}
+        </select>
+        <div id="cu-stores-wrap" style="display:none;margin-bottom:12px">
+          <label style="font-size:11px;font-weight:700;color:#5060a0">ASSIGNED STORES</label>
+          <div style="border:1.5px solid #e8ecf4;border-radius:7px;padding:4px;margin-top:4px">${userStoreCheckboxes([],'cu-store')}</div>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
+          <button onclick="closeModal()" class="secondary-btn">Cancel</button>
+          <button id="cu-save" onclick="submitCreateUser()" class="primary-btn" style="padding:9px 20px">Create User</button>
+        </div>
+      </div>
+    </div>`;
+  toggleCreateUserStores();
+}
+function toggleCreateUserStores(){
+  const role = document.getElementById('cu-role').value;
+  document.getElementById('cu-stores-wrap').style.display = (role==='store_stocker'||role==='sales_rep') ? 'block' : 'none';
+}
+async function submitCreateUser(){
+  const name = document.getElementById('cu-name').value.trim();
+  const email = document.getElementById('cu-email').value.trim();
+  const password = document.getElementById('cu-password').value;
+  const role = document.getElementById('cu-role').value;
+  const stores = (role==='store_stocker'||role==='sales_rep') ? collectStoreCheckboxes('cu-store') : [];
+  const errEl = document.getElementById('cu-error');
+  const btn = document.getElementById('cu-save');
+  errEl.style.display='none';
+
+  if(!name || !email || !password){ errEl.textContent='Name, email and password are required'; errEl.style.display='block'; return; }
+  if(password.length < 6){ errEl.textContent='Password must be at least 6 characters'; errEl.style.display='block'; return; }
+  if((role==='store_stocker'||role==='sales_rep') && stores.length===0){ errEl.textContent='Assign at least one store for this role'; errEl.style.display='block'; return; }
+
+  btn.disabled=true; btn.textContent='Creating…'; btn.style.opacity='0.6';
+  try{
+    await callAdminFn({action:'create_user', email, password, display_name:name, role, assigned_stores:stores});
+    closeModal();
+    showToast('✓ User created — '+name);
+    await loadAllUsers();
+    renderUserManagementInner();
+  }catch(e){
+    errEl.textContent = e.message; errEl.style.display='block';
+    btn.disabled=false; btn.textContent='Create User'; btn.style.opacity='1';
+  }
+}
+
+function openEditUserModal(userId){
+  const u = allUsers.find(x=>x.id===userId);
+  if(!u) return;
+  const isSelf = currentUser && u.id===currentUser.id;
+  document.getElementById('modal-container').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="width:460px;max-height:90vh;overflow-y:auto">
+        <div class="modal-title">Edit User — ${u.display_name}</div>
+        <div id="eu-error" style="display:none;background:#fde8e8;color:#b01c1c;border-radius:7px;padding:9px 12px;font-size:12px;margin-bottom:12px;font-weight:600"></div>
+        <label style="font-size:11px;font-weight:700;color:#5060a0">DISPLAY NAME</label>
+        <input id="eu-name" value="${u.display_name.replace(/"/g,'&quot;')}" style="width:100%;padding:9px 11px;border:1.5px solid #d0d5e0;border-radius:7px;font-size:13px;margin:4px 0 12px;outline:none;box-sizing:border-box"/>
+        <label style="font-size:11px;font-weight:700;color:#5060a0">EMAIL (read-only)</label>
+        <input value="${u.email}" disabled style="width:100%;padding:9px 11px;border:1.5px solid #e8ecf4;border-radius:7px;font-size:13px;margin:4px 0 12px;outline:none;box-sizing:border-box;background:#f4f6fa;color:#8090b0"/>
+        <label style="font-size:11px;font-weight:700;color:#5060a0">ROLE</label>
+        <select id="eu-role" onchange="toggleEditUserStores()" ${isSelf?'disabled':''} style="width:100%;padding:9px 11px;border:1.5px solid #d0d5e0;border-radius:7px;font-size:13px;margin:4px 0 12px;outline:none;box-sizing:border-box ${isSelf?';background:#f4f6fa':''}">
+          ${ROLE_OPTIONS.map(o=>`<option value="${o.value}" ${u.role===o.value?'selected':''}>${o.label}</option>`).join('')}
+        </select>
+        ${isSelf?'<div style="font-size:10px;color:#8090b0;margin-top:-8px;margin-bottom:12px">You cannot change your own role.</div>':''}
+        <div id="eu-stores-wrap" style="display:${(u.role==='store_stocker'||u.role==='sales_rep')?'block':'none'};margin-bottom:12px">
+          <label style="font-size:11px;font-weight:700;color:#5060a0">ASSIGNED STORES</label>
+          <div style="border:1.5px solid #e8ecf4;border-radius:7px;padding:4px;margin-top:4px">${userStoreCheckboxes(u.assigned_stores,'eu-store')}</div>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:16px;${isSelf?'opacity:0.5;pointer-events:none':''}">
+          <input type="checkbox" id="eu-active" ${u.active?'checked':''} style="width:16px;height:16px;accent-color:#1a7a45"/>
+          <span style="font-size:13px;color:#0d1f4e;font-weight:600">Active</span>
+          ${isSelf?'<span style="font-size:10px;color:#8090b0">(cannot deactivate yourself)</span>':''}
+        </label>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button onclick="closeModal()" class="secondary-btn">Cancel</button>
+          <button id="eu-save" onclick="submitEditUser('${u.id}')" class="primary-btn" style="padding:9px 20px">Save Changes</button>
+        </div>
+      </div>
+    </div>`;
+}
+function toggleEditUserStores(){
+  const role = document.getElementById('eu-role').value;
+  document.getElementById('eu-stores-wrap').style.display = (role==='store_stocker'||role==='sales_rep') ? 'block' : 'none';
+}
+async function submitEditUser(userId){
+  const u = allUsers.find(x=>x.id===userId);
+  const isSelf = currentUser && userId===currentUser.id;
+  const name = document.getElementById('eu-name').value.trim();
+  const role = isSelf ? u.role : document.getElementById('eu-role').value;
+  const stores = (role==='store_stocker'||role==='sales_rep') ? collectStoreCheckboxes('eu-store') : [];
+  const active = isSelf ? true : document.getElementById('eu-active').checked;
+  const errEl = document.getElementById('eu-error');
+  const btn = document.getElementById('eu-save');
+  errEl.style.display='none';
+
+  if(!name){ errEl.textContent='Name is required'; errEl.style.display='block'; return; }
+  if((role==='store_stocker'||role==='sales_rep') && stores.length===0){ errEl.textContent='Assign at least one store for this role'; errEl.style.display='block'; return; }
+
+  btn.disabled=true; btn.textContent='Saving…'; btn.style.opacity='0.6';
+  try{
+    await callAdminFn({action:'update_user', user_id:userId, display_name:name, role, assigned_stores:stores, active});
+    closeModal();
+    showToast('✓ User updated');
+    await loadAllUsers();
+    renderUserManagementInner();
+  }catch(e){
+    errEl.textContent = e.message; errEl.style.display='block';
+    btn.disabled=false; btn.textContent='Save Changes'; btn.style.opacity='1';
+  }
+}
+
+function openResetPasswordModal(userId){
+  const u = allUsers.find(x=>x.id===userId);
+  if(!u) return;
+  document.getElementById('modal-container').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="width:400px">
+        <div class="modal-title">Reset Password — ${u.display_name}</div>
+        <div id="rp-error" style="display:none;background:#fde8e8;color:#b01c1c;border-radius:7px;padding:9px 12px;font-size:12px;margin-bottom:12px;font-weight:600"></div>
+        <label style="font-size:11px;font-weight:700;color:#5060a0">NEW PASSWORD</label>
+        <input id="rp-password" type="text" value="welcome1" style="width:100%;padding:9px 11px;border:1.5px solid #d0d5e0;border-radius:7px;font-size:13px;margin:4px 0 4px;outline:none;box-sizing:border-box"/>
+        <div style="font-size:10px;color:#8090b0;margin-bottom:16px">User will be required to change this on next login.</div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button onclick="closeModal()" class="secondary-btn">Cancel</button>
+          <button id="rp-save" onclick="submitResetPassword('${u.id}')" class="primary-btn" style="padding:9px 20px">Reset Password</button>
+        </div>
+      </div>
+    </div>`;
+}
+async function submitResetPassword(userId){
+  const pw = document.getElementById('rp-password').value;
+  const errEl = document.getElementById('rp-error');
+  const btn = document.getElementById('rp-save');
+  errEl.style.display='none';
+  if(pw.length < 6){ errEl.textContent='Password must be at least 6 characters'; errEl.style.display='block'; return; }
+  btn.disabled=true; btn.textContent='Resetting…'; btn.style.opacity='0.6';
+  try{
+    await callAdminFn({action:'reset_password', user_id:userId, new_password:pw});
+    closeModal();
+    showToast('✓ Password reset');
+  }catch(e){
+    errEl.textContent = e.message; errEl.style.display='block';
+    btn.disabled=false; btn.textContent='Reset Password'; btn.style.opacity='1';
+  }
+}
+
+// ═══════════════════════════════════════════════════
+//  ADMIN — PERMISSIONS
+// Grid editor: pages (rows) × permission sets (columns) with view/edit toggles.
+// Enabling "edit" auto-enables "view". Saves to the permission_sets table.
+// Permission changes take effect on each user's NEXT login.
+// ═══════════════════════════════════════════════════
+let permSetsData = []; // loaded from permission_sets
+
+const PERM_PAGES = [
+  {key:'dashboard', label:'Dashboard'},
+  {key:'my-sales', label:'My Sales'},
+  {key:'inventory', label:'Warehouse MM Inventory'},
+  {key:'coffee', label:'Warehouse Coffee Inventory'},
+  {key:'count', label:'Warehouse Inventory Count'},
+  {key:'wh-orders', label:'Warehouse Orders'},
+  {key:'vendor-mgmt', label:'Vendor Management'},
+  {key:'store-inventory', label:'Store Inventory'},
+  {key:'store-orders', label:'Store Orders'},
+  {key:'store-count', label:'Store Inventory Count'},
+  {key:'coffee-counts', label:'Coffee Counts'},
+  {key:'invoices', label:'Invoices'},
+  {key:'sales-import', label:'Sales Import'},
+  {key:'insights', label:'Insights Dashboard'},
+  {key:'usage-report', label:'Consumption & Theft'},
+  {key:'restock', label:'Item Activity Log'},
+  {key:'order-activity', label:'Order Activity Log'}
+];
+
+function renderPermissions(){
+  if(!isAdmin()){ setView(firstAllowedView()); return; }
+  loadPermSets().then(()=>renderPermissionsInner());
+  document.getElementById('main-body').innerHTML = `<div class="card" style="text-align:center;padding:40px;color:#7080a0">Loading permissions…</div>`;
+}
+
+async function loadPermSets(){
+  try{ permSetsData = await sbFetch('permission_sets?order=id.asc', {method:'GET', prefer:'return=representation'}); }
+  catch(e){ permSetsData = []; }
+}
+
+function renderPermissionsInner(){
+  // Editable copy in memory
+  window._permEdit = JSON.parse(JSON.stringify(permSetsData.map(s=>({id:s.id, role_name:s.role_name, display_label:s.display_label, permissions:s.permissions||{}}))));
+
+  const sets = window._permEdit;
+  const header = sets.map(s=>`<th colspan="2" style="text-align:center;border-left:2px solid #e8ecf4">${s.display_label}${s.role_name==='admin'?' 🔒':''}</th>`).join('');
+  const subHeader = sets.map(()=>`<th style="text-align:center;font-size:9px;border-left:2px solid #e8ecf4">VIEW</th><th style="text-align:center;font-size:9px">EDIT</th>`).join('');
+
+  const rows = PERM_PAGES.map(page=>{
+    const cells = sets.map((s,si)=>{
+      const isAdminSet = s.role_name==='admin';
+      const perm = s.permissions[page.key] || {view:false, edit:false};
+      const disabled = isAdminSet ? 'disabled' : '';
+      return `<td style="text-align:center;border-left:2px solid #e8ecf4">
+        <input type="checkbox" ${perm.view?'checked':''} ${disabled} onchange="permToggle(${si},'${page.key}','view',this.checked)" style="width:16px;height:16px;accent-color:#0d1f4e;cursor:${isAdminSet?'not-allowed':'pointer'}"/>
+      </td>
+      <td style="text-align:center">
+        <input type="checkbox" ${perm.edit?'checked':''} ${disabled} onchange="permToggle(${si},'${page.key}','edit',this.checked)" style="width:16px;height:16px;accent-color:#1a7a45;cursor:${isAdminSet?'not-allowed':'pointer'}"/>
+      </td>`;
+    }).join('');
+    return `<tr id="perm-row-${page.key}">
+      <td style="padding-left:8px;font-weight:600;color:#0d1f4e;font-size:12px">${page.label}</td>
+      ${cells}
+    </tr>`;
+  }).join('');
+
+  document.getElementById('main-body').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div style="font-size:12px;color:#7080a0;line-height:1.5">Toggle <strong>view</strong> and <strong>edit</strong> access per page for each role.<br>Enabling edit auto-enables view. Admin has full access (locked). Changes take effect on each user's next login.</div>
+      <button onclick="savePermissions()" class="primary-btn" style="padding:9px 18px;white-space:nowrap">💾 Save Permissions</button>
+    </div>
+    <div class="card">
+      <div style="overflow-x:auto"><table style="font-size:12px">
+        <thead>
+          <tr><th style="padding-left:8px;min-width:160px">PAGE</th>${header}</tr>
+          <tr><th></th>${subHeader}</tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+    </div>`;
+}
+
+function permToggle(setIdx, pageKey, type, checked){
+  const s = window._permEdit[setIdx];
+  if(!s.permissions[pageKey]) s.permissions[pageKey] = {view:false, edit:false};
+  s.permissions[pageKey][type] = checked;
+  // Edit implies view
+  if(type==='edit' && checked){
+    s.permissions[pageKey].view = true;
+  }
+  // Removing view removes edit
+  if(type==='view' && !checked){
+    s.permissions[pageKey].edit = false;
+  }
+  // Re-render just this row to reflect dependent changes
+  renderPermissionRow(pageKey);
+}
+
+function renderPermissionRow(pageKey){
+  const sets = window._permEdit;
+  const page = PERM_PAGES.find(p=>p.key===pageKey);
+  const rowEl = document.getElementById('perm-row-'+pageKey);
+  if(!rowEl || !page) return;
+  const setIdxMap = sets.map((s,si)=>si);
+  const cells = sets.map((s,si)=>{
+    const isAdminSet = s.role_name==='admin';
+    const perm = s.permissions[pageKey] || {view:false, edit:false};
+    const disabled = isAdminSet ? 'disabled' : '';
+    return `<td style="text-align:center;border-left:2px solid #e8ecf4">
+      <input type="checkbox" ${perm.view?'checked':''} ${disabled} onchange="permToggle(${si},'${pageKey}','view',this.checked)" style="width:16px;height:16px;accent-color:#0d1f4e;cursor:${isAdminSet?'not-allowed':'pointer'}"/>
+    </td>
+    <td style="text-align:center">
+      <input type="checkbox" ${perm.edit?'checked':''} ${disabled} onchange="permToggle(${si},'${pageKey}','edit',this.checked)" style="width:16px;height:16px;accent-color:#1a7a45;cursor:${isAdminSet?'not-allowed':'pointer'}"/>
+    </td>`;
+  }).join('');
+  rowEl.innerHTML = `<td style="padding-left:8px;font-weight:600;color:#0d1f4e;font-size:12px">${page.label}</td>${cells}`;
+}
+
+async function savePermissions(){
+  try{
+    showToast('Saving permissions…');
+    for(const s of window._permEdit){
+      if(s.role_name==='admin') continue; // admin locked
+      await sbFetch('permission_sets?id=eq.'+s.id, {method:'PATCH', prefer:'return=minimal',
+        body: JSON.stringify({permissions:s.permissions, updated_at:new Date().toISOString()})});
+    }
+    // Refresh local cache
+    await loadPermSets();
+    // If current user's permissions changed, reload them
+    const mySet = permSetsData.find(s=>s.role_name===currentUser.role);
+    if(mySet) currentPermissions = mySet.permissions;
+    showToast('✓ Permissions saved — users see changes on next login');
+  }catch(e){
+    showToast('⚠ Error saving permissions: '+(e.message||''));
+  }
+}
+
+
 // ═══════════════════════════════════════════════════
 let insightsStore = '';
 let insightsRange = 'last_month'; // 'mtd','last_month','qtd','ytd','all','custom'
