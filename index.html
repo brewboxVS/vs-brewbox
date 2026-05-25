@@ -4117,6 +4117,8 @@ async function loadStoreOrders(){
           status: r.status,
           created_at: r.created_at,
           closed_at: r.closed_at||null,
+          created_by: r.created_by||'',
+          received_by: r.received_by||'',
           items
         };
       });
@@ -4135,6 +4137,8 @@ async function saveStoreOrder(order){
     status: order.status,
     created_at: order.created_at,
     closed_at: order.closed_at||null,
+    created_by: order.created_by||null,
+    received_by: order.received_by||null,
     items: order.items
   };
   if(useSupabase){
@@ -4314,6 +4318,8 @@ async function saveNewStoreOrder(){
     status: 'open',
     created_at: new Date().toISOString(),
     closed_at: null,
+    created_by: currentUser?.display_name || 'Unknown',
+    received_by: null,
     items: orderItems
   };
   storeOrders.unshift(order);
@@ -4365,6 +4371,7 @@ function renderOpenOrderRow(order){
           <span style="font-size:14px;color:#8090b0">${isExpanded?'▲':'▼'}</span>
         </div>
       </div>
+      <div style="padding:5px 14px;background:#fffbf0;border-top:1px dashed #e8ecf4;font-size:11px;color:#5060a0">Created by <strong style="color:#0d1f4e">${order.created_by||'—'}</strong></div>
       ${isExpanded?renderOrderDetail(order, true):''}
     </div>`;
 }
@@ -4386,6 +4393,7 @@ function renderClosedOrderRow(order){
         </div>
         <span style="font-size:13px;color:#8090b0">${isExpanded?'▲':'▼'}</span>
       </div>
+      <div style="padding:5px 14px;background:#f4f6fa;border-top:1px dashed #e8ecf4;font-size:11px;color:#5060a0">Created by <strong style="color:#0d1f4e">${order.created_by||'—'}</strong>${order.received_by?` · Received by <strong style="color:#1a7a45">${order.received_by}</strong>`:''}</div>
       ${isExpanded?renderOrderDetail(order, false):''}
     </div>`;
 }
@@ -4498,6 +4506,7 @@ async function receiveStoreOrder(orderId){
   // Mark order received
   order.status = 'received';
   order.closed_at = new Date().toISOString();
+  order.received_by = currentUser?.display_name || 'Unknown';
   await saveStoreOrder(order);
   // Log order received summary to activity
   const orderRcvEntry = {
@@ -4526,8 +4535,12 @@ async function receiveStoreOrder(orderId){
 let expandedActivityOrderIds = new Set();
 
 function renderOrderActivity(){
-  const openOrders = [...storeOrders].filter(o=>o.status==='open').sort((a,b)=>b.id-a.id);
-  const rcvdOrders = [...storeOrders].filter(o=>o.status==='received').sort((a,b)=>b.id-a.id);
+  // Combine store + warehouse orders into one activity view
+  const storeO = storeOrders.map(o=>({...o, _type:'store'}));
+  const whO = whOrders.map(o=>({...o, _type:'wh'}));
+  const all = [...storeO, ...whO];
+  const openOrders = all.filter(o=>o.status==='open').sort((a,b)=>b.id-a.id);
+  const rcvdOrders = all.filter(o=>o.status==='received').sort((a,b)=>b.id-a.id);
 
   document.getElementById('main-body').innerHTML=`
     <div style="margin-bottom:6px;display:flex;gap:10px">
@@ -4550,38 +4563,54 @@ function renderOrderActivity(){
 }
 
 function renderActivityOrderRow(o){
+  const isWh = o._type==='wh';
   const isExpanded = expandedActivityOrderIds.has(o.id);
   const dateStr = toPST(o.created_at);
-  const rcvdStr = o.closed_at ? ' · Rcvd '+toPST(o.closed_at) : '';
-  const totalUnits = o.items.reduce((s,i)=>s+(i.order_qty||0),0);
+  const rcvdAt = isWh ? o.received_at : o.closed_at;
+  const totalUnits = isWh
+    ? o.items.reduce((s,i)=>s+((i.rec_cases||0)*(i.pieces_per_box||1)),0)
+    : o.items.reduce((s,i)=>s+(i.order_qty||0),0);
   const statusColor = o.status==='open' ? '#c9a84c' : '#1a7a45';
   const statusBg = o.status==='open' ? '#fffbf0' : '#f0fff4';
   const statusLabel = o.status==='open' ? 'OPEN' : 'RECEIVED';
+  const typeBadge = isWh
+    ? '<span style="background:#e8edf8;color:#0d1f4e;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700">WAREHOUSE</span>'
+    : '<span style="background:#fff0e6;color:#b35a00;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700">STORE</span>';
+  const label = isWh ? 'Warehouse Order' : o.store_name;
+
+  // User attribution line
+  const createdBy = o.created_by || '—';
+  const receivedBy = o.received_by || '';
+  const attrib = `<span style="font-size:11px;color:#5060a0">Created by <strong style="color:#0d1f4e">${createdBy}</strong>${o.status==='received'&&receivedBy?` · Received by <strong style="color:#1a7a45">${receivedBy}</strong>`:''}</span>`;
+
   return `
     <div style="border:1px solid #e8ecf4;border-radius:8px;margin-bottom:8px;overflow:hidden">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:${statusBg};cursor:pointer"
            onclick="toggleActivityOrder(${o.id})">
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
           <span style="font-size:12px;font-weight:700;color:#0d1f4e">Order #${o.id.toString().slice(-6)}</span>
+          ${typeBadge}
           <span style="background:${statusColor};color:${o.status==='open'?'#0d1f4e':'#fff'};border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700">${statusLabel}</span>
-          <span style="font-size:11px;color:#5060a0;font-weight:600">${o.store_name}</span>
-          <span style="font-size:11px;color:#7080a0">${dateStr}${rcvdStr} · ${o.items.length} items · ${totalUnits} units</span>
+          <span style="font-size:11px;color:#5060a0;font-weight:600">${label}</span>
+          <span style="font-size:11px;color:#7080a0">${dateStr}${rcvdAt?' · Rcvd '+toPST(rcvdAt):''} · ${o.items.length} items · ${totalUnits} units</span>
         </div>
         <span style="font-size:13px;color:#8090b0">${isExpanded?'▲':'▼'}</span>
       </div>
+      <div style="padding:5px 14px;background:${statusBg};border-top:1px dashed #e8ecf4">${attrib}</div>
       ${isExpanded?`
         <div style="padding:10px 14px;background:#fff;border-top:1px solid #e8ecf4">
           <table style="width:100%">
-            <thead><tr><th style="padding-left:4px">ITEM</th><th>SOURCE</th><th>QTY ORDERED</th></tr></thead>
+            <thead><tr><th style="padding-left:4px">ITEM</th><th>SOURCE</th><th>${isWh?'CASES':'QTY ORDERED'}</th></tr></thead>
             <tbody>
             ${o.items.map(item=>{
               const src = item.product_source==='coffee'
                 ? '<span style="background:#f3e8ff;color:#6b2fa0;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700">COFFEE</span>'
                 : '<span style="background:#e8edf8;color:#0d1f4e;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700">MM</span>';
+              const qtyShown = isWh ? (item.rec_cases||0) : item.order_qty;
               return `<tr>
                 <td style="padding-left:4px;font-weight:600;color:#0d1f4e;white-space:normal">${item.product_name}</td>
                 <td>${src}</td>
-                <td style="font-weight:700;color:#0d1f4e">${item.order_qty}</td>
+                <td style="font-weight:700;color:#0d1f4e">${qtyShown}</td>
               </tr>`;
             }).join('')}
             </tbody>
@@ -5214,6 +5243,8 @@ async function loadWhOrders(){
         status: r.status,
         created_at: r.created_at,
         received_at: r.received_at||null,
+        created_by: r.created_by||'',
+        received_by: r.received_by||'',
         sheet_id: r.sheet_id||'',
         sheet_url: r.sheet_url||'',
         items: (() => { try{ return Array.isArray(r.items)?r.items:JSON.parse(r.items||'[]'); }catch(e){ return []; } })()
@@ -5236,6 +5267,7 @@ async function saveWhOrder(order){
         body:JSON.stringify([{
           id:order.id, status:order.status,
           created_at:order.created_at, received_at:order.received_at||null,
+          created_by:order.created_by||null, received_by:order.received_by||null,
           sheet_id:order.sheet_id||'', sheet_url:order.sheet_url||'',
           items:order.items
         }])
@@ -5567,6 +5599,7 @@ function renderWhOrderRow(order){
           <span style="font-size:14px;color:#8090b0">${isExpanded?'▲':'▼'}</span>
         </div>
       </div>
+      <div style="padding:5px 14px;background:${isOpen?'#fffbf0':'#f0fff4'};border-top:1px dashed #e8ecf4;font-size:11px;color:#5060a0">Created by <strong style="color:#0d1f4e">${order.created_by||'—'}</strong>${!isOpen&&order.received_by?` · Received by <strong style="color:#1a7a45">${order.received_by}</strong>`:''}</div>
       ${isExpanded?renderWhOrderDetail(order):''}
     </div>`;
 }
@@ -5980,6 +6013,8 @@ async function createWhOrderWithExport(){
     status: 'open',
     created_at: new Date().toISOString(),
     received_at: null,
+    created_by: currentUser?.display_name || 'Unknown',
+    received_by: null,
     sheet_id: '',
     sheet_url: '',
     items
@@ -6215,6 +6250,8 @@ async function saveQuickOrder(){
     status: 'open',
     created_at: new Date().toISOString(),
     received_at: null,
+    created_by: currentUser?.display_name || 'Unknown',
+    received_by: null,
     sheet_id: '',
     sheet_url: '',
     items: orderItems
@@ -6299,6 +6336,7 @@ async function receiveWhOrder(orderId){
   // Mark received
   order.status = 'received';
   order.received_at = new Date().toISOString();
+  order.received_by = currentUser?.display_name || 'Unknown';
   await saveWhOrder(order);
 
   // Archive Google Sheet
@@ -6625,6 +6663,8 @@ async function saveQuickCaptureOrder(){
     status: 'open',
     created_at: new Date().toISOString(),
     received_at: null,
+    created_by: currentUser?.display_name || 'Unknown',
+    received_by: null,
     sheet_id: '',
     sheet_url: '',
     items: orderItems
@@ -6659,6 +6699,7 @@ async function saveQuickCaptureOrder(){
   // Mark order as received immediately
   order.status = 'received';
   order.received_at = new Date().toISOString();
+  order.received_by = currentUser?.display_name || 'Unknown';
   await saveWhOrder(order);
 
   // Log summary
@@ -7337,6 +7378,7 @@ function renderMobOpenOrder(order){
       <div>
         <div class="order-id">Order #${order.id.toString().slice(-6)} <span style="font-size:11px;color:#7080a0">${order.items.length} items</span></div>
         <div class="order-date">${dateStr}</div>
+        <div style="font-size:10px;color:#7080a0;margin-top:2px">By ${order.created_by||'—'}</div>
       </div>
       <span style="color:#8090b0;font-size:16px">${isExpanded?'▲':'▼'}</span>
     </div>
@@ -12742,6 +12784,7 @@ function renderMobWhOrderCard(order, isOpen){
         <div style="font-size:13px;font-weight:700;color:#0d1f4e">WH Order #${order.id.toString().slice(-6)}</div>
         <div style="font-size:11px;color:#7080a0;margin-top:2px">${dateStr}${rcvdStr?' · Rcvd '+rcvdStr:''}</div>
         <div style="font-size:11px;color:#5060a0;margin-top:1px">${order.items.length} items${isOpen?' · '+checkedItems+' confirmed':''}</div>
+        <div style="font-size:10px;color:#7080a0;margin-top:2px">By ${order.created_by||'—'}${!isOpen&&order.received_by?' · Rcvd by '+order.received_by:''}</div>
       </div>
       <span style="font-size:16px;color:#8090b0">${isExpanded?'▲':'▼'}</span>
     </div>
