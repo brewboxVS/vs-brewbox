@@ -629,6 +629,7 @@ body.hide-fin .fin-col { display: none !important; }
     </div>
     <div class="sb-nav">
       <button class="nav-btn active" onclick="setView('dashboard')">◈ &nbsp;<span>Dashboard</span></button>
+      <button class="nav-btn" id="mysales-nav" onclick="setView('my-sales')" style="display:none">📈 &nbsp;<span>My Sales</span></button>
       <div id="warehouse-nav">
         <button class="nav-btn" id="warehouse-toggle" onclick="toggleWarehouseMenu()">▦ &nbsp;<span>Warehouse</span><span class="nav-arrow" id="warehouse-arrow">›</span></button>
         <div id="warehouse-submenu" style="display:none">
@@ -1330,6 +1331,7 @@ function rowToRestock(row){
     product: row.product_name,
     qty: row.qty_added,
     by: row.team_member||'',
+    user_name: row.user_name||'',
     date: row.restock_date||row.created_at?.slice(0,10)||'',
     created_at: row.created_at||''
   };
@@ -1430,6 +1432,7 @@ async function saveRestock(entry){
           product_name: entry.product,
           qty_added: entry.qty,
           team_member: entry.by,
+          user_name: entry.user_name || currentUser?.display_name || 'Unknown',
           restock_date: entry.date,
           created_at: new Date().toISOString()
         }])
@@ -1557,7 +1560,7 @@ function updateUserFooter(){
   const roleEl = document.getElementById('sb-user-role');
   const roleLabels = {admin:'Administrator', warehouse_stocker:'Warehouse Stocker', store_stocker:'Store Stocker', sales_rep:'Sales Rep'};
   if(nameEl) nameEl.textContent = currentUser.display_name;
-  if(roleEl) roleEl.textContent = roleLabels[currentUser.role] || currentUser.role;
+  if(roleEl) roleEl.textContent = (currentUser.roles||[]).map(r=>roleLabels[r]||r).join(' · ');
 }
 
 // ═══════════════════════════════════════════════════
@@ -1746,7 +1749,7 @@ function setView(v){
     if(!canView(effective)) v = firstAllowedView();
   }
   currentView=v;
-  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log','sales-import':'Sales Import','hist-import':'Historical Data Import',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log','usage-report':'Consumption & Theft Reports','vendor-mgmt':'Vendor Management','insights':'Insights Dashboard','invoices':'Invoices','coffee-counts':'Coffee Counts','user-mgmt':'User Management','permissions':'Permissions'};
+  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log','sales-import':'Sales Import','hist-import':'Historical Data Import',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log','usage-report':'Consumption & Theft Reports','vendor-mgmt':'Vendor Management','insights':'Insights Dashboard','invoices':'Invoices','coffee-counts':'Coffee Counts','user-mgmt':'User Management','permissions':'Permissions','my-sales':'My Sales'};
   if(v==='count' && Object.keys(countState).length===0) initCountState();
   if(v==='store-count' && Object.keys(storeCountState).length===0) initStoreCountState();
   document.getElementById('page-title').textContent=titles[v]||v;
@@ -1785,6 +1788,7 @@ function render(){
   else if(currentView==='vendor-mgmt') renderVendorManagement();
   else if(currentView==='user-mgmt') renderUserManagement();
   else if(currentView==='permissions') renderPermissions();
+  else if(currentView==='my-sales') renderMySales();
   else renderRestock();
 }
 
@@ -2194,7 +2198,7 @@ function renderRestock(){
     <div class="card">
       ${filtered.length===0?`<div style="color:#7080a0;font-size:13px;padding:20px 0;text-align:center">No activity found for this filter.</div>`:`
       <table><thead><tr>
-        <th>TYPE</th><th>DATE</th><th>PRODUCT</th><th>QTY CHANGE</th><th>SOURCE / TEAM MEMBER</th>
+        <th>TYPE</th><th>DATE</th><th>PRODUCT</th><th>QTY CHANGE</th><th>SOURCE</th><th>USER</th>
       </tr></thead>
       <tbody>
         ${filtered.map(r=>`<tr>
@@ -2203,6 +2207,7 @@ function renderRestock(){
           <td style="font-weight:600;white-space:normal;max-width:220px">${r.product}</td>
           <td style="font-weight:700;color:${parseFloat(r.qty)>=0?'#1a7a45':'#b01c1c'}">${parseFloat(r.qty)>=0?'+':''}${r.qty}</td>
           <td style="color:#7080a0;font-size:11px">${r.by||'—'}</td>
+          <td style="color:#0d1f4e;font-size:11px;font-weight:600">${r.user_name||'—'}</td>
         </tr>`).join('')}
       </tbody></table>`}
     </div>`;
@@ -2426,7 +2431,7 @@ async function saveAllEdits(){
           await sbFetch('inventory_count_log',{method:'POST',prefer:'resolution=merge-duplicates,return=minimal',
             body:JSON.stringify([{id:Date.now()+Math.floor(Math.random()*10000),product_id:updated.id,
               product_name:updated.name,previous_qty:oldQty,new_qty:updated.qty,
-              difference:diff,reason,count_date:new Date().toISOString().slice(0,10),
+              difference:diff,reason,count_date:new Date().toISOString().slice(0,10),user_name:(currentUser&&currentUser.display_name)||'Unknown',
               created_at:new Date().toISOString()}])});
         }catch(e){}
       }
@@ -2484,6 +2489,7 @@ async function saveInlineEdit(id, silent=false){
             difference: diff,
             reason: reason,
             count_date: new Date().toISOString().slice(0,10),
+            user_name: (currentUser&&currentUser.display_name)||'Unknown', 
             created_at: new Date().toISOString()
           }])
         });
@@ -5093,6 +5099,7 @@ async function submitStoreCount(){
               reason:reason,
               store_name:storeCountStore,
               count_date:countDate,
+              user_name:(currentUser&&currentUser.display_name)||'Unknown',
               created_at:now
             }])
           });
@@ -5126,6 +5133,7 @@ async function submitStoreCount(){
           reason: 'Verified OK',
           store_name: storeCountStore,
           count_date: countDate,
+          user_name: (currentUser&&currentUser.display_name)||'Unknown', 
           created_at: now
         }));
         try{ await sbFetch('inventory_count_log',{method:'POST',prefer:'resolution=merge-duplicates,return=minimal',body:JSON.stringify(batch)}); }catch(e){}
@@ -8551,7 +8559,7 @@ async function onAuthenticated(authUser){
     id: profile.id,
     email: profile.email,
     display_name: profile.display_name,
-    role: profile.role,
+    roles: (profile.roles && profile.roles.length > 0) ? profile.roles : [profile.role],
     assigned_stores: profile.assigned_stores || []
   };
 
@@ -8563,14 +8571,34 @@ async function onAuthenticated(authUser){
     return;
   }
 
-  // Load permission set for the user's role
-  const permSets = await sbFetch('permission_sets?role_name=eq.'+encodeURIComponent(profile.role), {method:'GET', prefer:'return=representation'});
-  currentPermissions = (permSets && permSets[0]) ? permSets[0].permissions : {};
+  // Load and merge permission sets for ALL the user's roles (union: any role granting access wins)
+  currentPermissions = await loadMergedPermissions(currentUser.roles);
 
   // Proceed into the app
   document.getElementById('login-screen').style.display='none';
   document.getElementById('pwchange-screen').style.display='none';
   initApp();
+}
+
+// Merge permission sets across multiple roles — view/edit is true if ANY role grants it
+async function loadMergedPermissions(roles){
+  if(!roles || roles.length===0) return {};
+  if(roles.includes('admin')) {
+    // Admin: load admin set (full access)
+    const adminSet = await sbFetch('permission_sets?role_name=eq.admin', {method:'GET', prefer:'return=representation'});
+    return (adminSet && adminSet[0]) ? adminSet[0].permissions : {};
+  }
+  const merged = {};
+  for(const role of roles){
+    const sets = await sbFetch('permission_sets?role_name=eq.'+encodeURIComponent(role), {method:'GET', prefer:'return=representation'});
+    const perms = (sets && sets[0]) ? sets[0].permissions : {};
+    for(const page in perms){
+      if(!merged[page]) merged[page] = {view:false, edit:false};
+      if(perms[page].view) merged[page].view = true;
+      if(perms[page].edit) merged[page].edit = true;
+    }
+  }
+  return merged;
 }
 
 async function doPasswordChange(){
@@ -8589,8 +8617,7 @@ async function doPasswordChange(){
   await sbFetch('user_profiles?id=eq.'+currentUser.id, {method:'PATCH', prefer:'return=minimal', body:JSON.stringify({must_change_password:false, updated_at:new Date().toISOString()})});
 
   // Load permissions and proceed
-  const permSets = await sbFetch('permission_sets?role_name=eq.'+encodeURIComponent(currentUser.role), {method:'GET', prefer:'return=representation'});
-  currentPermissions = (permSets && permSets[0]) ? permSets[0].permissions : {};
+  currentPermissions = await loadMergedPermissions(currentUser.roles);
   document.getElementById('pwchange-screen').style.display='none';
   showToast('Password updated');
   initApp();
@@ -8605,11 +8632,12 @@ async function doLogout(){
 }
 
 // ── Permission helpers ──
-function canView(page){ return currentUser?.role==='admin' || (currentPermissions[page] && currentPermissions[page].view); }
-function canEdit(page){ return currentUser?.role==='admin' || (currentPermissions[page] && currentPermissions[page].edit); }
-function isAdmin(){ return currentUser?.role==='admin'; }
+function canView(page){ return isAdmin() || (currentPermissions[page] && currentPermissions[page].view); }
+function canEdit(page){ return isAdmin() || (currentPermissions[page] && currentPermissions[page].edit); }
+function isAdmin(){ return (currentUser?.roles||[]).includes('admin'); }
 function userStores(){ // stores this user may see
-  if(isAdmin() || currentUser?.role==='warehouse_stocker') return STORES;
+  const roles = currentUser?.roles || [];
+  if(roles.includes('admin') || roles.includes('warehouse_stocker')) return STORES;
   return (currentUser?.assigned_stores||[]).filter(s=>STORES.includes(s));
 }
 
@@ -8659,6 +8687,9 @@ function applyNavPermissions(){
   // Admin section: only for admins
   const adminNav = document.getElementById('admin-nav');
   if(adminNav) adminNav.style.display = isAdmin() ? '' : 'none';
+  // My Sales nav: visible to anyone with my-sales view permission (sales reps + admins)
+  const mysalesNav = document.getElementById('mysales-nav');
+  if(mysalesNav) mysalesNav.style.display = canView('my-sales') ? '' : 'none';
 }
 
 // Start auth flow instead of direct app init
@@ -9213,7 +9244,7 @@ async function submitCount(){
             product_id: p.id, product_name: p.name,
             previous_qty: prevQty, new_qty: newQty,
             difference: diff, reason: reason,
-            count_date: countDate, created_at: now
+            count_date: countDate, user_name: (currentUser&&currentUser.display_name)||'Unknown', created_at: now
           }])
         });
       }
@@ -9249,7 +9280,7 @@ async function submitCount(){
             product_id: p.id, product_name: '☕ '+p.name,
             previous_qty: prevQty, new_qty: newQty,
             difference: diff, reason: reason,
-            count_date: countDate, created_at: now
+            count_date: countDate, user_name: (currentUser&&currentUser.display_name)||'Unknown', created_at: now
           }])
         });
       }
@@ -9852,12 +9883,13 @@ function renderUserManagement(){
 
 function renderUserManagementInner(){
   const rows = allUsers.map(u=>{
-    const storeStr = (u.assigned_stores&&u.assigned_stores.length>0) ? u.assigned_stores.join(', ') : (u.role==='admin'||u.role==='warehouse_stocker'?'All stores':'—');
+    const uRoles = (u.roles && u.roles.length>0) ? u.roles : [u.role];
+    const storeStr = (u.assigned_stores&&u.assigned_stores.length>0) ? u.assigned_stores.join(', ') : (uRoles.includes('admin')||uRoles.includes('warehouse_stocker')?'All stores':'—');
     const isSelf = currentUser && u.id===currentUser.id;
     return `<tr style="${u.active?'':'opacity:0.5'}">
       <td style="padding-left:8px;font-weight:600;color:#0d1f4e">${u.display_name}${isSelf?' <span style="font-size:9px;color:#1a7a45;font-weight:700">(you)</span>':''}</td>
       <td style="font-size:12px;color:#5060a0">${u.email}</td>
-      <td><span style="font-size:11px;background:#e8edf8;color:#0d1f4e;padding:3px 9px;border-radius:5px;font-weight:700">${roleLabel(u.role)}</span></td>
+      <td>${uRoles.map(r=>`<span style="font-size:10px;background:#e8edf8;color:#0d1f4e;padding:3px 8px;border-radius:5px;font-weight:700;margin-right:3px;display:inline-block;margin-bottom:2px">${roleLabel(r)}</span>`).join('')}</td>
       <td style="font-size:11px;color:#5060a0">${storeStr}</td>
       <td>${u.active?'<span style="font-size:11px;color:#1a7a45;font-weight:700">● Active</span>':'<span style="font-size:11px;color:#b01c1c;font-weight:700">● Inactive</span>'}</td>
       <td style="white-space:nowrap">
@@ -9893,6 +9925,20 @@ function collectStoreCheckboxes(idPrefix){
   return STORES.filter(s=>document.getElementById(idPrefix+'-'+s.replace(/[^a-zA-Z]/g,''))?.checked);
 }
 
+function userRoleCheckboxes(selected, idPrefix, onchangeFn){
+  selected = selected || [];
+  return ROLE_OPTIONS.map(o=>`<label style="display:flex;align-items:center;gap:7px;padding:6px 8px;cursor:pointer;font-size:12px">
+    <input type="checkbox" id="${idPrefix}-${o.value}" value="${o.value}" ${selected.includes(o.value)?'checked':''} onchange="${onchangeFn}()" style="width:15px;height:15px;accent-color:#0d1f4e"/>
+    ${o.label}
+  </label>`).join('');
+}
+function collectRoleCheckboxes(idPrefix){
+  return ROLE_OPTIONS.filter(o=>document.getElementById(idPrefix+'-'+o.value)?.checked).map(o=>o.value);
+}
+function rolesNeedStores(roles){
+  return roles.includes('store_stocker') || roles.includes('sales_rep');
+}
+
 function openCreateUserModal(){
   document.getElementById('modal-container').innerHTML = `
     <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
@@ -9906,10 +9952,8 @@ function openCreateUserModal(){
         <label style="font-size:11px;font-weight:700;color:#5060a0">INITIAL PASSWORD</label>
         <input id="cu-password" type="text" value="welcome1" style="width:100%;padding:9px 11px;border:1.5px solid #d0d5e0;border-radius:7px;font-size:13px;margin:4px 0 4px;outline:none;box-sizing:border-box"/>
         <div style="font-size:10px;color:#8090b0;margin-bottom:12px">User will be required to change this on first login.</div>
-        <label style="font-size:11px;font-weight:700;color:#5060a0">ROLE</label>
-        <select id="cu-role" onchange="toggleCreateUserStores()" style="width:100%;padding:9px 11px;border:1.5px solid #d0d5e0;border-radius:7px;font-size:13px;margin:4px 0 12px;outline:none;box-sizing:border-box">
-          ${ROLE_OPTIONS.map(o=>`<option value="${o.value}">${o.label}</option>`).join('')}
-        </select>
+        <label style="font-size:11px;font-weight:700;color:#5060a0">ROLES (select one or more)</label>
+        <div style="border:1.5px solid #e8ecf4;border-radius:7px;padding:4px;margin:4px 0 12px">${userRoleCheckboxes([],'cu-role','toggleCreateUserStores')}</div>
         <div id="cu-stores-wrap" style="display:none;margin-bottom:12px">
           <label style="font-size:11px;font-weight:700;color:#5060a0">ASSIGNED STORES</label>
           <div style="border:1.5px solid #e8ecf4;border-radius:7px;padding:4px;margin-top:4px">${userStoreCheckboxes([],'cu-store')}</div>
@@ -9923,26 +9967,27 @@ function openCreateUserModal(){
   toggleCreateUserStores();
 }
 function toggleCreateUserStores(){
-  const role = document.getElementById('cu-role').value;
-  document.getElementById('cu-stores-wrap').style.display = (role==='store_stocker'||role==='sales_rep') ? 'block' : 'none';
+  const roles = collectRoleCheckboxes('cu-role');
+  document.getElementById('cu-stores-wrap').style.display = rolesNeedStores(roles) ? 'block' : 'none';
 }
 async function submitCreateUser(){
   const name = document.getElementById('cu-name').value.trim();
   const email = document.getElementById('cu-email').value.trim();
   const password = document.getElementById('cu-password').value;
-  const role = document.getElementById('cu-role').value;
-  const stores = (role==='store_stocker'||role==='sales_rep') ? collectStoreCheckboxes('cu-store') : [];
+  const roles = collectRoleCheckboxes('cu-role');
+  const stores = rolesNeedStores(roles) ? collectStoreCheckboxes('cu-store') : [];
   const errEl = document.getElementById('cu-error');
   const btn = document.getElementById('cu-save');
   errEl.style.display='none';
 
   if(!name || !email || !password){ errEl.textContent='Name, email and password are required'; errEl.style.display='block'; return; }
+  if(roles.length===0){ errEl.textContent='Select at least one role'; errEl.style.display='block'; return; }
   if(password.length < 6){ errEl.textContent='Password must be at least 6 characters'; errEl.style.display='block'; return; }
-  if((role==='store_stocker'||role==='sales_rep') && stores.length===0){ errEl.textContent='Assign at least one store for this role'; errEl.style.display='block'; return; }
+  if(rolesNeedStores(roles) && stores.length===0){ errEl.textContent='Assign at least one store for this role'; errEl.style.display='block'; return; }
 
   btn.disabled=true; btn.textContent='Creating…'; btn.style.opacity='0.6';
   try{
-    await callAdminFn({action:'create_user', email, password, display_name:name, role, assigned_stores:stores});
+    await callAdminFn({action:'create_user', email, password, display_name:name, roles, assigned_stores:stores});
     closeModal();
     showToast('✓ User created — '+name);
     await loadAllUsers();
@@ -9956,6 +10001,7 @@ async function submitCreateUser(){
 function openEditUserModal(userId){
   const u = allUsers.find(x=>x.id===userId);
   if(!u) return;
+  const uRoles = (u.roles && u.roles.length>0) ? u.roles : [u.role];
   const isSelf = currentUser && u.id===currentUser.id;
   document.getElementById('modal-container').innerHTML = `
     <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
@@ -9966,12 +10012,10 @@ function openEditUserModal(userId){
         <input id="eu-name" value="${u.display_name.replace(/"/g,'&quot;')}" style="width:100%;padding:9px 11px;border:1.5px solid #d0d5e0;border-radius:7px;font-size:13px;margin:4px 0 12px;outline:none;box-sizing:border-box"/>
         <label style="font-size:11px;font-weight:700;color:#5060a0">EMAIL (read-only)</label>
         <input value="${u.email}" disabled style="width:100%;padding:9px 11px;border:1.5px solid #e8ecf4;border-radius:7px;font-size:13px;margin:4px 0 12px;outline:none;box-sizing:border-box;background:#f4f6fa;color:#8090b0"/>
-        <label style="font-size:11px;font-weight:700;color:#5060a0">ROLE</label>
-        <select id="eu-role" onchange="toggleEditUserStores()" ${isSelf?'disabled':''} style="width:100%;padding:9px 11px;border:1.5px solid #d0d5e0;border-radius:7px;font-size:13px;margin:4px 0 12px;outline:none;box-sizing:border-box ${isSelf?';background:#f4f6fa':''}">
-          ${ROLE_OPTIONS.map(o=>`<option value="${o.value}" ${u.role===o.value?'selected':''}>${o.label}</option>`).join('')}
-        </select>
-        ${isSelf?'<div style="font-size:10px;color:#8090b0;margin-top:-8px;margin-bottom:12px">You cannot change your own role.</div>':''}
-        <div id="eu-stores-wrap" style="display:${(u.role==='store_stocker'||u.role==='sales_rep')?'block':'none'};margin-bottom:12px">
+        <label style="font-size:11px;font-weight:700;color:#5060a0">ROLES (select one or more)</label>
+        <div style="border:1.5px solid #e8ecf4;border-radius:7px;padding:4px;margin:4px 0 ${isSelf?'4px':'12px'};${isSelf?'opacity:0.6;pointer-events:none':''}">${userRoleCheckboxes(uRoles,'eu-role','toggleEditUserStores')}</div>
+        ${isSelf?'<div style="font-size:10px;color:#8090b0;margin-bottom:12px">You cannot change your own roles.</div>':''}
+        <div id="eu-stores-wrap" style="display:${rolesNeedStores(uRoles)?'block':'none'};margin-bottom:12px">
           <label style="font-size:11px;font-weight:700;color:#5060a0">ASSIGNED STORES</label>
           <div style="border:1.5px solid #e8ecf4;border-radius:7px;padding:4px;margin-top:4px">${userStoreCheckboxes(u.assigned_stores,'eu-store')}</div>
         </div>
@@ -9988,26 +10032,27 @@ function openEditUserModal(userId){
     </div>`;
 }
 function toggleEditUserStores(){
-  const role = document.getElementById('eu-role').value;
-  document.getElementById('eu-stores-wrap').style.display = (role==='store_stocker'||role==='sales_rep') ? 'block' : 'none';
+  const roles = collectRoleCheckboxes('eu-role');
+  document.getElementById('eu-stores-wrap').style.display = rolesNeedStores(roles) ? 'block' : 'none';
 }
 async function submitEditUser(userId){
   const u = allUsers.find(x=>x.id===userId);
   const isSelf = currentUser && userId===currentUser.id;
   const name = document.getElementById('eu-name').value.trim();
-  const role = isSelf ? u.role : document.getElementById('eu-role').value;
-  const stores = (role==='store_stocker'||role==='sales_rep') ? collectStoreCheckboxes('eu-store') : [];
+  const roles = isSelf ? ((u.roles&&u.roles.length>0)?u.roles:[u.role]) : collectRoleCheckboxes('eu-role');
+  const stores = rolesNeedStores(roles) ? collectStoreCheckboxes('eu-store') : [];
   const active = isSelf ? true : document.getElementById('eu-active').checked;
   const errEl = document.getElementById('eu-error');
   const btn = document.getElementById('eu-save');
   errEl.style.display='none';
 
   if(!name){ errEl.textContent='Name is required'; errEl.style.display='block'; return; }
-  if((role==='store_stocker'||role==='sales_rep') && stores.length===0){ errEl.textContent='Assign at least one store for this role'; errEl.style.display='block'; return; }
+  if(roles.length===0){ errEl.textContent='Select at least one role'; errEl.style.display='block'; return; }
+  if(rolesNeedStores(roles) && stores.length===0){ errEl.textContent='Assign at least one store for this role'; errEl.style.display='block'; return; }
 
   btn.disabled=true; btn.textContent='Saving…'; btn.style.opacity='0.6';
   try{
-    await callAdminFn({action:'update_user', user_id:userId, display_name:name, role, assigned_stores:stores, active});
+    await callAdminFn({action:'update_user', user_id:userId, display_name:name, roles, assigned_stores:stores, active});
     closeModal();
     showToast('✓ User updated');
     await loadAllUsers();
@@ -10180,13 +10225,151 @@ async function savePermissions(){
     }
     // Refresh local cache
     await loadPermSets();
-    // If current user's permissions changed, reload them
-    const mySet = permSetsData.find(s=>s.role_name===currentUser.role);
-    if(mySet) currentPermissions = mySet.permissions;
+    // If current user's permissions changed, reload them (merged across roles)
+    currentPermissions = await loadMergedPermissions(currentUser.roles);
     showToast('✓ Permissions saved — users see changes on next login');
   }catch(e){
     showToast('⚠ Error saving permissions: '+(e.message||''));
   }
+}
+
+
+// ═══════════════════════════════════════════════════
+//  MY SALES — Sales Rep Dashboard
+// Sales volume view: units sold + revenue dollars (NO cost/margin) for the
+// user's assigned stores. Admins can toggle between sales reps to view their
+// dashboards. Date range filter. Data sourced from sales_data.
+// ═══════════════════════════════════════════════════
+let mySalesRange = 'last_month';
+let mySalesRepId = ''; // for admin: which rep's view to show
+let mySalesData = null;
+
+function mySalesDateRange(){
+  const now = new Date();
+  const y = now.getFullYear(), m = now.getMonth();
+  let from, to = now.toISOString().slice(0,10);
+  if(mySalesRange==='mtd'){ from = `${y}-${String(m+1).padStart(2,'0')}-01`; }
+  else if(mySalesRange==='last_month'){
+    const lm = new Date(y, m-1, 1);
+    from = `${lm.getFullYear()}-${String(lm.getMonth()+1).padStart(2,'0')}-01`;
+    const ld = new Date(lm.getFullYear(), lm.getMonth()+1, 0).getDate();
+    to = `${lm.getFullYear()}-${String(lm.getMonth()+1).padStart(2,'0')}-${String(ld).padStart(2,'0')}`;
+  }
+  else if(mySalesRange==='qtd'){ from = `${y}-${String(Math.floor(m/3)*3+1).padStart(2,'0')}-01`; }
+  else if(mySalesRange==='ytd'){ from = `${y}-01-01`; }
+  else if(mySalesRange==='all'){ from = '2025-07-01'; }
+  return {from, to};
+}
+
+// Determine which stores the My Sales view should show
+function mySalesStores(){
+  if(isAdmin()){
+    const rep = allUsers.find(u=>u.id===mySalesRepId);
+    if(rep) return (rep.assigned_stores||[]).filter(s=>STORES.includes(s));
+    return [];
+  }
+  return userStores();
+}
+
+async function renderMySales(){
+  if(!canView('my-sales')){ setView(firstAllowedView()); return; }
+  if(isAdmin() && allUsers.length===0){ await loadAllUsers(); }
+  if(isAdmin() && !mySalesRepId){
+    const firstRep = allUsers.find(u=>(u.roles||[u.role]).includes('sales_rep') && u.active);
+    if(firstRep) mySalesRepId = firstRep.id;
+  }
+  document.getElementById('main-body').innerHTML = `<div class="card" style="text-align:center;padding:40px;color:#7080a0">Loading sales…</div>`;
+  await loadMySalesData();
+  renderMySalesInner();
+}
+
+async function loadMySalesData(){
+  const stores = mySalesStores();
+  const {from, to} = mySalesDateRange();
+  mySalesData = {stores:[], from, to, totalUnits:0, totalRevenue:0};
+  for(const store of stores){
+    try{
+      const rows = await sbFetchAll(`sales_data?store_name=eq.${encodeURIComponent(store)}&sale_date=gte.${from}&sale_date=lte.${to}&select=unit_price,total_price,csv_item_name,product_name`, {method:'GET', prefer:'return=representation'});
+      let units = rows.length;
+      let revenue = 0;
+      const itemMap = {};
+      for(const r of rows){
+        const rev = parseFloat(r.total_price||r.unit_price||0);
+        revenue += rev;
+        const name = r.product_name || r.csv_item_name || 'Unknown';
+        if(!itemMap[name]) itemMap[name] = {name, units:0, revenue:0};
+        itemMap[name].units++;
+        itemMap[name].revenue += rev;
+      }
+      const topItems = Object.values(itemMap).sort((a,b)=>b.units-a.units).slice(0,10);
+      mySalesData.stores.push({store, units, revenue, topItems});
+      mySalesData.totalUnits += units;
+      mySalesData.totalRevenue += revenue;
+    }catch(e){
+      mySalesData.stores.push({store, units:0, revenue:0, topItems:[], error:true});
+    }
+  }
+}
+
+function renderMySalesInner(){
+  const ranges = [['mtd','This Month'],['last_month','Last Month'],['qtd','This Quarter'],['ytd','Year to Date'],['all','All Time']];
+  const d = mySalesData || {stores:[], totalUnits:0, totalRevenue:0};
+  const STORE_ACCENT = {'SM Toyota':'#003087','Safran':'#006a4e','Exodus':'#7b1fa2','Elevated Brandz':'#c62828','SR Honda':'#e65100'};
+
+  const repPicker = isAdmin() ? (function(){
+    const reps = allUsers.filter(u=>(u.roles||[u.role]).includes('sales_rep'));
+    if(reps.length===0) return '<div style="font-size:12px;color:#b35a00;background:#fff3cd;padding:8px 12px;border-radius:7px">No sales reps exist yet. Create one in User Management.</div>';
+    return `<div style="display:flex;align-items:center;gap:8px">
+      <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase">Viewing Rep:</label>
+      <select onchange="mySalesRepId=this.value;mySalesData=null;renderMySales()" style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer">
+        ${reps.map(r=>`<option value="${r.id}" ${r.id===mySalesRepId?'selected':''}>${r.display_name}${!r.active?' (inactive)':''}</option>`).join('')}
+      </select>
+    </div>`;
+  })() : '';
+
+  const repName = isAdmin() ? (allUsers.find(u=>u.id===mySalesRepId)?.display_name || '') : currentUser.display_name;
+
+  document.getElementById('main-body').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:14px">
+      ${repPicker || `<div style="font-size:14px;font-weight:700;color:#0d1f4e">${repName}'s Sales</div>`}
+      <div style="display:flex;gap:4px;background:#f4f6fa;border-radius:7px;padding:3px">
+        ${ranges.map(([k,l])=>`<button onclick="mySalesRange='${k}';mySalesData=null;renderMySales()" style="padding:5px 10px;border:none;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer;${mySalesRange===k?'background:#0d1f4e;color:#fff':'background:transparent;color:#5060a0'}">${l}</button>`).join('')}
+      </div>
+    </div>
+
+    ${(isAdmin() && !mySalesRepId) ? '<div class="card" style="text-align:center;padding:40px;color:#7080a0">Select a sales rep to view their dashboard.</div>' : `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+      <div class="card" style="border-top:3px solid #1a7a45;text-align:center;padding:18px">
+        <div style="font-size:30px;font-weight:800;color:#1a7a45">${d.totalUnits.toLocaleString()}</div>
+        <div style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.5px;margin-top:4px">Total Units Sold</div>
+      </div>
+      <div class="card" style="border-top:3px solid #0d1f4e;text-align:center;padding:18px">
+        <div style="font-size:30px;font-weight:800;color:#0d1f4e">$${d.totalRevenue.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+        <div style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase;letter-spacing:.5px;margin-top:4px">Total Revenue</div>
+      </div>
+    </div>
+
+    ${d.stores.length===0 ? '<div class="card" style="text-align:center;padding:40px;color:#7080a0">No stores assigned.</div>' :
+      d.stores.map(s=>{
+        const accent = STORE_ACCENT[s.store]||'#0d1f4e';
+        return `<div class="card" style="border-left:3px solid ${accent};margin-bottom:12px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <div style="font-size:14px;font-weight:800;color:#0d1f4e">${s.store}</div>
+            <div style="display:flex;gap:18px">
+              <div style="text-align:right"><div style="font-size:18px;font-weight:800;color:#1a7a45">${s.units.toLocaleString()}</div><div style="font-size:9px;color:#7080a0;text-transform:uppercase">Units</div></div>
+              <div style="text-align:right"><div style="font-size:18px;font-weight:800;color:#0d1f4e">$${s.revenue.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</div><div style="font-size:9px;color:#7080a0;text-transform:uppercase">Revenue</div></div>
+            </div>
+          </div>
+          ${s.topItems.length>0?`<div style="border-top:1px solid #e8ecf4;padding-top:8px">
+            <div style="font-size:10px;font-weight:700;color:#7080a0;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Top Sellers</div>
+            <table style="width:100%;font-size:12px">
+              <thead><tr style="color:#7080a0;font-size:10px"><th style="text-align:left;padding:3px 4px">ITEM</th><th style="text-align:right;padding:3px 4px">UNITS</th><th style="text-align:right;padding:3px 4px">REVENUE</th></tr></thead>
+              <tbody>${s.topItems.map(it=>`<tr><td style="padding:3px 4px;color:#0d1f4e;font-weight:600">${it.name}</td><td style="padding:3px 4px;text-align:right;font-weight:700;color:#1a7a45">${it.units}</td><td style="padding:3px 4px;text-align:right;color:#0d1f4e">$${it.revenue.toFixed(2)}</td></tr>`).join('')}</tbody>
+            </table>
+          </div>`:'<div style="font-size:11px;color:#8090b0;padding:6px 0">No sales in this period.</div>'}
+        </div>`;
+      }).join('')}
+    `}`;
 }
 
 
