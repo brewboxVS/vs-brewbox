@@ -8560,7 +8560,8 @@ async function onAuthenticated(authUser){
     email: profile.email,
     display_name: profile.display_name,
     roles: (profile.roles && profile.roles.length > 0) ? profile.roles : [profile.role],
-    assigned_stores: profile.assigned_stores || []
+    assigned_stores: profile.assigned_stores || [],
+    role_stores: profile.role_stores || {}
   };
 
   // Forced password change on first login
@@ -8635,10 +8636,11 @@ async function doLogout(){
 function canView(page){ return isAdmin() || (currentPermissions[page] && currentPermissions[page].view); }
 function canEdit(page){ return isAdmin() || (currentPermissions[page] && currentPermissions[page].edit); }
 function isAdmin(){ return (currentUser?.roles||[]).includes('admin'); }
-function userStores(){ // stores this user may see
+function userStores(){ // stores for store-stocking operations (Store Inventory/Orders/Count/Coffee Counts/Invoices)
   const roles = currentUser?.roles || [];
   if(roles.includes('admin') || roles.includes('warehouse_stocker')) return STORES;
-  return (currentUser?.assigned_stores||[]).filter(s=>STORES.includes(s));
+  const rs = currentUser?.role_stores || {};
+  return (rs['store_stocker'] || []).filter(s=>STORES.includes(s));
 }
 
 // Returns the first page the user is allowed to view (fallback for redirects)
@@ -9884,13 +9886,22 @@ function renderUserManagement(){
 function renderUserManagementInner(){
   const rows = allUsers.map(u=>{
     const uRoles = (u.roles && u.roles.length>0) ? u.roles : [u.role];
-    const storeStr = (u.assigned_stores&&u.assigned_stores.length>0) ? u.assigned_stores.join(', ') : (uRoles.includes('admin')||uRoles.includes('warehouse_stocker')?'All stores':'—');
+    const rs = u.role_stores || {};
+    let storeStr;
+    if(uRoles.includes('admin') || uRoles.includes('warehouse_stocker')){
+      storeStr = 'All stores';
+    } else {
+      const parts = [];
+      if(rs['store_stocker'] && rs['store_stocker'].length) parts.push('<span style="color:#7080a0">Stock:</span> '+rs['store_stocker'].join(', '));
+      if(rs['sales_rep'] && rs['sales_rep'].length) parts.push('<span style="color:#7080a0">Sales:</span> '+rs['sales_rep'].join(', '));
+      storeStr = parts.length ? parts.join('<br>') : '—';
+    }
     const isSelf = currentUser && u.id===currentUser.id;
     return `<tr style="${u.active?'':'opacity:0.5'}">
       <td style="padding-left:8px;font-weight:600;color:#0d1f4e">${u.display_name}${isSelf?' <span style="font-size:9px;color:#1a7a45;font-weight:700">(you)</span>':''}</td>
       <td style="font-size:12px;color:#5060a0">${u.email}</td>
       <td>${uRoles.map(r=>`<span style="font-size:10px;background:#e8edf8;color:#0d1f4e;padding:3px 8px;border-radius:5px;font-weight:700;margin-right:3px;display:inline-block;margin-bottom:2px">${roleLabel(r)}</span>`).join('')}</td>
-      <td style="font-size:11px;color:#5060a0">${storeStr}</td>
+      <td style="font-size:11px;color:#0d1f4e;line-height:1.5">${storeStr}</td>
       <td>${u.active?'<span style="font-size:11px;color:#1a7a45;font-weight:700">● Active</span>':'<span style="font-size:11px;color:#b01c1c;font-weight:700">● Inactive</span>'}</td>
       <td style="white-space:nowrap">
         <button onclick="openEditUserModal('${u.id}')" style="background:#f4f6fa;color:#1a5296;border:1px solid #b0c8e8;border-radius:5px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer;margin-right:4px">Edit</button>
@@ -9925,6 +9936,38 @@ function collectStoreCheckboxes(idPrefix){
   return STORES.filter(s=>document.getElementById(idPrefix+'-'+s.replace(/[^a-zA-Z]/g,''))?.checked);
 }
 
+// Roles that need their own store assignment
+const STORE_ROLES = [{value:'store_stocker', label:'Store Stocker'}, {value:'sales_rep', label:'Sales Rep'}];
+
+// Build one store-checklist section per store-needing role. idPrefix like 'cu' or 'eu'.
+// roleStoresMap: {store_stocker:[...], sales_rep:[...]}
+function roleStoresSections(roleStoresMap, idPrefix){
+  roleStoresMap = roleStoresMap || {};
+  return STORE_ROLES.map(r=>`
+    <div id="${idPrefix}-stores-${r.value}" style="display:none;margin-bottom:12px">
+      <label style="font-size:11px;font-weight:700;color:#5060a0">${r.label.toUpperCase()} — ASSIGNED STORES</label>
+      <div style="border:1.5px solid #e8ecf4;border-radius:7px;padding:4px;margin-top:4px">${userStoreCheckboxes(roleStoresMap[r.value]||[], idPrefix+'-store-'+r.value)}</div>
+    </div>`).join('');
+}
+// Show/hide each role's store section based on which roles are checked
+function syncRoleStoresSections(idPrefix){
+  const roles = collectRoleCheckboxes(idPrefix+'-role');
+  for(const r of STORE_ROLES){
+    const wrap = document.getElementById(idPrefix+'-stores-'+r.value);
+    if(wrap) wrap.style.display = roles.includes(r.value) ? 'block' : 'none';
+  }
+}
+// Collect the role_stores map from per-role checkboxes (only for checked store-roles)
+function collectRoleStores(idPrefix, roles){
+  const map = {};
+  for(const r of STORE_ROLES){
+    if(roles.includes(r.value)){
+      map[r.value] = collectStoreCheckboxes(idPrefix+'-store-'+r.value);
+    }
+  }
+  return map;
+}
+
 function userRoleCheckboxes(selected, idPrefix, onchangeFn){
   selected = selected || [];
   return ROLE_OPTIONS.map(o=>`<label style="display:flex;align-items:center;gap:7px;padding:6px 8px;cursor:pointer;font-size:12px">
@@ -9954,10 +9997,7 @@ function openCreateUserModal(){
         <div style="font-size:10px;color:#8090b0;margin-bottom:12px">User will be required to change this on first login.</div>
         <label style="font-size:11px;font-weight:700;color:#5060a0">ROLES (select one or more)</label>
         <div style="border:1.5px solid #e8ecf4;border-radius:7px;padding:4px;margin:4px 0 12px">${userRoleCheckboxes([],'cu-role','toggleCreateUserStores')}</div>
-        <div id="cu-stores-wrap" style="display:none;margin-bottom:12px">
-          <label style="font-size:11px;font-weight:700;color:#5060a0">ASSIGNED STORES</label>
-          <div style="border:1.5px solid #e8ecf4;border-radius:7px;padding:4px;margin-top:4px">${userStoreCheckboxes([],'cu-store')}</div>
-        </div>
+        ${roleStoresSections({}, 'cu')}
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
           <button onclick="closeModal()" class="secondary-btn">Cancel</button>
           <button id="cu-save" onclick="submitCreateUser()" class="primary-btn" style="padding:9px 20px">Create User</button>
@@ -9967,15 +10007,14 @@ function openCreateUserModal(){
   toggleCreateUserStores();
 }
 function toggleCreateUserStores(){
-  const roles = collectRoleCheckboxes('cu-role');
-  document.getElementById('cu-stores-wrap').style.display = rolesNeedStores(roles) ? 'block' : 'none';
+  syncRoleStoresSections('cu');
 }
 async function submitCreateUser(){
   const name = document.getElementById('cu-name').value.trim();
   const email = document.getElementById('cu-email').value.trim();
   const password = document.getElementById('cu-password').value;
   const roles = collectRoleCheckboxes('cu-role');
-  const stores = rolesNeedStores(roles) ? collectStoreCheckboxes('cu-store') : [];
+  const roleStores = collectRoleStores('cu', roles);
   const errEl = document.getElementById('cu-error');
   const btn = document.getElementById('cu-save');
   errEl.style.display='none';
@@ -9983,11 +10022,13 @@ async function submitCreateUser(){
   if(!name || !email || !password){ errEl.textContent='Name, email and password are required'; errEl.style.display='block'; return; }
   if(roles.length===0){ errEl.textContent='Select at least one role'; errEl.style.display='block'; return; }
   if(password.length < 6){ errEl.textContent='Password must be at least 6 characters'; errEl.style.display='block'; return; }
-  if(rolesNeedStores(roles) && stores.length===0){ errEl.textContent='Assign at least one store for this role'; errEl.style.display='block'; return; }
+  for(const r of STORE_ROLES){
+    if(roles.includes(r.value) && (roleStores[r.value]||[]).length===0){ errEl.textContent='Assign at least one store for the '+r.label+' role'; errEl.style.display='block'; return; }
+  }
 
   btn.disabled=true; btn.textContent='Creating…'; btn.style.opacity='0.6';
   try{
-    await callAdminFn({action:'create_user', email, password, display_name:name, roles, assigned_stores:stores});
+    await callAdminFn({action:'create_user', email, password, display_name:name, roles, role_stores:roleStores});
     closeModal();
     showToast('✓ User created — '+name);
     await loadAllUsers();
@@ -10015,10 +10056,7 @@ function openEditUserModal(userId){
         <label style="font-size:11px;font-weight:700;color:#5060a0">ROLES (select one or more)</label>
         <div style="border:1.5px solid #e8ecf4;border-radius:7px;padding:4px;margin:4px 0 ${isSelf?'4px':'12px'};${isSelf?'opacity:0.6;pointer-events:none':''}">${userRoleCheckboxes(uRoles,'eu-role','toggleEditUserStores')}</div>
         ${isSelf?'<div style="font-size:10px;color:#8090b0;margin-bottom:12px">You cannot change your own roles.</div>':''}
-        <div id="eu-stores-wrap" style="display:${rolesNeedStores(uRoles)?'block':'none'};margin-bottom:12px">
-          <label style="font-size:11px;font-weight:700;color:#5060a0">ASSIGNED STORES</label>
-          <div style="border:1.5px solid #e8ecf4;border-radius:7px;padding:4px;margin-top:4px">${userStoreCheckboxes(u.assigned_stores,'eu-store')}</div>
-        </div>
+        ${roleStoresSections(u.role_stores||{}, 'eu')}
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:16px;${isSelf?'opacity:0.5;pointer-events:none':''}">
           <input type="checkbox" id="eu-active" ${u.active?'checked':''} style="width:16px;height:16px;accent-color:#1a7a45"/>
           <span style="font-size:13px;color:#0d1f4e;font-weight:600">Active</span>
@@ -10030,17 +10068,17 @@ function openEditUserModal(userId){
         </div>
       </div>
     </div>`;
+  toggleEditUserStores();
 }
 function toggleEditUserStores(){
-  const roles = collectRoleCheckboxes('eu-role');
-  document.getElementById('eu-stores-wrap').style.display = rolesNeedStores(roles) ? 'block' : 'none';
+  syncRoleStoresSections('eu');
 }
 async function submitEditUser(userId){
   const u = allUsers.find(x=>x.id===userId);
   const isSelf = currentUser && userId===currentUser.id;
   const name = document.getElementById('eu-name').value.trim();
   const roles = isSelf ? ((u.roles&&u.roles.length>0)?u.roles:[u.role]) : collectRoleCheckboxes('eu-role');
-  const stores = rolesNeedStores(roles) ? collectStoreCheckboxes('eu-store') : [];
+  const roleStores = collectRoleStores('eu', roles);
   const active = isSelf ? true : document.getElementById('eu-active').checked;
   const errEl = document.getElementById('eu-error');
   const btn = document.getElementById('eu-save');
@@ -10048,11 +10086,13 @@ async function submitEditUser(userId){
 
   if(!name){ errEl.textContent='Name is required'; errEl.style.display='block'; return; }
   if(roles.length===0){ errEl.textContent='Select at least one role'; errEl.style.display='block'; return; }
-  if(rolesNeedStores(roles) && stores.length===0){ errEl.textContent='Assign at least one store for this role'; errEl.style.display='block'; return; }
+  for(const r of STORE_ROLES){
+    if(roles.includes(r.value) && (roleStores[r.value]||[]).length===0){ errEl.textContent='Assign at least one store for the '+r.label+' role'; errEl.style.display='block'; return; }
+  }
 
   btn.disabled=true; btn.textContent='Saving…'; btn.style.opacity='0.6';
   try{
-    await callAdminFn({action:'update_user', user_id:userId, display_name:name, roles, assigned_stores:stores, active});
+    await callAdminFn({action:'update_user', user_id:userId, display_name:name, roles, role_stores:roleStores, active});
     closeModal();
     showToast('✓ User updated');
     await loadAllUsers();
@@ -10261,14 +10301,15 @@ function mySalesDateRange(){
   return {from, to};
 }
 
-// Determine which stores the My Sales view should show
+// Determine which stores the My Sales view should show (sales_rep role's stores)
 function mySalesStores(){
   if(isAdmin()){
     const rep = allUsers.find(u=>u.id===mySalesRepId);
-    if(rep) return (rep.assigned_stores||[]).filter(s=>STORES.includes(s));
+    if(rep){ const rs = rep.role_stores || {}; return (rs['sales_rep'] || rep.assigned_stores || []).filter(s=>STORES.includes(s)); }
     return [];
   }
-  return userStores();
+  const rs = currentUser?.role_stores || {};
+  return (rs['sales_rep'] || []).filter(s=>STORES.includes(s));
 }
 
 async function renderMySales(){
