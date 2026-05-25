@@ -671,7 +671,13 @@ tr.editing-row{box-shadow:0 2px 8px rgba(201,168,76,.2)}
     <div id="low-alert-sb"></div>
     <div class="sync-status" id="sync-status"></div>
     <button class="ai-btn" onclick="toggleAI()">✦ &nbsp;<span>AI Assistant</span></button>
-    <button class="reset-btn" onclick="resetConfig()">↺ &nbsp;<span>Change Database</span></button>
+    <div id="sb-user-footer" style="margin-top:8px;padding:10px 12px;background:rgba(255,255,255,0.06);border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+      <div style="min-width:0;flex:1">
+        <div id="sb-user-name" style="font-size:12px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">—</div>
+        <div id="sb-user-role" style="font-size:10px;color:#a0acd0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">—</div>
+      </div>
+      <button onclick="doLogout()" title="Sign out" style="flex-shrink:0;background:rgba(255,255,255,0.1);border:none;border-radius:6px;padding:6px 10px;color:#fff;font-size:11px;font-weight:700;cursor:pointer">⏻ Logout</button>
+    </div>
   </aside>
   <div id="main">
     <div class="main-header">
@@ -1530,7 +1536,17 @@ async function initApp(){
   await loadInvoices();
   await loadCupReadings();
   hideLoading();
+  updateUserFooter();
   setView('dashboard');
+}
+
+function updateUserFooter(){
+  if(!currentUser) return;
+  const nameEl = document.getElementById('sb-user-name');
+  const roleEl = document.getElementById('sb-user-role');
+  const roleLabels = {admin:'Administrator', warehouse_stocker:'Warehouse Stocker', store_stocker:'Store Stocker', sales_rep:'Sales Rep'};
+  if(nameEl) nameEl.textContent = currentUser.display_name;
+  if(roleEl) roleEl.textContent = roleLabels[currentUser.role] || currentUser.role;
 }
 
 // ═══════════════════════════════════════════════════
