@@ -12166,31 +12166,59 @@ async function generateInvoicePreview(){
   // Get stations for this store
   const stations = getStationsForStore(store);
 
-  // Get charged coffee supplies from received store orders in this month
-  const chargedItems = [];
-  const periodOrders = storeOrders.filter(o=>o.store_name===store && o.status==='received' && (o.closed_at||o.created_at) >= periodStart && (o.closed_at||o.created_at) <= periodEnd+'T23:59:59');
-  for(const order of periodOrders){
-    for(const item of (order.items||[])){
-      if(item.product_source !== 'coffee') continue;
-      const qty = parseInt(item.order_qty)||0;
-      if(qty <= 0) continue;
-      const cp = coffeeProducts.find(p=>p.id===item.product_id);
-      if(!cp) continue;
-      if(cp.isInput) continue; // input item, not charged
-      const sp = parseFloat(cp.salePrice||cp.sale_price||0);
-      // Determine taxability: non-food consumables are taxed (filter rolls, etc.)
-      const isTaxable = isNonFoodConsumable(cp.name);
-      chargedItems.push({name:cp.name, qty, rate:sp, amount:qty*sp, taxable:isTaxable, productId:cp.id});
-    }
+  // ── Charged Coffee & Kitchen Supplies — pulled from consumption logs ──
+  // Mirrors the Consumption Report exactly so invoice and report always agree.
+  // Query inventory_count_log for reason='Consumption' with negative difference in the period.
+  let consumptionLogs = [];
+  try{
+    consumptionLogs = await sbFetchAll(
+      `inventory_count_log?store_name=eq.${encodeURIComponent(store)}&count_date=gte.${periodStart}&count_date=lte.${periodEnd}&order=product_name`,
+      {method:'GET', prefer:'return=representation'}
+    );
+  }catch(e){ consumptionLogs = []; }
+
+  // Sum consumed units by product (only reason='Consumption', negative differences)
+  const consumedByProduct = {};
+  for(const r of consumptionLogs){
+    if((r.reason||'').trim() !== 'Consumption') continue;
+    const diff = parseFloat(r.difference)||0;
+    if(diff >= 0) continue;
+    const key = r.product_id;
+    if(!consumedByProduct[key]) consumedByProduct[key] = {product_id:r.product_id, name:r.product_name, units:0};
+    consumedByProduct[key].units += Math.abs(diff);
   }
-  // Aggregate same items across orders
-  const itemMap = {};
-  for(const ci of chargedItems){
-    if(!itemMap[ci.name]) itemMap[ci.name] = {...ci, qty:0, amount:0};
-    itemMap[ci.name].qty += ci.qty;
-    itemMap[ci.name].amount += ci.amount;
+
+  // Build chargeable line items: coffee products that aren't input items
+  const aggregatedItems = [];
+  for(const c of Object.values(consumedByProduct)){
+    const si = storeInventory.find(x=>x.store_name===store && x.product_id===c.product_id);
+    const source = si?.product_source || 'mm';
+    if(source !== 'coffee') continue;
+    const cp = coffeeProducts.find(p=>p.id===c.product_id);
+    if(!cp) continue;
+    if(cp.isInput) continue; // not a chargeable item
+    const sp = parseFloat(cp.salePrice||cp.sale_price||0);
+    const isTaxable = isNonFoodConsumable(cp.name);
+    aggregatedItems.push({name:cp.name, qty:c.units, rate:sp, amount:c.units*sp, taxable:isTaxable, productId:cp.id});
   }
-  const aggregatedItems = Object.values(itemMap);
+  aggregatedItems.sort((a,b)=>a.name.localeCompare(b.name));
+
+  // ── MicroMarket Monthly Walk-off — pulled from theft logs (MM source only) ──
+  let walkoffCalculated = 0;
+  for(const r of consumptionLogs){
+    if((r.reason||'').trim() !== 'Theft/Walkoff') continue;
+    const diff = parseFloat(r.difference)||0;
+    if(diff >= 0) continue;
+    const si = storeInventory.find(x=>x.store_name===store && x.product_id===r.product_id);
+    const source = si?.product_source || 'mm';
+    if(source !== 'mm') continue;
+    const p = products.find(x=>x.id===r.product_id);
+    const sp = p ? parseFloat(p.salePrice||0) : 0;
+    walkoffCalculated += Math.abs(diff) * sp;
+  }
+  walkoffCalculated = Math.round(walkoffCalculated * 100) / 100;
+  window._invWalkoffCalculated = walkoffCalculated;
+  window._invWalkoffComped = false; // fresh generation starts un-comped
 
   // Equipment fees from contract
   const equipFees = JSON.parse(typeof contract.equipment_fees === 'string' ? contract.equipment_fees : JSON.stringify(contract.equipment_fees||[]));
@@ -12235,7 +12263,7 @@ async function generateInvoicePreview(){
 
       <!-- Charged Supplies -->
       <div style="background:#f4f6fa;border-radius:8px;padding:12px;margin-bottom:14px">
-        <div style="font-size:11px;font-weight:800;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">📦 Charged Supplies (from Store Orders)</div>
+        <div style="font-size:11px;font-weight:800;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px">📦 Charged Coffee & Kitchen Supplies</div>
         ${aggregatedItems.length===0?'<div style="font-size:11px;color:#7080a0">No charged coffee supplies found in received store orders for this period.</div>':''}
         ${aggregatedItems.length>0?`<div style="overflow-x:auto"><table><thead><tr>
           <th style="padding-left:8px">ITEM</th><th>QTY</th><th>RATE</th><th>AMOUNT</th><th>TAX</th>
@@ -12268,8 +12296,10 @@ async function generateInvoicePreview(){
         </div>
         <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:12px">
           <span style="font-size:11px;color:#0d1f4e;font-weight:600;flex:1">MicroMarket Monthly Walk-off</span>
-          <span style="margin-right:4px">$</span><input type="number" step="0.01" id="inv-svc-1" value="0.00" oninput="recalcInvoiceTotals()" style="width:80px;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 8px;font-size:11px;font-weight:700;outline:none"/>
+          <button id="inv-walkoff-comp" onclick="toggleWalkoffComp()" style="background:#fff;color:#b35a00;border:1.5px solid #e8c8a0;border-radius:5px;padding:3px 9px;font-size:10px;font-weight:700;cursor:pointer;margin-right:6px">Comp</button>
+          <span style="margin-right:4px">$</span><input type="number" step="0.01" id="inv-svc-1" value="${walkoffCalculated.toFixed(2)}" oninput="recalcInvoiceTotals()" style="width:80px;background:#fff;border:1px solid #d0d5e0;border-radius:5px;padding:4px 8px;font-size:11px;font-weight:700;outline:none"/>
         </div>
+        <div id="inv-walkoff-note" style="display:none;font-size:10px;color:#7080a0;font-style:italic;padding:0 0 4px 0;text-align:right"></div>
       </div>
 
       <!-- Manual Line Items -->
@@ -12307,6 +12337,33 @@ async function generateInvoicePreview(){
 function isNonFoodConsumable(name){
   const n = name.toLowerCase();
   return n.includes('filter') || n.includes('paper towel') || n.includes('stir stick');
+}
+
+// Toggle the MicroMarket Monthly Walk-off between the calculated value and $0 ("comped").
+// Preserves the calculated value so it can be restored. Updates the button label and shows
+// a small note indicating the comp state and the original calculated amount.
+function toggleWalkoffComp(){
+  const inp = document.getElementById('inv-svc-1');
+  const btn = document.getElementById('inv-walkoff-comp');
+  const note = document.getElementById('inv-walkoff-note');
+  const calc = window._invWalkoffCalculated || 0;
+  if(!inp || !btn) return;
+  const isComped = !window._invWalkoffComped;
+  window._invWalkoffComped = isComped;
+  if(isComped){
+    inp.value = '0.00';
+    btn.textContent = `Restore $${calc.toFixed(2)}`;
+    btn.style.color = '#1a7a45';
+    btn.style.borderColor = '#b8e0c8';
+    if(note){ note.style.display='block'; note.textContent = `Comp'd — was $${calc.toFixed(2)}`; }
+  } else {
+    inp.value = calc.toFixed(2);
+    btn.textContent = 'Comp';
+    btn.style.color = '#b35a00';
+    btn.style.borderColor = '#e8c8a0';
+    if(note){ note.style.display='none'; note.textContent = ''; }
+  }
+  recalcInvoiceTotals();
 }
 
 function recalcInvoiceTotals(){
