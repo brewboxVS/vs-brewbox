@@ -1300,7 +1300,10 @@ function rowToProduct(row){
     cat2: row.cat2||'',
     vendors: Array.isArray(row.vendors)?row.vendors:[],
     stores: Array.isArray(row.stores)?row.stores:[],
-    active: row.active!==false
+    active: row.active!==false,
+    packGroupId: row.pack_group_id||null,
+    packQtyPerUnit: parseFloat(row.pack_qty_per_unit)||0,
+    packIsCore: row.pack_is_core===true
   };
 }
 
@@ -1321,6 +1324,9 @@ function productToRow(p){
     vendors: p.vendors||[],
     stores: p.stores||[],
     active: p.active,
+    pack_group_id: p.packGroupId||null,
+    pack_qty_per_unit: p.packQtyPerUnit||0,
+    pack_is_core: p.packIsCore===true,
     updated_at: new Date().toISOString()
   };
 }
@@ -1548,6 +1554,7 @@ async function initApp(){
   await loadCoffeeContracts();
   await loadInvoices();
   await loadCupReadings();
+  await loadPackGroups();
   hideLoading();
   updateUserFooter();
   applyNavPermissions();
@@ -1764,6 +1771,7 @@ function setView(v){
         </div>
       </div>
       <button class="primary-btn" onclick="${v==='coffee'?'openAddCoffeeModal()':'openAddModal()'}">+ Add Item</button>
+      <button onclick="openPackManager('${v==='coffee'?'coffee':'mm'}')" style="background:#fff;color:#6b2fa0;border:1.5px solid #6b2fa0;border-radius:7px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer">🎁 Variety Packs</button>
     </div>`:'';
   updateSidebar();render();
 }
@@ -2322,7 +2330,7 @@ function renderInventoryRow(p){
   // Normal (read-only) row
   const rowStyle = '';
   return `<tr class="${p.active?'':'inactive-row'}" id="inv-row-${p.id}" style="${rowStyle}">
-    <td style="padding-left:12px;font-weight:600;color:#0d1f4e;white-space:normal;line-height:1.3;max-width:220px">${p.name}</td>
+    <td style="padding-left:12px;font-weight:600;color:#0d1f4e;white-space:normal;line-height:1.3;max-width:220px">${p.name}${packBadgeFor(p)}</td>
     <td style="font-family:monospace;font-size:10px;color:#7080a0;max-width:110px;overflow:hidden;text-overflow:ellipsis" title="${p.upc}">${p.upc.substring(0,15)}</td>
     <td style="font-weight:700;color:${qtyColor(p.qty,p.minLevel,p.maxLevel)}">${p.qty}</td>
     <td>${p.minLevel}</td><td style="color:#7080a0">${p.maxLevel}</td>
@@ -3140,7 +3148,10 @@ function rowToCoffeeProduct(row){
     vendors: Array.isArray(row.vendors)?row.vendors:[],
     stores: Array.isArray(row.stores)?row.stores:[],
     active: row.active!==false,
-    isInput: row.is_input===true
+    isInput: row.is_input===true,
+    packGroupId: row.pack_group_id||null,
+    packQtyPerUnit: parseFloat(row.pack_qty_per_unit)||0,
+    packIsCore: row.pack_is_core===true
   };
 }
 
@@ -3151,6 +3162,9 @@ function coffeeProductToRow(p){
     sale_price:p.salePrice, cost_per_box:p.costPerBox, pieces_per_box:p.piecesPerBox,
     cat1:p.cat1||'', cat2:p.cat2||'', vendors:p.vendors||[], stores:p.stores||[], active:p.active,
     is_input:p.isInput||false,
+    pack_group_id: p.packGroupId||null,
+    pack_qty_per_unit: p.packQtyPerUnit||0,
+    pack_is_core: p.packIsCore===true,
     updated_at:new Date().toISOString()
   };
 }
@@ -3287,7 +3301,7 @@ function renderCoffeeRow(p){
 
   const rowStyle = isLocked ? 'opacity:0.45;pointer-events:none;' : '';
   return `<tr class="${p.active?'':'inactive-row'}" id="coffee-row-${p.id}" style="${rowStyle}">
-    <td style="padding-left:12px;font-weight:600;color:#0d1f4e;white-space:normal;line-height:1.3;max-width:220px">${p.name}</td>
+    <td style="padding-left:12px;font-weight:600;color:#0d1f4e;white-space:normal;line-height:1.3;max-width:220px">${p.name}${packBadgeFor(p)}</td>
     <td style="font-family:monospace;font-size:10px;color:#7080a0;max-width:110px;overflow:hidden;text-overflow:ellipsis" title="${p.upc}">${p.upc.substring(0,15)}</td>
     <td style="font-weight:700;color:${qtyColor(p.qty,p.minLevel,p.maxLevel)}">${p.qty}</td>
     <td>${p.minLevel}</td><td style="color:#7080a0">${p.maxLevel}</td>
@@ -5210,6 +5224,29 @@ const WH_ORDERS_ARCHIVE = 'BrewBox Orders/Archive';
 
 let whOrders = [];          // open/received warehouse orders in Supabase
 let whOrdersLoaded = false;
+
+// ── Variety pack groups ──
+let packGroups = [];        // [{id,name,pack_type,case_size,product_source,vendors[],active}]
+async function loadPackGroups(){
+  if(!useSupabase) return;
+  try{ packGroups = await sbFetch('pack_groups?order=name.asc', {method:'GET', prefer:'return=representation'}); }
+  catch(e){ packGroups = []; }
+}
+function getPackGroup(id){ return packGroups.find(g=>g.id===id) || null; }
+// Members of a pack group from the appropriate product table
+function packMembers(group){
+  if(!group) return [];
+  const arr = group.product_source==='coffee' ? coffeeProducts : products;
+  return arr.filter(p=>p.packGroupId===group.id);
+}
+// Small badge shown on a product row if it belongs to a variety pack
+function packBadgeFor(p){
+  if(!p.packGroupId) return '';
+  const g = getPackGroup(p.packGroupId);
+  if(!g) return '';
+  const detail = g.pack_type==='fixed' ? '×'+(p.packQtyPerUnit||0) : (p.packIsCore?'core':'optional');
+  return ` <span style="background:#f3e8ff;color:#6b2fa0;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700;white-space:nowrap" title="${g.name}">🎁 ${g.name} ${detail}</span>`;
+}
 const LS_WH_ORDERS = 'vs_brewbox_wh_orders';
 
 // ── Google Sheets API helpers ──
@@ -5278,24 +5315,75 @@ async function saveWhOrder(order){
 }
 
 // ── Calculate recommended order items ──
-function calcWhOrderItems(selectedVendors){
-  // MM products
-  const lowMM = products.filter(p=> p.active && p.maxLevel > 0 && p.qty <= p.minLevel);
-  const mmItems = lowMM.map(p => {
-    const assignedVendors = (p.vendors||[]);
-    let vendor = '';
-    for(const vp of getVendorPriority()){
-      if(assignedVendors.includes(vp)){ vendor = vp; break; }
-    }
-    if(!vendor && assignedVendors.length>0) vendor = assignedVendors[0];
-    if(!vendor) vendor = 'Unassigned';
+// Helper: pick a vendor for a product/group by priority order
+function pickVendor(assignedVendors){
+  for(const vp of getVendorPriority()){ if(assignedVendors.includes(vp)) return vp; }
+  if(assignedVendors.length>0) return assignedVendors[0];
+  return 'Unassigned';
+}
 
+// Build recommended pack-group order lines (one line per triggered group)
+function calcPackOrderLines(){
+  const lines = [];
+  for(const g of packGroups){
+    if(!g.active) continue;
+    const members = packMembers(g).filter(m=>m.active);
+    if(members.length===0) continue;
+
+    if(g.pack_type==='fixed'){
+      // Trigger only when ALL members are at/below min (and have a max set)
+      const eligible = members.filter(m=>m.maxLevel>0);
+      if(eligible.length===0) continue;
+      const allLow = eligible.every(m=>m.qty<=m.minLevel);
+      if(!allLow) continue;
+      // Cases = fewest packs to bring the highest-stock flavor to its max
+      // = min over members of ceil((max - qty) / qtyPerUnit)
+      let recCases = Infinity;
+      for(const m of eligible){
+        const per = m.packQtyPerUnit||1;
+        const need = Math.max(0, m.maxLevel - m.qty);
+        const packs = Math.max(1, Math.ceil(need / per));
+        if(packs < recCases) recCases = packs;
+      }
+      if(!isFinite(recCases)) recCases = 1;
+      lines.push({
+        is_pack:true, pack_group_id:g.id, pack_name:g.name, pack_type:'fixed', case_size:g.case_size,
+        product_name:'🎁 '+g.name, cat1:'VARIETY PACK', vendor:pickVendor(g.vendors||[]),
+        product_source:g.product_source, pieces_per_box:g.case_size, rec_cases:recCases,
+        members: members.map(m=>({id:m.id, name:m.name, qty:m.qty, min:m.minLevel, max:m.maxLevel, per:m.packQtyPerUnit, source:g.product_source})),
+        bought_rec:false, actual_cases:'', notes:''
+      });
+    } else {
+      // Variable: trigger only when ALL CORE members are at/below min
+      const core = members.filter(m=>m.packIsCore && m.maxLevel>0);
+      if(core.length===0) continue;
+      const allCoreLow = core.every(m=>m.qty<=m.minLevel);
+      if(!allCoreLow) continue;
+      lines.push({
+        is_pack:true, pack_group_id:g.id, pack_name:g.name, pack_type:'variable', case_size:g.case_size,
+        product_name:'🎁 '+g.name, cat1:'VARIETY PACK', vendor:pickVendor(g.vendors||[]),
+        product_source:g.product_source, pieces_per_box:g.case_size, rec_cases:1, // flat recommendation
+        members: members.map(m=>({id:m.id, name:m.name, qty:m.qty, min:m.minLevel, max:m.maxLevel, core:m.packIsCore, source:g.product_source})),
+        bought_rec:false, actual_cases:'', notes:''
+      });
+    }
+  }
+  return lines;
+}
+
+function calcWhOrderItems(selectedVendors){
+  // Product IDs that belong to a variety pack — excluded from individual recommendations
+  const packMemberIds = new Set();
+  for(const g of packGroups){ for(const m of packMembers(g)){ packMemberIds.add(g.product_source+':'+m.id); } }
+
+  // MM products (excluding pack members)
+  const lowMM = products.filter(p=> p.active && p.maxLevel > 0 && p.qty <= p.minLevel && !packMemberIds.has('mm:'+p.id));
+  const mmItems = lowMM.map(p => {
     const ppb = p.piecesPerBox || 1;
     const needed = Math.max(0, p.maxLevel - p.qty);
     const recCases = Math.max(1, Math.ceil(needed / ppb));
-
     return {
-      product_id: p.id, product_name: p.name, cat1: p.cat1||'', vendor,
+      product_id: p.id, product_name: p.name, cat1: p.cat1||'', vendor: pickVendor(p.vendors||[]),
       product_source: 'mm',
       current_qty: p.qty, min_level: p.minLevel, max_level: p.maxLevel,
       pieces_per_box: ppb, rec_cases: recCases,
@@ -5303,23 +5391,14 @@ function calcWhOrderItems(selectedVendors){
     };
   });
 
-  // Coffee products
-  const lowCoffee = coffeeProducts.filter(p=> p.active && p.maxLevel > 0 && p.qty <= p.minLevel);
+  // Coffee products (excluding pack members)
+  const lowCoffee = coffeeProducts.filter(p=> p.active && p.maxLevel > 0 && p.qty <= p.minLevel && !packMemberIds.has('coffee:'+p.id));
   const coffeeItems = lowCoffee.map(p => {
-    const assignedVendors = (p.vendors||[]);
-    let vendor = '';
-    for(const vp of getVendorPriority()){
-      if(assignedVendors.includes(vp)){ vendor = vp; break; }
-    }
-    if(!vendor && assignedVendors.length>0) vendor = assignedVendors[0];
-    if(!vendor) vendor = 'Unassigned';
-
     const ppb = p.piecesPerBox || 1;
     const needed = Math.max(0, p.maxLevel - p.qty);
     const recCases = Math.max(1, Math.ceil(needed / ppb));
-
     return {
-      product_id: p.id, product_name: p.name, cat1: p.cat1||'', vendor,
+      product_id: p.id, product_name: p.name, cat1: p.cat1||'', vendor: pickVendor(p.vendors||[]),
       product_source: 'coffee',
       current_qty: p.qty, min_level: p.minLevel, max_level: p.maxLevel,
       pieces_per_box: ppb, rec_cases: recCases,
@@ -5327,7 +5406,10 @@ function calcWhOrderItems(selectedVendors){
     };
   });
 
-  const orderItems = [...mmItems, ...coffeeItems];
+  // Variety pack lines
+  const packLines = calcPackOrderLines();
+
+  const orderItems = [...mmItems, ...coffeeItems, ...packLines];
 
   // Filter by selected vendors if provided
   const filtered = selectedVendors && selectedVendors.length > 0
@@ -5352,6 +5434,18 @@ function buildSheetData(order){
   const headers = ['Item Name','Category','Vendor','Current Qty','Min Level','Max Level','Pieces/Case','Rec. Cases','✓ Bought Rec.','Actual Cases','Notes'];
   const rows = [headers];
   for(const item of order.items){
+    if(item.is_pack){
+      const breakdown = item.pack_type==='fixed'
+        ? (item.members||[]).map(m=>`${m.per}x ${m.name}`).join(', ')
+        : 'VARIABLE — core: '+((item.members||[]).filter(m=>m.core).map(m=>m.name).join(', ')||'');
+      rows.push([
+        item.product_name, 'VARIETY PACK', item.vendor||'',
+        '', '', '', item.pieces_per_box, item.rec_cases,
+        item.bought_rec ? 'YES' : '', item.actual_cases||'',
+        (item.notes? item.notes+' · ':'')+breakdown
+      ]);
+      continue;
+    }
     rows.push([
       item.product_name,
       item.cat1||'',
@@ -5638,11 +5732,16 @@ function renderWhOrderDetail(order){
               const casesUsed = isNA ? 0 : (item.bought_rec ? item.rec_cases : (item.actual_cases!==''?parseFloat(item.actual_cases)||0:0));
               const qtyAdd = casesUsed * item.pieces_per_box;
               const confirmed = !isNA && (item.bought_rec || (item.actual_cases!==''&&item.actual_cases>0));
+              const isPack = item.is_pack===true;
+              const packBadge = isPack ? (item.pack_type==='fixed'
+                ? ' <span style="background:#e6f4ee;color:#1a7a45;border-radius:4px;padding:1px 5px;font-size:8px;font-weight:700">FIXED PACK</span>'
+                : ' <span style="background:#fff0e6;color:#b35a00;border-radius:4px;padding:1px 5px;font-size:8px;font-weight:700">VARIABLE PACK</span>') : '';
+              const packBreakdown = isPack ? `<div style="font-size:9px;color:#7080a0;font-weight:500;margin-top:2px">${item.pack_type==='fixed'?(item.members||[]).map(m=>`${m.per}× ${m.name}`).join(', '):'core: '+((item.members||[]).filter(m=>m.core).map(m=>m.name).join(', ')||'—')}</div>` : '';
               return `<tr style="background:${isNA?'#fef0f0':confirmed?'#f0fff4':''}">
-                <td style="padding-left:4px;font-weight:600;color:${isNA?'#b0b8cc':'#0d1f4e'};white-space:normal;max-width:200px;line-height:1.3;${isNA?'text-decoration:line-through':''}">${item.product_name}</td>
-                <td style="font-size:10px;color:#5060a0">${item.cat1||'—'}</td>
-                <td style="font-weight:700;color:${item.current_qty<=item.min_level?'#b01c1c':'#0d1f4e'}">${item.current_qty}</td>
-                <td style="color:#7080a0">${item.max_level}</td>
+                <td style="padding-left:4px;font-weight:600;color:${isNA?'#b0b8cc':(isPack?'#6b2fa0':'#0d1f4e')};white-space:normal;max-width:200px;line-height:1.3;${isNA?'text-decoration:line-through':''}">${item.product_name}${packBadge}${packBreakdown}</td>
+                <td style="font-size:10px;color:#5060a0">${isPack?'PACK':(item.cat1||'—')}</td>
+                <td style="font-weight:700;color:${isPack?'#7080a0':(item.current_qty<=item.min_level?'#b01c1c':'#0d1f4e')}">${isPack?'—':item.current_qty}</td>
+                <td style="color:#7080a0">${isPack?'—':item.max_level}</td>
                 <td style="color:#5060a0">${item.pieces_per_box}</td>
                 <td style="font-weight:700;color:#0d1f4e">${item.rec_cases}</td>
                 <td>
@@ -5660,7 +5759,7 @@ function renderWhOrderDetail(order){
                     ${isNA||item.bought_rec?'disabled':''}
                   />`:`<span style="color:#5060a0;font-weight:600">${item.actual_cases||'—'}</span>`}
                 </td>
-                <td id="wh-qty-add-${order.id}-${globalIdx}" style="font-weight:700;color:${isNA?'#b01c1c':qtyAdd>0?'#1a7a45':'#d0d5e0'}">${isNA?'N/A':qtyAdd>0?'+'+qtyAdd:'—'}</td>
+                <td id="wh-qty-add-${order.id}-${globalIdx}" style="font-weight:700;color:${isNA?'#b01c1c':qtyAdd>0?'#1a7a45':'#d0d5e0'}">${isNA?'N/A':qtyAdd>0?(isPack?'+'+qtyAdd+' tot':'+'+qtyAdd):'—'}</td>
                 <td>
                   ${isOpen?`<label style="display:flex;align-items:center;gap:5px;cursor:pointer">
                     <input type="checkbox" ${isNA?'checked':''}
@@ -5961,6 +6060,27 @@ function renderWhOrderPreview(){
                 <tbody>
                 ${vitems.map(item=>{
                   const idx = (window._whPreviewItems||[]).indexOf(item);
+                  if(item.is_pack){
+                    const typeBadge = item.pack_type==='fixed'
+                      ? '<span style="background:#e6f4ee;color:#1a7a45;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700">FIXED</span>'
+                      : '<span style="background:#fff0e6;color:#b35a00;border-radius:4px;padding:1px 6px;font-size:9px;font-weight:700">VARIABLE</span>';
+                    const breakdown = item.pack_type==='fixed'
+                      ? (item.members||[]).map(m=>`${m.per}× ${m.name}`).join(', ')
+                      : 'core: '+((item.members||[]).filter(m=>m.core).map(m=>m.name).join(', ')||'—')+((item.members||[]).some(m=>!m.core)?' · optional: '+(item.members||[]).filter(m=>!m.core).map(m=>m.name).join(', '):'');
+                    return `<tr>
+                    <td style="padding-left:4px;font-weight:700;color:#6b2fa0;white-space:normal;max-width:200px">${item.product_name} ${typeBadge}
+                      <div style="font-size:10px;color:#7080a0;font-weight:500;margin-top:2px">${breakdown}</div></td>
+                    <td style="font-size:10px;color:#6b2fa0;font-weight:700">PACK</td>
+                    <td style="color:#7080a0">—</td>
+                    <td style="color:#7080a0">—</td>
+                    <td style="color:#7080a0">—</td>
+                    <td>${item.pieces_per_box}</td>
+                    <td><input type="number" value="${item.rec_cases}" min="0" style="width:55px;padding:4px;border:1.5px solid #6b2fa0;border-radius:5px;font-size:12px;font-weight:700;text-align:center;outline:none"
+                      oninput="whPreviewUpdateCases(${idx},this.value)"/></td>
+                    <td id="wh-prev-qty-${idx}" style="color:#1a7a45;font-weight:700">+${item.rec_cases*item.pieces_per_box}</td>
+                    <td><button onclick="whPreviewRemoveItem(${idx})" style="background:none;border:none;color:#b01c1c;cursor:pointer;font-size:14px" title="Remove">✕</button></td>
+                  </tr>`;
+                  }
                   return `<tr>
                   <td style="padding-left:4px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:200px">${item.product_name}</td>
                   <td style="font-size:10px;color:#5060a0">${item.cat1}</td>
@@ -6075,6 +6195,245 @@ function exportWhOrderExcel(order){
 
 // Keep legacy function name for backward compat
 function previewNewWhOrder(){ openWhOrderVendorPicker(); }
+
+// ═══════════════════════════════════════════════════
+//  VARIETY PACK MANAGER
+// Manage variety pack groups: a pack is a single purchasable case that maps to
+// multiple member flavors. Two types:
+//  - 'fixed': always the same flavors at fixed qty each (e.g. Chobani ×5 of 4 flavors).
+//    Receiving auto-adds pack_qty_per_unit to every member.
+//  - 'variable': a roster of possible flavors; the actual mix is chosen at receive time
+//    and must sum to case_size. Reorder trigger uses only 'core' members.
+// ═══════════════════════════════════════════════════
+let _packMgrSource = 'mm'; // 'mm' | 'coffee'
+
+function openPackManager(source){
+  _packMgrSource = source || 'mm';
+  renderPackManager();
+}
+
+function renderPackManager(){
+  const groups = packGroups.filter(g=>g.product_source===_packMgrSource);
+  const srcLabel = _packMgrSource==='coffee' ? 'Coffee' : 'MM';
+  document.getElementById('modal-container').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="width:640px;max-height:90vh;overflow-y:auto">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div class="modal-title" style="margin-bottom:0">🎁 Variety Packs — ${srcLabel}</div>
+          <button onclick="closeModal()" style="background:none;border:none;color:#7080a0;cursor:pointer;font-size:20px">✕</button>
+        </div>
+        <div style="font-size:11px;color:#7080a0;margin-bottom:14px;line-height:1.5">A variety pack is one case you buy that contains multiple flavors. Group the member products here so ordering & receiving treat them as a single unit.</div>
+        <button onclick="openPackEditor('${_packMgrSource}',null)" class="primary-btn" style="padding:8px 16px;margin-bottom:14px">+ New Variety Pack</button>
+        ${groups.length===0 ? '<div style="text-align:center;padding:24px;color:#7080a0;font-size:12px;border:1px dashed #d0d5e0;border-radius:8px">No variety packs defined yet.</div>' :
+          groups.map(g=>{
+            const members = packMembers(g);
+            const typeBadge = g.pack_type==='fixed'
+              ? '<span style="background:#e6f4ee;color:#1a7a45;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">FIXED</span>'
+              : '<span style="background:#fff0e6;color:#b35a00;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">VARIABLE</span>';
+            return `<div style="border:1px solid #e8ecf4;border-radius:8px;padding:12px 14px;margin-bottom:10px">
+              <div style="display:flex;justify-content:space-between;align-items:flex-start">
+                <div>
+                  <div style="font-size:13px;font-weight:700;color:#0d1f4e;margin-bottom:3px">${g.name} ${typeBadge} ${g.active?'':'<span style="font-size:9px;color:#b01c1c">INACTIVE</span>'}</div>
+                  <div style="font-size:11px;color:#7080a0">Case size ${g.case_size} · ${members.length} member${members.length!==1?'s':''}${(g.vendors&&g.vendors.length)?' · '+g.vendors.join(', '):''}</div>
+                </div>
+                <button onclick="openPackEditor('${_packMgrSource}',${g.id})" style="background:#f4f6fa;color:#1a5296;border:1px solid #b0c8e8;border-radius:5px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer">Edit</button>
+              </div>
+              ${members.length>0?`<div style="margin-top:8px;font-size:11px;color:#5060a0">
+                ${members.map(m=>{
+                  const detail = g.pack_type==='fixed' ? `×${m.packQtyPerUnit}` : (m.packIsCore?'<span style="color:#1a7a45;font-weight:700">core</span>':'optional');
+                  return `<span style="display:inline-block;background:#f4f6fa;border-radius:5px;padding:2px 8px;margin:2px 3px 2px 0">${m.name} ${detail}</span>`;
+                }).join('')}
+              </div>`:''}
+            </div>`;
+          }).join('')}
+      </div>
+    </div>`;
+}
+
+let _packEditId = null;
+let _packEditSource = 'mm';
+function openPackEditor(source, groupId){
+  _packEditSource = source;
+  _packEditId = groupId;
+  const g = groupId ? getPackGroup(groupId) : null;
+  const isNew = !g;
+  const allProducts = (source==='coffee'?coffeeProducts:products).filter(p=>p.active).slice().sort((a,b)=>a.name.localeCompare(b.name));
+  const memberIds = new Set(g ? packMembers(g).map(m=>m.id) : []);
+  const ptype = g ? g.pack_type : 'fixed';
+  const vendorNames = source==='coffee' ? getCoffeeVendors() : getMMVendors();
+  const gVendors = g ? (g.vendors||[]) : [];
+
+  document.getElementById('modal-container').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="width:640px;max-height:92vh;overflow-y:auto">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <div class="modal-title" style="margin-bottom:0">${isNew?'New':'Edit'} Variety Pack</div>
+          <button onclick="renderPackManager()" style="background:none;border:none;color:#7080a0;cursor:pointer;font-size:20px">✕</button>
+        </div>
+        <div id="pe-error" style="display:none;background:#fde8e8;color:#b01c1c;border-radius:7px;padding:9px 12px;font-size:12px;margin-bottom:12px;font-weight:600"></div>
+
+        <label style="font-size:11px;font-weight:700;color:#5060a0">PACK NAME</label>
+        <input id="pe-name" value="${g?g.name.replace(/"/g,'&quot;'):''}" placeholder="e.g. Pistachio Variety 24pk" style="width:100%;padding:9px 11px;border:1.5px solid #d0d5e0;border-radius:7px;font-size:13px;margin:4px 0 12px;outline:none;box-sizing:border-box"/>
+
+        <div style="display:flex;gap:12px;margin-bottom:12px">
+          <div style="flex:1">
+            <label style="font-size:11px;font-weight:700;color:#5060a0">PACK TYPE</label>
+            <select id="pe-type" onchange="packEditorTypeChange()" style="width:100%;padding:9px 11px;border:1.5px solid #d0d5e0;border-radius:7px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box">
+              <option value="fixed" ${ptype==='fixed'?'selected':''}>Fixed — same flavors & qty every time</option>
+              <option value="variable" ${ptype==='variable'?'selected':''}>Variable — flavors chosen at receive</option>
+            </select>
+          </div>
+          <div style="width:120px">
+            <label style="font-size:11px;font-weight:700;color:#5060a0">CASE SIZE</label>
+            <input id="pe-casesize" type="number" min="0" value="${g?g.case_size:0}" style="width:100%;padding:9px 11px;border:1.5px solid #d0d5e0;border-radius:7px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box"/>
+          </div>
+        </div>
+
+        <label style="font-size:11px;font-weight:700;color:#5060a0">VENDORS</label>
+        <div style="border:1.5px solid #e8ecf4;border-radius:7px;padding:6px;margin:4px 0 12px;display:flex;flex-wrap:wrap;gap:4px">
+          ${vendorNames.map(v=>`<label style="display:flex;align-items:center;gap:5px;font-size:11px;background:#f4f6fa;border-radius:5px;padding:4px 8px;cursor:pointer">
+            <input type="checkbox" class="pe-vendor" value="${v}" ${gVendors.includes(v)?'checked':''} style="width:13px;height:13px;accent-color:#0d1f4e"/>${v}</label>`).join('')}
+        </div>
+
+        <label style="font-size:11px;font-weight:700;color:#5060a0">MEMBER FLAVORS</label>
+        <div id="pe-type-hint" style="font-size:10px;color:#8090b0;margin:2px 0 6px"></div>
+        <div style="max-height:260px;overflow-y:auto;border:1.5px solid #e8ecf4;border-radius:7px;padding:4px">
+          ${allProducts.map(p=>{
+            const m = g ? packMembers(g).find(x=>x.id===p.id) : null;
+            const checked = memberIds.has(p.id);
+            return `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid #f0f2f8">
+              <input type="checkbox" class="pe-member" data-id="${p.id}" ${checked?'checked':''} onchange="packEditorMemberToggle(${p.id})" style="width:15px;height:15px;accent-color:#0d1f4e;flex-shrink:0"/>
+              <span style="flex:1;font-size:12px;font-weight:600;color:#0d1f4e">${p.name}</span>
+              <span class="pe-fixed-qty" data-id="${p.id}" style="display:none;align-items:center;gap:4px">
+                <span style="font-size:10px;color:#7080a0">qty/case</span>
+                <input type="number" min="0" class="pe-qty-input" data-id="${p.id}" value="${m?m.packQtyPerUnit||0:0}" style="width:50px;padding:3px 5px;border:1.5px solid #d0d5e0;border-radius:5px;font-size:12px;text-align:center;outline:none"/>
+              </span>
+              <label class="pe-core-lbl" data-id="${p.id}" style="display:none;align-items:center;gap:4px;font-size:10px;color:#5060a0;cursor:pointer">
+                <input type="checkbox" class="pe-core-input" data-id="${p.id}" ${m&&m.packIsCore?'checked':''} style="width:13px;height:13px;accent-color:#1a7a45"/>core
+              </label>
+            </div>`;
+          }).join('')}
+        </div>
+
+        <div style="display:flex;gap:8px;justify-content:space-between;margin-top:14px">
+          <div>${(!isNew)?`<button onclick="deletePackGroup(${g.id})" style="background:#fff;color:#b01c1c;border:1.5px solid #f0b8b8;border-radius:7px;padding:9px 14px;font-size:12px;font-weight:700;cursor:pointer">Delete Pack</button>`:''}</div>
+          <div style="display:flex;gap:8px">
+            <button onclick="renderPackManager()" class="secondary-btn">Cancel</button>
+            <button id="pe-save" onclick="savePackGroup()" class="primary-btn" style="padding:9px 20px">${isNew?'Create Pack':'Save Changes'}</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  packEditorTypeChange();
+}
+
+function packEditorTypeChange(){
+  const type = document.getElementById('pe-type').value;
+  document.getElementById('pe-type-hint').textContent = type==='fixed'
+    ? 'Fixed: set how many of each flavor come in one case. Receiving adds these amounts automatically.'
+    : 'Variable: check which flavors are possible. Mark "core" flavors (always present) — these drive reorder timing. Actual mix is entered at receive.';
+  // Show qty inputs for fixed, core labels for variable — only on checked members
+  document.querySelectorAll('.pe-member').forEach(cb=>{
+    const id = cb.getAttribute('data-id');
+    packEditorMemberToggle(parseInt(id), type);
+  });
+}
+
+function packEditorMemberToggle(id, forceType){
+  const type = forceType || document.getElementById('pe-type').value;
+  const cb = document.querySelector('.pe-member[data-id="'+id+'"]');
+  const checked = cb && cb.checked;
+  const qtyWrap = document.querySelector('.pe-fixed-qty[data-id="'+id+'"]');
+  const coreLbl = document.querySelector('.pe-core-lbl[data-id="'+id+'"]');
+  if(qtyWrap) qtyWrap.style.display = (checked && type==='fixed') ? 'flex' : 'none';
+  if(coreLbl) coreLbl.style.display = (checked && type==='variable') ? 'flex' : 'none';
+}
+
+async function savePackGroup(){
+  const name = document.getElementById('pe-name').value.trim();
+  const type = document.getElementById('pe-type').value;
+  const caseSize = parseInt(document.getElementById('pe-casesize').value)||0;
+  const vendors = Array.from(document.querySelectorAll('.pe-vendor:checked')).map(c=>c.value);
+  const memberCbs = Array.from(document.querySelectorAll('.pe-member:checked'));
+  const errEl = document.getElementById('pe-error');
+  const btn = document.getElementById('pe-save');
+  errEl.style.display='none';
+
+  if(!name){ errEl.textContent='Pack name is required'; errEl.style.display='block'; return; }
+  if(caseSize<=0){ errEl.textContent='Case size must be greater than 0'; errEl.style.display='block'; return; }
+  if(memberCbs.length<2){ errEl.textContent='Select at least 2 member flavors'; errEl.style.display='block'; return; }
+
+  // Gather member assignments
+  const members = memberCbs.map(cb=>{
+    const id = parseInt(cb.getAttribute('data-id'));
+    const qty = parseInt(document.querySelector('.pe-qty-input[data-id="'+id+'"]')?.value)||0;
+    const core = document.querySelector('.pe-core-input[data-id="'+id+'"]')?.checked||false;
+    return {id, qty, core};
+  });
+
+  if(type==='fixed'){
+    const sum = members.reduce((s,m)=>s+m.qty,0);
+    if(members.some(m=>m.qty<=0)){ errEl.textContent='Each fixed-pack flavor needs a qty per case greater than 0'; errEl.style.display='block'; return; }
+    if(sum!==caseSize){ errEl.textContent=`Flavor quantities sum to ${sum}, but case size is ${caseSize}. They must match.`; errEl.style.display='block'; return; }
+  } else {
+    if(!members.some(m=>m.core)){ errEl.textContent='Mark at least one flavor as "core" for a variable pack'; errEl.style.display='block'; return; }
+  }
+
+  btn.disabled=true; btn.textContent='Saving…'; btn.style.opacity='0.6';
+  try{
+    const groupId = _packEditId || Date.now();
+    const row = { id: groupId, name, pack_type:type, case_size:caseSize, product_source:_packEditSource, vendors, active:true, updated_at:new Date().toISOString() };
+    await sbFetch('pack_groups', {method:'POST', prefer:'resolution=merge-duplicates,return=minimal', body:JSON.stringify([row])});
+
+    // Update member products: first clear any members previously in this group, then set new ones
+    const arr = _packEditSource==='coffee' ? coffeeProducts : products;
+    const tableName = _packEditSource==='coffee' ? 'coffee_products' : 'products';
+    const newMemberIds = new Set(members.map(m=>m.id));
+
+    // Clear products that were in this group but are no longer selected
+    for(const p of arr){
+      if(p.packGroupId===groupId && !newMemberIds.has(p.id)){
+        p.packGroupId=null; p.packQtyPerUnit=0; p.packIsCore=false;
+        await sbFetch(`${tableName}?id=eq.${p.id}`, {method:'PATCH', prefer:'return=minimal', body:JSON.stringify({pack_group_id:null, pack_qty_per_unit:0, pack_is_core:false})});
+      }
+    }
+    // Set the selected members
+    for(const m of members){
+      const p = arr.find(x=>x.id===m.id);
+      if(!p) continue;
+      p.packGroupId=groupId; p.packQtyPerUnit=(type==='fixed'?m.qty:0); p.packIsCore=(type==='variable'?m.core:false);
+      await sbFetch(`${tableName}?id=eq.${m.id}`, {method:'PATCH', prefer:'return=minimal', body:JSON.stringify({pack_group_id:groupId, pack_qty_per_unit:(type==='fixed'?m.qty:0), pack_is_core:(type==='variable'?m.core:false)})});
+    }
+
+    await loadPackGroups();
+    showToast('✓ Variety pack saved');
+    renderPackManager();
+    render();
+  }catch(e){
+    errEl.textContent = 'Error: '+(e.message||'save failed'); errEl.style.display='block';
+    btn.disabled=false; btn.textContent='Save'; btn.style.opacity='1';
+  }
+}
+
+async function deletePackGroup(groupId){
+  if(!confirm('Delete this variety pack? The member products will remain, but will no longer be grouped.')) return;
+  try{
+    const g = getPackGroup(groupId);
+    const arr = g && g.product_source==='coffee' ? coffeeProducts : products;
+    const tableName = g && g.product_source==='coffee' ? 'coffee_products' : 'products';
+    for(const p of arr){
+      if(p.packGroupId===groupId){
+        p.packGroupId=null; p.packQtyPerUnit=0; p.packIsCore=false;
+        await sbFetch(`${tableName}?id=eq.${p.id}`, {method:'PATCH', prefer:'return=minimal', body:JSON.stringify({pack_group_id:null, pack_qty_per_unit:0, pack_is_core:false})});
+      }
+    }
+    await sbFetch(`pack_groups?id=eq.${groupId}`, {method:'DELETE', prefer:''});
+    await loadPackGroups();
+    showToast('Variety pack deleted');
+    renderPackManager();
+    render();
+  }catch(e){ showToast('⚠ Error deleting pack'); }
+}
 
 // ── Quick Order (unplanned/ad hoc) ──
 let _quickOrderItems = []; // [{product_id, product_name, qty, pieces_per_box, unit_cost, cat1}]
@@ -6280,57 +6639,151 @@ async function syncWhOrderFromSheet(orderId){
 }
 
 async function receiveWhOrder(orderId){
-  if(!confirm('Are you sure you want to receive this order? This will update warehouse inventory.')) return;
-
-  const btn = document.getElementById(`wh-recv-btn-${orderId}`);
-  if(btn){ btn.disabled=true; btn.textContent='Processing…'; btn.style.opacity='0.6'; }
-
   const order = whOrders.find(o=>o.id===orderId);
   if(!order) return;
 
-  const activeItems = order.items.filter(item=>{
-    const c = item.bought_rec ? item.rec_cases : (item.actual_cases!==''?parseFloat(item.actual_cases)||0:0);
-    return c > 0;
-  });
+  // Cases helper
+  const casesOf = (item)=> item.bought_rec ? item.rec_cases : (item.actual_cases!==''?parseFloat(item.actual_cases)||0:0);
+
+  // Variable pack lines being received need a "what was in the box" composition first
+  const variablePacks = order.items.filter(it=>it.is_pack && it.pack_type==='variable' && casesOf(it)>0 && !it._composition);
+  if(variablePacks.length>0){
+    openPackCompositionModal(orderId);
+    return;
+  }
+
+  if(!confirm('Are you sure you want to receive this order? This will update warehouse inventory.')) return;
+  await _doReceiveWhOrder(orderId);
+}
+
+// Composition step for variable packs: user enters which roster flavors arrived and how many,
+// must sum to (cases × case_size) for each variable pack line.
+function openPackCompositionModal(orderId){
+  const order = whOrders.find(o=>o.id===orderId);
+  if(!order) return;
+  const casesOf = (item)=> item.bought_rec ? item.rec_cases : (item.actual_cases!==''?parseFloat(item.actual_cases)||0:0);
+  const vPacks = order.items.filter(it=>it.is_pack && it.pack_type==='variable' && casesOf(it)>0);
+
+  document.getElementById('modal-container').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="width:600px;max-height:90vh;overflow-y:auto">
+        <div class="modal-title">📦 What was in the box?</div>
+        <div style="font-size:11px;color:#7080a0;margin-bottom:14px;line-height:1.5">These are variable variety packs — the flavor mix changes per shipment. Enter how many of each flavor actually arrived. Each pack's total must match cases × case size.</div>
+        <div id="pc-error" style="display:none;background:#fde8e8;color:#b01c1c;border-radius:7px;padding:9px 12px;font-size:12px;margin-bottom:12px;font-weight:600"></div>
+        ${vPacks.map(pl=>{
+          const cases = casesOf(pl);
+          const total = cases * (pl.case_size||0);
+          const group = getPackGroup(pl.pack_group_id);
+          const roster = group ? packMembers(group) : (pl.members||[]).map(m=>({id:m.id,name:m.name}));
+          return `<div style="border:1px solid #e8ecf4;border-radius:8px;padding:12px 14px;margin-bottom:12px" data-pack="${pl.pack_group_id}">
+            <div style="font-size:13px;font-weight:700;color:#0d1f4e;margin-bottom:2px">${pl.pack_name}</div>
+            <div style="font-size:11px;color:#7080a0;margin-bottom:10px">${cases} case${cases!==1?'s':''} × ${pl.case_size} = <strong>${total} units total</strong> · <span class="pc-sum" data-pack="${pl.pack_group_id}" data-total="${total}">0</span>/${total} allocated</div>
+            ${roster.map(m=>`<div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0">
+              <span style="font-size:12px;font-weight:600;color:#0d1f4e">${m.name}</span>
+              <input type="number" min="0" class="pc-input" data-pack="${pl.pack_group_id}" data-member="${m.id}" value="0" oninput="packCompUpdateSum(${pl.pack_group_id})" style="width:64px;padding:5px 8px;border:1.5px solid #d0d5e0;border-radius:6px;font-size:13px;text-align:center;outline:none"/>
+            </div>`).join('')}
+          </div>`;
+        }).join('')}
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">
+          <button onclick="closeModal()" class="secondary-btn">Cancel</button>
+          <button id="pc-save" onclick="submitPackComposition(${orderId})" class="primary-btn" style="padding:9px 20px">Confirm & Receive</button>
+        </div>
+      </div>
+    </div>`;
+  vPacks.forEach(pl=>packCompUpdateSum(pl.pack_group_id));
+}
+
+function packCompUpdateSum(packGroupId){
+  let sum = 0;
+  document.querySelectorAll('.pc-input[data-pack="'+packGroupId+'"]').forEach(i=>{ sum += parseInt(i.value)||0; });
+  const el = document.querySelector('.pc-sum[data-pack="'+packGroupId+'"]');
+  if(el){
+    const total = parseInt(el.getAttribute('data-total'))||0;
+    el.textContent = sum;
+    el.style.color = sum===total ? '#1a7a45' : (sum>total ? '#b01c1c' : '#b35a00');
+    el.style.fontWeight = '700';
+  }
+}
+
+async function submitPackComposition(orderId){
+  const order = whOrders.find(o=>o.id===orderId);
+  if(!order) return;
+  const casesOf = (item)=> item.bought_rec ? item.rec_cases : (item.actual_cases!==''?parseFloat(item.actual_cases)||0:0);
+  const vPacks = order.items.filter(it=>it.is_pack && it.pack_type==='variable' && casesOf(it)>0);
+  const errEl = document.getElementById('pc-error');
+  errEl.style.display='none';
+
+  // Validate each pack sums to cases × case_size
+  for(const pl of vPacks){
+    const total = casesOf(pl) * (pl.case_size||0);
+    const comp = {};
+    let sum = 0;
+    document.querySelectorAll('.pc-input[data-pack="'+pl.pack_group_id+'"]').forEach(i=>{
+      const mid = parseInt(i.getAttribute('data-member'));
+      const v = parseInt(i.value)||0;
+      if(v>0) comp[mid] = v;
+      sum += v;
+    });
+    if(sum!==total){ errEl.textContent=`${pl.pack_name}: allocated ${sum} but need ${total}. Adjust the flavor counts to match.`; errEl.style.display='block'; return; }
+    pl._composition = comp;
+  }
+  closeModal();
+  await _doReceiveWhOrder(orderId);
+}
+
+async function _doReceiveWhOrder(orderId){
+  const order = whOrders.find(o=>o.id===orderId);
+  if(!order) return;
+  const casesOf = (item)=> item.bought_rec ? item.rec_cases : (item.actual_cases!==''?parseFloat(item.actual_cases)||0:0);
+
+  const activeItems = order.items.filter(item=> casesOf(item) > 0);
   showCountProgress('Receiving Warehouse Order', activeItems.length);
 
   let updated = 0;
-  const logLines = [];
+  let totalUnits = 0;
+
+  // Helper to add qty to a member product (by id + source) and log it
+  const addToMember = async (memberId, source, addQty, label)=>{
+    if(addQty<=0) return;
+    const isCoffee = source==='coffee';
+    const p = isCoffee ? coffeeProducts.find(x=>x.id===memberId) : products.find(x=>x.id===memberId);
+    if(!p) return;
+    p.qty += addQty;
+    if(isCoffee){ coffeeProducts = coffeeProducts.map(x=>x.id===p.id?{...x,qty:p.qty}:x); await saveCoffeeProduct(coffeeProducts.find(x=>x.id===p.id)); }
+    else { products = products.map(x=>x.id===p.id?{...x,qty:p.qty}:x); await saveProduct(products.find(x=>x.id===p.id)); }
+    totalUnits += addQty;
+    const entry = { id: Date.now()+Math.random(), date: new Date().toISOString().slice(0,10), product: p.name, qty: addQty, by: label };
+    restockLog = [entry,...restockLog];
+    await saveRestock(entry);
+  };
 
   for(const item of order.items){
-    const casesUsed = item.bought_rec ? item.rec_cases : (item.actual_cases!==''?parseFloat(item.actual_cases)||0:0);
-    if(casesUsed <= 0) continue;
-
+    const cases = casesOf(item);
+    if(cases <= 0) continue;
     updated++;
     updateCountProgress(updated, activeItems.length, item.product_name);
 
-    const qtyAdd = casesUsed * item.pieces_per_box;
-    const isCoffee = item.product_source === 'coffee';
-    const p = isCoffee
-      ? coffeeProducts.find(x=>x.id===item.product_id)
-      : products.find(x=>x.id===item.product_id);
-    if(!p) continue;
-
-    p.qty += qtyAdd;
-    if(isCoffee){
-      coffeeProducts = coffeeProducts.map(x=>x.id===p.id?{...x,qty:p.qty}:x);
-      await saveCoffeeProduct(coffeeProducts.find(x=>x.id===p.id));
-    } else {
-      products = products.map(x=>x.id===p.id?{...x,qty:p.qty}:x);
-      await saveProduct(products.find(x=>x.id===p.id));
+    if(item.is_pack){
+      const src = item.product_source || 'mm';
+      const label = `Variety Pack: ${item.pack_name} — WH Order #${orderId.toString().slice(-6)}`;
+      if(item.pack_type==='fixed'){
+        // Each member gets per × cases
+        for(const m of (item.members||[])){
+          await addToMember(m.id, m.source||src, (m.per||0)*cases, label);
+        }
+      } else {
+        // Variable: use the composition entered at receive
+        const comp = item._composition || {};
+        for(const midStr of Object.keys(comp)){
+          await addToMember(parseInt(midStr), src, comp[midStr]||0, label);
+        }
+      }
+      continue;
     }
 
-    // Log to restock
-    const entry = {
-      id: Date.now()+Math.random(),
-      date: new Date().toISOString().slice(0,10),
-      product: p.name,
-      qty: qtyAdd,
-      by: `Warehouse Order #${orderId.toString().slice(-6)} — ${item.vendor}`
-    };
-    restockLog = [entry,...restockLog];
-    await saveRestock(entry);
-    logLines.push(item.product_name);
+    // Normal (non-pack) item
+    const qtyAdd = cases * item.pieces_per_box;
+    await addToMember(item.product_id, item.product_source, qtyAdd, `Warehouse Order #${orderId.toString().slice(-6)} — ${item.vendor}`);
   }
 
   // Mark received
@@ -6346,11 +6799,8 @@ async function receiveWhOrder(orderId){
   const summaryEntry = {
     id: Date.now()+Math.random(),
     date: new Date().toISOString().slice(0,10),
-    product: `Warehouse Order #${orderId.toString().slice(-6)} — ${updated} items received`,
-    qty: order.items.reduce((s,x)=>{
-      const c=x.bought_rec?x.rec_cases:(x.actual_cases!==''?parseFloat(x.actual_cases)||0:0);
-      return s+c*x.pieces_per_box;
-    },0),
+    product: `Warehouse Order #${orderId.toString().slice(-6)} — ${updated} line${updated!==1?'s':''} received`,
+    qty: totalUnits,
     by: `Warehouse Order Received`
   };
   restockLog=[summaryEntry,...restockLog];
@@ -6360,7 +6810,7 @@ async function receiveWhOrder(orderId){
   whExpandedIds.delete(orderId);
   updateSidebar();
   renderWhOrders();
-  showToast(`Warehouse order received — ${updated} items updated`);
+  showToast(`Warehouse order received — ${updated} lines updated`);
 }
 
 
