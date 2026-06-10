@@ -8149,13 +8149,37 @@ function handleSalesFileUpload(input){
     reader.onload = e => { processRows(parseCSVToRows(e.target.result)); };
     reader.readAsText(file);
   } else {
-    reader.onload = e => {
-      const data = new Uint8Array(e.target.result);
-      const wb = XLSX.read(data,{type:'array'});
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      processRows(XLSX.utils.sheet_to_json(sheet,{header:1,defval:''}));
+    // XLSX path — the SheetJS library is loaded on-demand from CDN. If not yet loaded,
+    // pull it in first, then read the file. Otherwise the reader callback throws silently
+    // because XLSX is undefined and the user is stuck on "Reading…".
+    const readXlsx = () => {
+      reader.onload = e => {
+        try{
+          const data = new Uint8Array(e.target.result);
+          const wb = XLSX.read(data,{type:'array'});
+          const sheet = wb.Sheets[wb.SheetNames[0]];
+          processRows(XLSX.utils.sheet_to_json(sheet,{header:1,defval:''}));
+        }catch(err){
+          statusEl.textContent = '⚠ Could not read XLSX file: ' + (err.message||err);
+          statusEl.style.background = '#fde8e8';
+          statusEl.style.color = '#b01c1c';
+        }
+      };
+      reader.readAsArrayBuffer(file);
     };
-    reader.readAsArrayBuffer(file);
+    if(typeof XLSX === 'undefined'){
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+      script.onload = readXlsx;
+      script.onerror = () => {
+        statusEl.textContent = '⚠ Could not load XLSX library — check internet connection';
+        statusEl.style.background = '#fde8e8';
+        statusEl.style.color = '#b01c1c';
+      };
+      document.head.appendChild(script);
+    } else {
+      readXlsx();
+    }
   }
 }
 
