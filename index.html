@@ -7927,12 +7927,22 @@ function cantaloupeToStore(raw){
   return null;
 }
 
-// ── Parse JS-style date: "Wed Apr 01 2026 07:05:44 GMT-0700 ..." ──
+// ── Parse Cantaloupe transaction date ──
+// Handles two known formats:
+//   1) Primary site CSV: "Wed Apr 01 2026 07:05:44 GMT-0700 (Pacific Daylight Time)" (JS Date string)
+//   2) Backup site XLSX: "6/10/2026 12:14:48 PM" (M/D/YYYY h:mm:ss AM/PM)
+// Also tolerates: Date objects (from SheetJS cellDates), ISO strings, anything new Date() can parse.
 function parseCantaloupeDate(s){
-  if(!s) return null;
-  const m = String(s).match(/\w+ (\w+ \d+ \d+ \d+:\d+:\d+)/);
-  if(!m) return null;
-  try{ return new Date(m[1]); }catch(e){ return null; }
+  if(s == null || s === '') return null;
+  // Already a Date object?
+  if(s instanceof Date) return isNaN(s.getTime()) ? null : s;
+  const str = String(s).trim();
+  // Try primary-site JS Date string format with weekday + month name + GMT
+  const m = str.match(/\w+ (\w+ \d+ \d+ \d+:\d+:\d+)/);
+  if(m){ try{ const d = new Date(m[1]); if(!isNaN(d.getTime())) return d; }catch(e){} }
+  // Fallback: native Date parsing for backup site format and anything else parseable
+  try{ const d = new Date(str); if(!isNaN(d.getTime())) return d; }catch(e){}
+  return null;
 }
 
 function cleanUPC(raw){
@@ -8003,7 +8013,7 @@ function renderSalesImport(){
         <div class="card-title" style="margin-bottom:4px">📥 Upload Item Sales Report</div>
         <div style="font-size:11px;color:#7080a0;margin-bottom:14px;line-height:1.6">
           In Cantaloupe, export the <strong>Item Sales</strong> report (not "Sales by Item").
-          Each row = 1 unit sold with a timestamp. Upload CSV or XLSX.
+          Each row = 1 unit sold with a timestamp. Accepts <strong>CSV</strong> from the primary site or <strong>XLSX</strong> from the backup site.
         </div>
 
         <div id="si-upload-label" onclick="document.getElementById('si-file-input').click()"
@@ -8070,12 +8080,30 @@ function handleSalesFileUpload(input){
 
   const processRows = (rows) => {
     try{
+      if(!rows || rows.length < 1){
+        statusEl.textContent = '⚠ File is empty';
+        statusEl.style.background = '#fde8e8';
+        statusEl.style.color = '#b01c1c';
+        return;
+      }
+      // Normalize: if this is the Cantaloupe BACKUP site format (XLSX with TransDate/ItemName columns),
+      // rename headers to match the primary-site format so the rest of the pipeline runs unchanged.
+      const origHeaders = rows[0].map(h=>String(h).trim());
+      const isBackup = origHeaders.includes('TransDate') && origHeaders.includes('ItemName');
+      if(isBackup){
+        const headerMap = {
+          'TransId':'Trans ID', 'TransDate':'Date', 'ItemName':'Item Name', 'ItemUPC':'UPC',
+          'ItemPrice':'Item Price', 'ItemNum':'Item Number', 'ItemCategory':'Category 1'
+          // Store stays as 'Store'; other backup-only columns are ignored downstream.
+        };
+        rows[0] = origHeaders.map(h => headerMap[h] || h);
+      }
       _salesRows = rows;
       const headers = rows[0].map(h=>String(h).trim());
       const hasDate = headers.some(h=>h==='Date');
       const hasName = headers.some(h=>h==='Item Name');
       if(!hasDate || !hasName){
-        statusEl.textContent = '⚠ Wrong report type. Need the "Item Sales" report with Date, Item Name, UPC columns.';
+        statusEl.textContent = '⚠ Wrong report type. Need the "Item Sales" report (primary site CSV or backup site XLSX) with Date/TransDate and Item Name/ItemName columns.';
         statusEl.style.background = '#fde8e8';
         statusEl.style.color = '#b01c1c';
         return;
