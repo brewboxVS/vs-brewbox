@@ -36,20 +36,20 @@ body{font-family:'Segoe UI',system-ui,sans-serif;font-size:13px;background:#f0f2
 #app{display:flex;flex:1;overflow:hidden}
 
 /* ── Sidebar ── */
-#sidebar{width:210px;background:#0d1f4e;color:#fff;display:flex;flex-direction:column;flex-shrink:0}
-.sb-logo{padding:16px 14px 12px;border-bottom:1px solid #1a3266}
+#sidebar{width:210px;height:100vh;background:#0d1f4e;color:#fff;display:flex;flex-direction:column;flex-shrink:0}
+.sb-logo{padding:16px 14px 12px;border-bottom:1px solid #1a3266;flex-shrink:0}
 .sb-logo-badge{width:34px;height:34px;background:#c9a84c;border-radius:7px;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:14px;color:#0d1f4e;flex-shrink:0}
 .sb-logo-title{font-size:14px;font-weight:800;color:#fff;letter-spacing:0.3px}
 .sb-logo-sub{font-size:9px;color:#8fa8d8;letter-spacing:2px;text-transform:uppercase}
 .sb-logo-tag{font-size:9px;color:#c9a84c;letter-spacing:1px;font-style:italic;margin-top:2px}
-.sb-nav{flex:1;padding:10px 8px}
+.sb-nav{flex:1 1 0;min-height:0;overflow-y:auto;padding:10px 8px}
 .nav-btn{display:flex;align-items:center;gap:9px;width:100%;background:none;border:none;color:#b8c8e8;padding:9px 10px;border-radius:7px;cursor:pointer;font-size:12px;font-weight:500;margin-bottom:2px;text-align:left;transition:all .15s}
 .nav-btn:hover{background:#1a3266;color:#fff}
 .nav-btn.active{background:#c9a84c;color:#0d1f4e;font-weight:700}
-.ai-btn{margin:8px;background:linear-gradient(135deg,#1a3266,#0d1f4e);border:1px solid #c9a84c;color:#c9a84c;padding:9px 12px;border-radius:7px;cursor:pointer;font-size:12px;font-weight:700;display:flex;align-items:center;gap:8px;transition:all .15s}
+.ai-btn{margin:8px;background:linear-gradient(135deg,#1a3266,#0d1f4e);border:1px solid #c9a84c;color:#c9a84c;padding:9px 12px;border-radius:7px;cursor:pointer;font-size:12px;font-weight:700;display:flex;align-items:center;gap:8px;transition:all .15s;flex-shrink:0}
 .ai-btn:hover{background:#c9a84c;color:#0d1f4e}
-.low-alert-sb{margin:0 8px 8px;background:#1a3266;border:1px solid #e8943a;border-radius:7px;padding:7px 10px;color:#f0a84c;font-size:10px;line-height:1.4}
-.sync-status{margin:0 8px 4px;font-size:10px;padding:4px 8px;border-radius:5px;display:flex;align-items:center;gap:5px}
+.low-alert-sb{margin:0 8px 8px;background:#1a3266;border:1px solid #e8943a;border-radius:7px;padding:7px 10px;color:#f0a84c;font-size:10px;line-height:1.4;flex-shrink:0}
+.sync-status{margin:0 8px 4px;font-size:10px;padding:4px 8px;border-radius:5px;display:flex;align-items:center;gap:5px;flex-shrink:0}
 .sync-ok{color:#5db87a}
 .sync-err{color:#e87a5d}
 .sync-busy{color:#c9a84c}
@@ -682,7 +682,7 @@ body.hide-fin .fin-col { display: none !important; }
     <div id="low-alert-sb"></div>
     <div class="sync-status" id="sync-status"></div>
     <button class="ai-btn" onclick="toggleAI()">✦ &nbsp;<span>AI Assistant</span></button>
-    <div id="sb-user-footer" style="margin-top:8px;padding:10px 12px;background:rgba(255,255,255,0.06);border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:8px">
+    <div id="sb-user-footer" style="margin-top:8px;padding:10px 12px;background:rgba(255,255,255,0.06);border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-shrink:0">
       <div style="min-width:0;flex:1">
         <div id="sb-user-name" style="font-size:12px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">—</div>
         <div id="sb-user-role" style="font-size:10px;color:#a0acd0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">—</div>
