@@ -7999,7 +7999,11 @@ function renderSalesImport(){
     fi = document.createElement('input');
     fi.type = 'file';
     fi.id = 'si-file-input';
-    fi.accept = '.csv,.xlsx,.xls,.html,.htm';
+    // accept includes BOTH extensions and MIME types — desktop pickers usually match
+    // by extension, but mobile pickers (Android Documents UI, Google Drive picker,
+    // Samsung file manager) filter by MIME type and grey out files that only match by
+    // extension. Listing both makes xlsx files selectable across desktop and mobile.
+    fi.accept = '.csv,.xlsx,.xls,.html,.htm,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/html';
     fi.style.cssText = 'position:fixed;top:-200px;left:-200px;width:1px;height:1px;opacity:0';
     fi.addEventListener('change', function(){ handleSalesFileUpload(this); });
     document.body.appendChild(fi);
