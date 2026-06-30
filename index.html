@@ -4125,12 +4125,22 @@ async function loadStoreOrders(){
           else if(typeof r.items==='string' && r.items) items = JSON.parse(r.items);
           else if(r.items && typeof r.items==='object') items = Object.values(r.items);
         }catch(e){ items=[]; }
+        // Defensively initialize per-item packing state for orders that were saved
+        // before Phase 1 (or items added via legacy paths). packed_qty defaults to
+        // the original order_qty so receive behaves identically until packing is used.
+        items = items.map(it=>({
+          ...it,
+          packed_qty: (it.packed_qty!==undefined && it.packed_qty!==null) ? it.packed_qty : it.order_qty,
+          packing_status: it.packing_status || 'pending'
+        }));
         return {
           id: r.id,
           store_name: r.store_name,
           status: r.status,
           created_at: r.created_at,
           closed_at: r.closed_at||null,
+          packed_at: r.packed_at||null,
+          packed_by: r.packed_by||'',
           created_by: r.created_by||'',
           received_by: r.received_by||'',
           items
@@ -4151,6 +4161,8 @@ async function saveStoreOrder(order){
     status: order.status,
     created_at: order.created_at,
     closed_at: order.closed_at||null,
+    packed_at: order.packed_at||null,
+    packed_by: order.packed_by||null,
     created_by: order.created_by||null,
     received_by: order.received_by||null,
     items: order.items
@@ -4313,6 +4325,8 @@ async function saveNewStoreOrder(){
         product_name: item.product_name,
         station_name: item.station_name||'',
         order_qty: qty,
+        packed_qty: qty,            // Phase 1: defaults to order_qty until packed
+        packing_status: 'pending',  // 'pending' | 'packed' | 'skipped'
         current_store_qty: item.qty,
         store_min: item.min_level,
         store_max: item.max_level
@@ -4332,6 +4346,8 @@ async function saveNewStoreOrder(){
     status: 'open',
     created_at: new Date().toISOString(),
     closed_at: null,
+    packed_at: null,
+    packed_by: null,
     created_by: currentUser?.display_name || 'Unknown',
     received_by: null,
     items: orderItems
@@ -4359,33 +4375,54 @@ function renderOpenOrderRow(order){
   const dateStr = new Date(order.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
   const totalItems = order.items.length;
   const totalUnits = order.items.reduce((s,i)=>s+(i.order_qty||0),0);
+  // Packing-progress derived state
+  const isPacked = !!order.packed_at;
+  const packedCount = order.items.filter(i=>i.packing_status==='packed' || i.packing_status==='skipped').length;
+  const packingInProgress = !isPacked && packedCount > 0;
+  // Pack button label changes with state
+  const packLabel = isPacked
+    ? '✓ Packed'
+    : (packingInProgress ? `📦 Continue Packing (${packedCount}/${totalItems})` : '📦 Start Packing');
+  const packBtnBg = isPacked ? '#1a7a45' : '#6b2fa0';
+  // Receive button is disabled until packed
+  const recvDisabled = !isPacked;
+  const recvLabel = isPacked ? '✓ Receive Packed Items' : '✓ Receive Order';
+  const recvBg = recvDisabled ? '#d0d5e0' : '#1a7a45';
+  const recvCursor = recvDisabled ? 'not-allowed' : 'pointer';
+  // Attribution line includes packed_by when available
+  const attribLine = `Created by <strong style="color:#0d1f4e">${order.created_by||'—'}</strong>${order.packed_by?` · Packed by <strong style="color:#6b2fa0">${order.packed_by}</strong>`:''}`;
 
   return `
     <div style="border:1px solid #e8ecf4;border-radius:8px;margin-bottom:10px;overflow:hidden">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:#fffbf0;cursor:pointer"
            onclick="toggleOrderExpand(${order.id})">
-        <div style="display:flex;align-items:center;gap:12px">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
           <span style="font-size:13px;font-weight:700;color:#0d1f4e">Order #${order.id.toString().slice(-6)}</span>
-          <span style="background:#c9a84c;color:#0d1f4e;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700">OPEN</span>
+          <span style="background:${isPacked?'#1a7a45':'#c9a84c'};color:${isPacked?'#fff':'#0d1f4e'};border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700">${isPacked?'PACKED':'OPEN'}</span>
           <span style="font-size:11px;color:#7080a0">${dateStr} · ${totalItems} item${totalItems!==1?'s':''} · ${totalUnits} units</span>
         </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <button id="export-btn-${order.id}" onclick="event.stopPropagation();exportStoreOrderToSheet(${order.id})"
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap" onclick="event.stopPropagation()">
+          <button id="export-btn-${order.id}" onclick="exportStoreOrderToSheet(${order.id})"
             style="background:#0d1f4e;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:11px;font-weight:700;cursor:pointer">
             📊 Export
           </button>
-          <button id="recv-btn-${order.id}" onclick="event.stopPropagation();receiveStoreOrder(${order.id})"
-            style="background:#1a7a45;color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:11px;font-weight:700;cursor:pointer">
-            ✓ Receive Order
+          <button onclick="openPackingModal(${order.id})"
+            style="background:${packBtnBg};color:#fff;border:none;border-radius:6px;padding:6px 14px;font-size:11px;font-weight:700;cursor:pointer">
+            ${packLabel}
           </button>
-          <button onclick="event.stopPropagation();cancelStoreOrder(${order.id})"
+          <button id="recv-btn-${order.id}" onclick="receiveStoreOrder(${order.id})" ${recvDisabled?'disabled':''}
+            title="${recvDisabled?'Pack the order before receiving':''}"
+            style="background:${recvBg};color:${recvDisabled?'#7080a0':'#fff'};border:none;border-radius:6px;padding:6px 14px;font-size:11px;font-weight:700;cursor:${recvCursor};opacity:${recvDisabled?'0.6':'1'}">
+            ${recvLabel}
+          </button>
+          <button onclick="cancelStoreOrder(${order.id})"
             style="background:transparent;color:#b01c1c;border:1.5px solid #b01c1c;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer">
             ✕ Cancel
           </button>
           <span style="font-size:14px;color:#8090b0">${isExpanded?'▲':'▼'}</span>
         </div>
       </div>
-      <div style="padding:5px 14px;background:#fffbf0;border-top:1px dashed #e8ecf4;font-size:11px;color:#5060a0">Created by <strong style="color:#0d1f4e">${order.created_by||'—'}</strong></div>
+      <div style="padding:5px 14px;background:#fffbf0;border-top:1px dashed #e8ecf4;font-size:11px;color:#5060a0">${attribLine}</div>
       ${isExpanded?renderOrderDetail(order, true):''}
     </div>`;
 }
@@ -4413,6 +4450,9 @@ function renderClosedOrderRow(order){
 }
 
 function renderOrderDetail(order, editable){
+  const isPacked = !!order.packed_at;
+  // Once packing exists, we show packed_qty + status. The old inline "Adjust Qty"
+  // is removed because the packing modal is the canonical way to change quantities.
   return `
     <div style="padding:12px 14px;background:#fff;border-top:1px solid #e8ecf4">
       <table style="width:100%">
@@ -4420,20 +4460,28 @@ function renderOrderDetail(order, editable){
           <th style="padding-left:4px;min-width:200px">ITEM</th>
           <th>SOURCE</th>
           <th>ORDER QTY</th>
-          ${editable?'<th>ADJUST QTY</th>':''}
+          <th>PACKED QTY</th>
+          <th>STATUS</th>
         </tr></thead>
         <tbody>
         ${order.items.map((item,idx)=>{
           const srcBadge = item.product_source==='coffee'
             ? '<span style="background:#f3e8ff;color:#6b2fa0;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700">COFFEE</span>'
             : '<span style="background:#e8edf8;color:#0d1f4e;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700">MM</span>';
-          return `<tr>
+          const status = item.packing_status || 'pending';
+          const statusBadge = status==='packed'
+            ? '<span style="background:#e6f4ee;color:#1a7a45;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">✓ PACKED</span>'
+            : status==='skipped'
+            ? '<span style="background:#fde8e8;color:#b01c1c;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">⊘ SKIPPED</span>'
+            : '<span style="background:#fff8e6;color:#b35a00;border-radius:4px;padding:2px 7px;font-size:9px;font-weight:700">PENDING</span>';
+          const packedQty = item.packed_qty!==undefined ? item.packed_qty : item.order_qty;
+          const qtyColor = (status==='skipped' || packedQty===0) ? '#b01c1c' : (packedQty!==item.order_qty ? '#b35a00' : '#0d1f4e');
+          return `<tr style="${status==='skipped'?'opacity:0.6':''}">
             <td style="padding-left:4px;font-weight:600;color:#0d1f4e;white-space:normal">${item.product_name}</td>
             <td>${srcBadge}</td>
             <td style="font-weight:700;color:#0d1f4e">${item.order_qty}</td>
-            ${editable?`<td><input type="number" id="adj-${order.id}-${idx}" value="${item.order_qty}" min="0"
-              style="width:70px;background:#f4f6fa;border:1.5px solid #c9a84c;border-radius:5px;padding:3px 7px;font-size:12px;font-weight:700;color:#0d1f4e;outline:none"
-              oninput="updateAdjQty(${order.id},${idx},this.value)"/></td>`:''}
+            <td style="font-weight:700;color:${qtyColor}">${packedQty}</td>
+            <td>${statusBadge}</td>
           </tr>`;
         }).join('')}
         </tbody>
@@ -4441,6 +4489,8 @@ function renderOrderDetail(order, editable){
     </div>`;
 }
 
+// Legacy stub kept for any lingering onclick references — no longer used by the
+// open-order card since the inline Adjust Qty input was removed in Phase 1.
 function updateAdjQty(orderId, idx, val){
   const order = storeOrders.find(o=>o.id===orderId);
   if(order && order.items[idx]) order.items[idx].order_qty = parseFloat(val)||0;
@@ -4453,21 +4503,22 @@ function toggleOrderExpand(id){
 }
 
 async function receiveStoreOrder(orderId){
-  if(!confirm('Are you sure you want to receive this order? This will update store and warehouse inventory.')) return;
+  const order = storeOrders.find(o=>o.id===orderId);
+  if(!order) return;
+  if(!order.packed_at){ showToast('⚠ Order must be packed before receiving'); return; }
+  if(!confirm('Are you sure you want to receive this order? This will update store and warehouse inventory using the packed quantities.')) return;
 
   const btn = document.getElementById(`recv-btn-${orderId}`);
   if(btn){ btn.disabled=true; btn.textContent='Processing…'; btn.style.opacity='0.6'; }
 
-  const order = storeOrders.find(o=>o.id===orderId);
-  if(!order) return;
+  // Use packed_qty as the source of truth. Skipped items have packed_qty=0 so they
+  // get filtered out naturally by the qty<=0 check below.
+  const qtyFor = (item) => {
+    if(item.packing_status==='skipped') return 0;
+    return (item.packed_qty!==undefined && item.packed_qty!==null) ? item.packed_qty : item.order_qty;
+  };
 
-  // Sync any edited quantities from DOM
-  order.items.forEach((item,idx)=>{
-    const el = document.getElementById(`adj-${orderId}-${idx}`);
-    if(el) item.order_qty = parseFloat(el.value)||0;
-  });
-
-  const activeItems = order.items.filter(i=>(i.order_qty||0) > 0);
+  const activeItems = order.items.filter(i=>qtyFor(i) > 0);
   showCountProgress(`Receiving Store Order — ${order.store_name}`, activeItems.length);
 
   const orderItemLines = [];
@@ -4475,7 +4526,7 @@ async function receiveStoreOrder(orderId){
   let processed = 0;
 
   for(const item of order.items){
-    const qty = item.order_qty||0;
+    const qty = qtyFor(item);
     if(qty <= 0) continue;
 
     processed++;
@@ -7183,6 +7234,279 @@ async function cancelStoreOrder(orderId){
   showToast('Store order cancelled');
 }
 
+// ═══════════════════════════════════════════════════
+//  STORE ORDER PACKING MODAL (Phase 1)
+// In-app pick list for the warehouse worker. Replaces the Excel export workflow.
+//  - MM items grouped by store category (cat1)
+//  - Coffee items grouped by station
+//  - Per-item +/- qty controls (bounded 0..2*order_qty), "Packed" and "Skip" actions
+//  - "Complete Store Order Packing" only enabled once every item is addressed
+//  - Designed for desktop AND for warehouse-worker phones (S23/S24 ~412px) and the S11 tablet
+// ═══════════════════════════════════════════════════
+let _packingOrderId = null;
+const _packingCollapsedSections = new Set(); // remembers section collapse during a packing session
+
+function openPackingModal(orderId){
+  const order = storeOrders.find(o=>o.id===orderId);
+  if(!order){ showToast('Order not found'); return; }
+  _packingOrderId = orderId;
+  _packingCollapsedSections.clear();
+  renderPackingModal();
+}
+
+function closePackingModal(){
+  _packingOrderId = null;
+  closeModal();
+  renderStoreOrders();
+}
+
+// Group items into sections: MM by store_cat (per-store physical-layout label like
+// "DRINKS - LEFT COOLER"), Coffee by station_name. Falls back to cat1 (warehouse
+// category) and finally "Uncategorized" if nothing is set. This matches the existing
+// store-side convention (see getStoreItemCountCat / line ~3554).
+function buildPackingSections(order){
+  const mmGroups = {};      // store_cat -> items
+  const coffeeGroups = {};  // station_name -> items
+  for(let i=0;i<order.items.length;i++){
+    const item = order.items[i];
+    const idx = i; // preserve original index
+    if(item.product_source === 'coffee'){
+      const station = (item.station_name||'').trim() || 'Other';
+      if(!coffeeGroups[station]) coffeeGroups[station] = [];
+      coffeeGroups[station].push({...item, _idx:idx});
+    } else {
+      // Resolve store_cat: live lookup from store_inventory (preferred — picks up
+      // any label edits the user has made since the order was created). Falls back
+      // to cat1, then "Uncategorized" so nothing disappears.
+      const si = storeInventory.find(x=>x.id===item.store_item_id) ||
+                 storeInventory.find(x=>x.store_name===order.store_name && x.product_id===item.product_id && x.product_source==='mm');
+      const storeCat = (si?.store_cat || si?.cat1 || item.cat1 || '').trim() || 'Uncategorized';
+      if(!mmGroups[storeCat]) mmGroups[storeCat] = [];
+      mmGroups[storeCat].push({...item, _idx:idx});
+    }
+  }
+  // Sort sections alphabetically (case-insensitive so "Drinks" and "DRINKS" sit
+  // next to each other on stores with mixed casing). "Uncategorized"/"Other" land last.
+  const sortFn = (a,b) => {
+    if(a==='Uncategorized' || a==='Other') return 1;
+    if(b==='Uncategorized' || b==='Other') return -1;
+    return a.localeCompare(b, undefined, {sensitivity:'base'});
+  };
+  const mmCats = Object.keys(mmGroups).sort(sortFn);
+  const coffeeStations = Object.keys(coffeeGroups).sort(sortFn);
+  for(const k of mmCats) mmGroups[k].sort((a,b)=>a.product_name.localeCompare(b.product_name));
+  for(const k of coffeeStations) coffeeGroups[k].sort((a,b)=>a.product_name.localeCompare(b.product_name));
+  return { mmCats, mmGroups, coffeeStations, coffeeGroups };
+}
+
+function renderPackingModal(){
+  const order = storeOrders.find(o=>o.id===_packingOrderId);
+  if(!order) return;
+  const sections = buildPackingSections(order);
+  const totalItems = order.items.length;
+  const addressed = order.items.filter(i=>i.packing_status==='packed' || i.packing_status==='skipped').length;
+  const allAddressed = addressed === totalItems;
+  const isPacked = !!order.packed_at;
+
+  // Color the progress badge based on state
+  const progressColor = isPacked ? '#1a7a45' : (allAddressed ? '#1a7a45' : '#b35a00');
+  const progressBg = isPacked ? '#e6f4ee' : (allAddressed ? '#e6f4ee' : '#fff8e6');
+
+  document.getElementById('modal-container').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closePackingModal()">
+      <div class="modal" style="width:780px;max-width:96vw;max-height:94vh;overflow-y:auto;padding:0">
+        <!-- Sticky header -->
+        <div style="position:sticky;top:0;z-index:2;background:#fff;padding:16px 18px 12px;border-bottom:1px solid #e8ecf4">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px">
+            <div>
+              <div style="font-size:16px;font-weight:800;color:#0d1f4e">📦 Pack Order #${order.id.toString().slice(-6)}</div>
+              <div style="font-size:12px;color:#5060a0;margin-top:2px">${order.store_name} · ${totalItems} item${totalItems!==1?'s':''}</div>
+            </div>
+            <button onclick="closePackingModal()" style="background:none;border:none;color:#7080a0;cursor:pointer;font-size:22px;line-height:1;padding:0 4px">✕</button>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+            <span style="font-size:12px;background:${progressBg};color:${progressColor};border-radius:6px;padding:5px 11px;font-weight:700">${addressed} of ${totalItems} addressed${isPacked?' · ✓ PACKED':''}</span>
+            ${isPacked
+              ? '<span style="font-size:11px;color:#1a7a45;font-weight:700">Packing complete — close this and click Receive on the order</span>'
+              : `<button id="pack-complete-btn" onclick="completeOrderPacking()" ${allAddressed?'':'disabled'}
+                  style="background:${allAddressed?'#1a7a45':'#d0d5e0'};color:${allAddressed?'#fff':'#7080a0'};border:none;border-radius:7px;padding:9px 18px;font-size:13px;font-weight:800;cursor:${allAddressed?'pointer':'not-allowed'};opacity:${allAddressed?'1':'0.7'}">
+                  ✓ Complete Store Order Packing
+                </button>`}
+          </div>
+        </div>
+
+        <div style="padding:14px 18px 18px">
+          ${sections.mmCats.length===0 && sections.coffeeStations.length===0 ? '<div style="text-align:center;padding:32px;color:#7080a0;font-size:12px">No items in this order</div>' : ''}
+
+          ${sections.mmCats.length>0?`
+            <div style="font-size:11px;font-weight:800;color:#0d1f4e;letter-spacing:1.5px;text-transform:uppercase;margin:4px 0 10px">🛒 Micromarket Items</div>
+            ${sections.mmCats.map(cat=>renderPackingSection(cat, sections.mmGroups[cat], '#0d1f4e', '#e8edf8')).join('')}
+          `:''}
+
+          ${sections.coffeeStations.length>0?`
+            <div style="font-size:11px;font-weight:800;color:#6b2fa0;letter-spacing:1.5px;text-transform:uppercase;margin:16px 0 10px">☕ Coffee Items</div>
+            ${sections.coffeeStations.map(stn=>renderPackingSection(stn, sections.coffeeGroups[stn], '#6b2fa0', '#f3e8ff')).join('')}
+          `:''}
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderPackingSection(sectionLabel, items, accentColor, accentBg){
+  const sectionKey = sectionLabel; // group keys are unique within their type so this is fine
+  const collapsed = _packingCollapsedSections.has(sectionKey);
+  const addressed = items.filter(i=>i.packing_status==='packed' || i.packing_status==='skipped').length;
+  const allDone = addressed === items.length;
+  const headerBg = allDone ? '#e6f4ee' : accentBg;
+  const headerText = allDone ? '#1a7a45' : accentColor;
+
+  return `
+    <div style="border:1.5px solid ${accentColor}33;border-radius:9px;margin-bottom:10px;overflow:hidden">
+      <div onclick="togglePackingSection('${sectionKey.replace(/'/g,"\\'")}')" style="display:flex;justify-content:space-between;align-items:center;padding:11px 14px;background:${headerBg};cursor:pointer">
+        <div style="display:flex;align-items:center;gap:9px">
+          <span style="font-size:13px;font-weight:800;color:${headerText}">${sectionLabel}</span>
+          <span style="font-size:11px;color:${headerText};opacity:0.8">${addressed}/${items.length} ${allDone?'✓':''}</span>
+        </div>
+        <span style="font-size:14px;color:${headerText}">${collapsed?'▼':'▲'}</span>
+      </div>
+      ${collapsed?'':`<div style="padding:6px 4px 8px">${items.map(it=>renderPackingItem(it)).join('')}</div>`}
+    </div>`;
+}
+
+function renderPackingItem(item){
+  const idx = item._idx;
+  const status = item.packing_status || 'pending';
+  const orderQty = item.order_qty;
+  const upperBound = Math.max(2, orderQty * 2);
+  const packedQty = item.packed_qty!==undefined ? item.packed_qty : orderQty;
+  const isPacked = status === 'packed';
+  const isSkipped = status === 'skipped';
+  const isPending = !isPacked && !isSkipped;
+  const rowBg = isPacked ? '#f0f8f3' : (isSkipped ? '#fdf3f3' : '#fff');
+  const rowOpacity = (isPacked || isSkipped) ? '0.72' : '1';
+  const textColor = isSkipped ? '#a05050' : '#0d1f4e';
+  const textDeco = isSkipped ? 'line-through' : 'none';
+  // Source badge
+  const srcBadge = item.product_source==='coffee'
+    ? '<span style="background:#f3e8ff;color:#6b2fa0;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700">COFFEE</span>'
+    : '<span style="background:#e8edf8;color:#0d1f4e;border-radius:4px;padding:2px 6px;font-size:9px;font-weight:700">MM</span>';
+  // Status pill (right side)
+  const statusPill = isPacked
+    ? '<span style="background:#1a7a45;color:#fff;border-radius:5px;padding:3px 9px;font-size:10px;font-weight:800">✓ PACKED</span>'
+    : isSkipped
+    ? '<span style="background:#b01c1c;color:#fff;border-radius:5px;padding:3px 9px;font-size:10px;font-weight:800">⊘ SKIPPED</span>'
+    : '';
+
+  return `
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;margin:4px 6px;background:${rowBg};border-radius:8px;border:1px solid ${isPacked?'#b8e0c8':(isSkipped?'#f0c8c8':'#e8ecf4')};opacity:${rowOpacity};flex-wrap:wrap">
+      <!-- Item name + source -->
+      <div style="flex:1;min-width:160px">
+        <div style="font-size:13px;font-weight:700;color:${textColor};text-decoration:${textDeco};line-height:1.3">${item.product_name}</div>
+        <div style="font-size:10px;color:#7080a0;margin-top:2px">${srcBadge} <span style="margin-left:4px">Order qty: <strong>${orderQty}</strong></span></div>
+      </div>
+      <!-- Quantity stepper -->
+      <div style="display:flex;align-items:center;gap:0;background:#f4f6fa;border-radius:8px;padding:2px;${isPending?'':'opacity:0.4;pointer-events:none'}">
+        <button onclick="packingItemQtyAdjust(${idx},-1)" style="width:36px;height:36px;background:#fff;color:#0d1f4e;border:1px solid #d0d5e0;border-radius:6px;font-size:18px;font-weight:800;cursor:pointer">−</button>
+        <input id="pack-qty-${idx}" type="number" min="0" max="${upperBound}" value="${packedQty}"
+          oninput="packingItemQtyInput(${idx},this.value)"
+          style="width:54px;height:36px;background:transparent;border:none;text-align:center;font-size:15px;font-weight:800;color:#0d1f4e;outline:none;-moz-appearance:textfield"/>
+        <button onclick="packingItemQtyAdjust(${idx},1)" style="width:36px;height:36px;background:#fff;color:#0d1f4e;border:1px solid #d0d5e0;border-radius:6px;font-size:18px;font-weight:800;cursor:pointer">+</button>
+      </div>
+      <!-- Action buttons -->
+      <div style="display:flex;gap:6px">
+        ${isPending ? `
+          <button onclick="packingItemMark(${idx},'packed')" style="background:#1a7a45;color:#fff;border:none;border-radius:7px;padding:8px 14px;font-size:12px;font-weight:800;cursor:pointer">Packed</button>
+          <button onclick="packingItemMark(${idx},'skipped')" style="background:#fff;color:#b01c1c;border:1.5px solid #f0b8b8;border-radius:7px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer">Skip</button>
+        ` : `
+          ${statusPill}
+          <button onclick="packingItemUnmark(${idx})" style="background:#fff;color:#7080a0;border:1px solid #d0d5e0;border-radius:6px;padding:5px 10px;font-size:11px;font-weight:700;cursor:pointer">Undo</button>
+        `}
+      </div>
+    </div>`;
+}
+
+function togglePackingSection(key){
+  if(_packingCollapsedSections.has(key)) _packingCollapsedSections.delete(key);
+  else _packingCollapsedSections.add(key);
+  renderPackingModal();
+}
+
+// In-memory qty adjustment (no save until status confirmed)
+function packingItemQtyInput(idx, val){
+  const order = storeOrders.find(o=>o.id===_packingOrderId);
+  if(!order || !order.items[idx]) return;
+  const it = order.items[idx];
+  let n = parseInt(val); if(isNaN(n) || n<0) n = 0;
+  const upper = Math.max(2, it.order_qty * 2);
+  if(n > upper) n = upper;
+  it.packed_qty = n;
+}
+
+function packingItemQtyAdjust(idx, delta){
+  const order = storeOrders.find(o=>o.id===_packingOrderId);
+  if(!order || !order.items[idx]) return;
+  const it = order.items[idx];
+  let cur = (it.packed_qty!==undefined ? it.packed_qty : it.order_qty);
+  let n = cur + delta;
+  const upper = Math.max(2, it.order_qty * 2);
+  if(n < 0) n = 0;
+  if(n > upper) n = upper;
+  it.packed_qty = n;
+  const el = document.getElementById('pack-qty-'+idx);
+  if(el) el.value = n;
+}
+
+// Confirm status: 'packed' uses current packed_qty; 'skipped' forces packed_qty=0
+async function packingItemMark(idx, status){
+  const order = storeOrders.find(o=>o.id===_packingOrderId);
+  if(!order || !order.items[idx]) return;
+  const it = order.items[idx];
+  if(status === 'skipped'){ it.packed_qty = 0; it.packing_status = 'skipped'; }
+  else { // 'packed' — keep current packed_qty (even if 0 was entered, that's effectively a skip)
+    if(it.packed_qty === undefined || it.packed_qty === null) it.packed_qty = it.order_qty;
+    if(it.packed_qty === 0){ it.packing_status = 'skipped'; }
+    else { it.packing_status = 'packed'; }
+  }
+  await saveStoreOrder(order);
+  renderPackingModal();
+}
+
+async function packingItemUnmark(idx){
+  const order = storeOrders.find(o=>o.id===_packingOrderId);
+  if(!order || !order.items[idx]) return;
+  order.items[idx].packing_status = 'pending';
+  // Restore packed_qty back to order_qty if the worker unmarks a skip
+  if((order.items[idx].packed_qty||0) === 0) order.items[idx].packed_qty = order.items[idx].order_qty;
+  await saveStoreOrder(order);
+  renderPackingModal();
+}
+
+async function completeOrderPacking(){
+  const order = storeOrders.find(o=>o.id===_packingOrderId);
+  if(!order) return;
+  const totalItems = order.items.length;
+  const addressed = order.items.filter(i=>i.packing_status==='packed' || i.packing_status==='skipped').length;
+  if(addressed !== totalItems){ showToast('⚠ All items must be packed or skipped first'); return; }
+  if(!confirm('Complete packing for this order? Once complete, you cannot reopen — to change quantities, cancel the order and create a new one.')) return;
+  order.packed_at = new Date().toISOString();
+  order.packed_by = currentUser?.display_name || 'Unknown';
+  await saveStoreOrder(order);
+  // Log to activity
+  const packedCount = order.items.filter(i=>i.packing_status==='packed').length;
+  const totalPackedUnits = order.items.reduce((s,i)=> s + ((i.packing_status==='packed' ? (i.packed_qty||0) : 0)), 0);
+  const entry = {
+    id: Date.now()+Math.random(),
+    date: new Date().toISOString().slice(0,10),
+    product: `Store Order #${order.id.toString().slice(-6)} — packed ${packedCount} of ${totalItems} items (${totalPackedUnits} units)`,
+    qty: totalPackedUnits,
+    by: `Store Order Packed — ${order.store_name}`
+  };
+  restockLog = [entry, ...restockLog];
+  await saveRestock(entry);
+  showToast('✓ Order packed — ready to receive');
+  closePackingModal();
+}
+
 // ── Export store order to Excel ──
 async function exportStoreOrderToSheet(orderId){
   const order = storeOrders.find(o=>o.id===orderId);
@@ -7823,31 +8147,42 @@ function renderMobStoreOrders(){
 function renderMobOpenOrder(order){
   const dateStr = toPST(order.created_at);
   const isExpanded = expandedOrderIds.has(order.id);
+  const isPacked = !!order.packed_at;
+  const totalItems = order.items.length;
+  const packedCount = order.items.filter(i=>i.packing_status==='packed' || i.packing_status==='skipped').length;
+  const packingInProgress = !isPacked && packedCount > 0;
+  const packLabel = isPacked ? '✓ Packed' : (packingInProgress ? `📦 Continue (${packedCount}/${totalItems})` : '📦 Start Packing');
+  const packBg = isPacked ? '#1a7a45' : '#6b2fa0';
+  const recvDisabled = !isPacked;
+  const recvLabel = isPacked ? '✓ Receive Packed' : '✓ Receive Order';
   return `<div class="mob-open-order-card">
     <div class="mob-open-order-hdr" onclick="toggleOrderExpand(${order.id})" style="cursor:pointer">
       <div>
-        <div class="order-id">Order #${order.id.toString().slice(-6)} <span style="font-size:11px;color:#7080a0">${order.items.length} items</span></div>
+        <div class="order-id">Order #${order.id.toString().slice(-6)} <span style="font-size:11px;color:#7080a0">${totalItems} items</span></div>
         <div class="order-date">${dateStr}</div>
-        <div style="font-size:10px;color:#7080a0;margin-top:2px">By ${order.created_by||'—'}</div>
+        <div style="font-size:10px;color:#7080a0;margin-top:2px">By ${order.created_by||'—'}${order.packed_by?' · Packed by '+order.packed_by:''}</div>
+        ${isPacked?'<div style="display:inline-block;margin-top:4px;background:#1a7a45;color:#fff;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700">✓ PACKED</div>':''}
       </div>
       <span style="color:#8090b0;font-size:16px">${isExpanded?'▲':'▼'}</span>
     </div>
     ${isExpanded?`
     <div class="mob-open-order-items" style="margin-top:8px">
-      ${order.items.map((item,idx)=>`
-        <div class="mob-open-order-item">
-          <span class="item-name">${item.product_name}</span>
-          <div class="item-adj">
-            <span style="font-size:11px;color:#7080a0">Qty:</span>
-            <input type="number" value="${item.order_qty}" min="0"
-              oninput="updateAdjQty(${order.id},${idx},this.value)"
-              style="width:56px;padding:6px 8px;border:1.5px solid #c9a84c;border-radius:6px;font-size:14px;font-weight:700;text-align:center;outline:none"/>
-          </div>
-        </div>`).join('')}
+      ${order.items.map(item=>{
+        const st = item.packing_status||'pending';
+        const stPill = st==='packed' ? '<span style="font-size:9px;background:#e6f4ee;color:#1a7a45;border-radius:4px;padding:1px 5px;font-weight:700">PACKED</span>'
+          : st==='skipped' ? '<span style="font-size:9px;background:#fde8e8;color:#b01c1c;border-radius:4px;padding:1px 5px;font-weight:700">SKIPPED</span>'
+          : '<span style="font-size:9px;background:#fff8e6;color:#b35a00;border-radius:4px;padding:1px 5px;font-weight:700">PENDING</span>';
+        const pq = item.packed_qty!==undefined ? item.packed_qty : item.order_qty;
+        return `<div class="mob-open-order-item" style="${st==='skipped'?'opacity:0.6':''}">
+          <span class="item-name" style="${st==='skipped'?'text-decoration:line-through':''}">${item.product_name} ${stPill}</span>
+          <span style="font-size:11px;color:#7080a0">Order ${item.order_qty} · Packed <strong style="color:${pq!==item.order_qty?'#b35a00':'#0d1f4e'}">${pq}</strong></span>
+        </div>`;
+      }).join('')}
     </div>
+    <button onclick="openPackingModal(${order.id})" style="margin-top:10px;width:100%;padding:14px;background:${packBg};color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:800;cursor:pointer">${packLabel}</button>
     <div style="display:flex;gap:8px;margin-top:8px">
       <button id="export-btn-${order.id}" onclick="exportStoreOrderToSheet(${order.id})" style="flex:1;padding:10px;background:#0d1f4e;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer">📊 Export</button>
-      <button class="mob-order-recv-btn" id="recv-btn-${order.id}" onclick="receiveStoreOrder(${order.id})" style="flex:2">✓ Receive Order</button>
+      <button class="mob-order-recv-btn" id="recv-btn-${order.id}" onclick="receiveStoreOrder(${order.id})" ${recvDisabled?'disabled':''} style="flex:2;${recvDisabled?'background:#d0d5e0;color:#7080a0;cursor:not-allowed;opacity:0.7':''}">${recvLabel}</button>
     </div>
     <button class="mob-order-cancel-btn" onclick="cancelStoreOrder(${order.id})">✕ Cancel Order</button>
     `:''}
