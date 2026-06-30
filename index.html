@@ -1607,6 +1607,30 @@ function qtyColor(qty,minLevel,maxLevel){
   return (minLevel>0&&qty<=minLevel) ? '#b35a00' : '#1a7a45';
 }
 
+// Phase 2: how many units of a warehouse product are currently "held" — i.e. packed
+// into a store order but not yet received. Walks storeOrders and sums packed_qty for
+// matching items in orders where warehouse_held=true && status='open'.
+function getHeldQty(productSource, productId){
+  let held = 0;
+  for(const o of storeOrders){
+    if(!o.warehouse_held) continue;
+    if(o.status !== 'open') continue;
+    for(const it of (o.items||[])){
+      if(it.product_id !== productId) continue;
+      if((it.product_source||'mm') !== productSource) continue;
+      if(it.packing_status === 'skipped') continue;
+      held += (it.packed_qty||0);
+    }
+  }
+  return held;
+}
+
+// Render the qty cell text with a held-units suffix when applicable
+function qtyCellWithHeld(qty, held){
+  if(held > 0) return `${qty} <span style="font-size:9px;color:#6b2fa0;font-weight:700;background:#f3e8ff;border-radius:3px;padding:1px 5px;margin-left:3px" title="${held} units packed into open store orders awaiting receive">${held} held</span>`;
+  return String(qty);
+}
+
 function toggleSwitch(isOn,onclick){
   return `<div class="toggle-wrap" onclick="${onclick}">
     <div class="toggle-track${isOn?' on':''}"><div class="toggle-thumb"></div></div>
@@ -2332,7 +2356,7 @@ function renderInventoryRow(p){
   return `<tr class="${p.active?'':'inactive-row'}" id="inv-row-${p.id}" style="${rowStyle}">
     <td style="padding-left:12px;font-weight:600;color:#0d1f4e;white-space:normal;line-height:1.3;max-width:220px">${p.name}${packBadgeFor(p)}</td>
     <td style="font-family:monospace;font-size:10px;color:#7080a0;max-width:110px;overflow:hidden;text-overflow:ellipsis" title="${p.upc}">${p.upc.substring(0,15)}</td>
-    <td style="font-weight:700;color:${qtyColor(p.qty,p.minLevel,p.maxLevel)}">${p.qty}</td>
+    <td style="font-weight:700;color:${qtyColor(p.qty,p.minLevel,p.maxLevel)}">${qtyCellWithHeld(p.qty, getHeldQty('mm', p.id))}</td>
     <td>${p.minLevel}</td><td style="color:#7080a0">${p.maxLevel}</td>
     <td class="fin-col">$${uc.toFixed(4)}</td>
     <td class="fin-col" style="color:#1a7a45">$${p.salePrice.toFixed(2)}</td>
@@ -3303,7 +3327,7 @@ function renderCoffeeRow(p){
   return `<tr class="${p.active?'':'inactive-row'}" id="coffee-row-${p.id}" style="${rowStyle}">
     <td style="padding-left:12px;font-weight:600;color:#0d1f4e;white-space:normal;line-height:1.3;max-width:220px">${p.name}${packBadgeFor(p)}</td>
     <td style="font-family:monospace;font-size:10px;color:#7080a0;max-width:110px;overflow:hidden;text-overflow:ellipsis" title="${p.upc}">${p.upc.substring(0,15)}</td>
-    <td style="font-weight:700;color:${qtyColor(p.qty,p.minLevel,p.maxLevel)}">${p.qty}</td>
+    <td style="font-weight:700;color:${qtyColor(p.qty,p.minLevel,p.maxLevel)}">${qtyCellWithHeld(p.qty, getHeldQty('coffee', p.id))}</td>
     <td>${p.minLevel}</td><td style="color:#7080a0">${p.maxLevel}</td>
     <td class="fin-col">$${uc.toFixed(4)}</td>
     <td class="fin-col" style="color:#1a7a45">$${p.salePrice.toFixed(2)}</td>
@@ -4141,6 +4165,7 @@ async function loadStoreOrders(){
           closed_at: r.closed_at||null,
           packed_at: r.packed_at||null,
           packed_by: r.packed_by||'',
+          warehouse_held: r.warehouse_held===true, // Phase 2: true when warehouse qty already decremented for this order
           created_by: r.created_by||'',
           received_by: r.received_by||'',
           items
@@ -4163,6 +4188,7 @@ async function saveStoreOrder(order){
     closed_at: order.closed_at||null,
     packed_at: order.packed_at||null,
     packed_by: order.packed_by||null,
+    warehouse_held: order.warehouse_held===true,
     created_by: order.created_by||null,
     received_by: order.received_by||null,
     items: order.items
@@ -4539,18 +4565,22 @@ async function receiveStoreOrder(orderId){
       await saveStoreItem(storeItem);
     }
 
-    // 2. Decrease warehouse qty
-    if(item.product_source==='coffee'){
-      const wh = coffeeProducts.find(p=>p.id===item.product_id);
-      if(wh){
-        wh.qty = wh.qty - qty;
-        await saveCoffeeProduct(wh);
-      }
-    } else {
-      const wh = products.find(p=>p.id===item.product_id);
-      if(wh){
-        wh.qty = wh.qty - qty;
-        await saveProduct(wh);
+    // 2. Decrease warehouse qty — ONLY for legacy orders where warehouse_held=false.
+    // Phase 2 orders had the warehouse decremented at pack time (completeOrderPacking),
+    // so receiving only needs to bump store qty.
+    if(!order.warehouse_held){
+      if(item.product_source==='coffee'){
+        const wh = coffeeProducts.find(p=>p.id===item.product_id);
+        if(wh){
+          wh.qty = wh.qty - qty;
+          await saveCoffeeProduct(wh);
+        }
+      } else {
+        const wh = products.find(p=>p.id===item.product_id);
+        if(wh){
+          wh.qty = wh.qty - qty;
+          await saveProduct(wh);
+        }
       }
     }
 
@@ -7223,7 +7253,49 @@ async function saveQuickCaptureOrder(){
 
 
 async function cancelStoreOrder(orderId){
-  if(!confirm('Cancel this store order? It will be removed from open orders.')) return;
+  const order = storeOrders.find(o=>o.id===orderId);
+  if(!order){ showToast('Order not found'); return; }
+
+  // Phase 2: if this order had warehouse_held set, packed_qty was deducted from
+  // warehouse at pack time. Restoring those quantities is part of cancel.
+  const willRestore = order.warehouse_held === true;
+  const restoreItems = willRestore ? order.items.filter(i=>i.packing_status==='packed' && (i.packed_qty||0) > 0) : [];
+
+  const restoreSummary = restoreItems.length > 0
+    ? `\n\nThis will RESTORE ${restoreItems.length} item${restoreItems.length!==1?'s':''} to warehouse inventory (${restoreItems.reduce((s,i)=>s+(i.packed_qty||0),0)} units total).`
+    : '';
+  if(!confirm('Cancel this store order? It will be removed from open orders.' + restoreSummary)) return;
+
+  // Restore warehouse qty first (in case the rest fails, at least inventory is correct)
+  if(restoreItems.length > 0){
+    showCountProgress('Restoring Warehouse Inventory', restoreItems.length);
+    let n = 0;
+    for(const item of restoreItems){
+      n++;
+      updateCountProgress(n, restoreItems.length, item.product_name);
+      const qty = item.packed_qty;
+      try{
+        if(item.product_source==='coffee'){
+          const wh = coffeeProducts.find(p=>p.id===item.product_id);
+          if(wh){ wh.qty = (wh.qty||0) + qty; await saveCoffeeProduct(wh); }
+        } else {
+          const wh = products.find(p=>p.id===item.product_id);
+          if(wh){ wh.qty = (wh.qty||0) + qty; await saveProduct(wh); }
+        }
+        const entry = {
+          id: Date.now()+Math.random(),
+          date: new Date().toISOString().slice(0,10),
+          product: item.product_name,
+          qty: qty,
+          by: `Warehouse Restore — Store Order #${orderId.toString().slice(-6)} Cancelled (${order.store_name})`
+        };
+        restockLog = [entry, ...restockLog];
+        await saveRestock(entry);
+      }catch(e){ /* best effort; continue with remaining */ }
+    }
+    hideCountProgress();
+  }
+
   storeOrders = storeOrders.filter(o=>o.id!==orderId);
   if(useSupabase){
     try{ await sbFetch(`store_orders?id=eq.${orderId}`,{method:'DELETE',prefer:''}); }catch(e){}
@@ -7231,7 +7303,7 @@ async function cancelStoreOrder(orderId){
   localStorage.setItem(LS_STORE_ORDERS, JSON.stringify(storeOrders));
   expandedOrderIds.delete(orderId);
   renderStoreOrders();
-  showToast('Store order cancelled');
+  showToast(willRestore ? `Store order cancelled — ${restoreItems.length} item${restoreItems.length!==1?'s':''} restored to warehouse` : 'Store order cancelled');
 }
 
 // ═══════════════════════════════════════════════════
@@ -7487,23 +7559,64 @@ async function completeOrderPacking(){
   const totalItems = order.items.length;
   const addressed = order.items.filter(i=>i.packing_status==='packed' || i.packing_status==='skipped').length;
   if(addressed !== totalItems){ showToast('⚠ All items must be packed or skipped first'); return; }
-  if(!confirm('Complete packing for this order? Once complete, you cannot reopen — to change quantities, cancel the order and create a new one.')) return;
+  if(!confirm('Complete packing for this order? Once complete, warehouse quantities will be deducted (held) and you cannot reopen — to change quantities, cancel the order and create a new one.')) return;
+
+  // Phase 2: decrement warehouse qty for each packed item BEFORE flipping the held
+  // flag. If any decrement throws, we abort without setting warehouse_held=true so
+  // the user can safely retry without double-decrementing.
+  const orderId = order.id;
+  const packedItems = order.items.filter(i=>i.packing_status==='packed' && (i.packed_qty||0) > 0);
+  showCountProgress('Packing — Holding Warehouse Inventory', packedItems.length);
+  let processed = 0;
+  try{
+    for(const item of packedItems){
+      processed++;
+      updateCountProgress(processed, packedItems.length, item.product_name);
+      const qty = item.packed_qty;
+      if(item.product_source === 'coffee'){
+        const wh = coffeeProducts.find(p=>p.id===item.product_id);
+        if(wh){ wh.qty = (wh.qty||0) - qty; await saveCoffeeProduct(wh); }
+      } else {
+        const wh = products.find(p=>p.id===item.product_id);
+        if(wh){ wh.qty = (wh.qty||0) - qty; await saveProduct(wh); }
+      }
+      // Per-item activity log
+      const entry = {
+        id: Date.now()+Math.random(),
+        date: new Date().toISOString().slice(0,10),
+        product: item.product_name,
+        qty: -qty,
+        by: `Warehouse Hold — Store Order #${orderId.toString().slice(-6)} (${order.store_name})`
+      };
+      restockLog = [entry, ...restockLog];
+      await saveRestock(entry);
+    }
+  }catch(e){
+    hideCountProgress();
+    showToast('⚠ Pack failed mid-decrement — refresh and try again. Some items may already be deducted.');
+    return;
+  }
+
+  // All decrements succeeded — stamp the order as packed and held
   order.packed_at = new Date().toISOString();
   order.packed_by = currentUser?.display_name || 'Unknown';
+  order.warehouse_held = true;
   await saveStoreOrder(order);
-  // Log to activity
+  hideCountProgress();
+
+  // Summary log
   const packedCount = order.items.filter(i=>i.packing_status==='packed').length;
   const totalPackedUnits = order.items.reduce((s,i)=> s + ((i.packing_status==='packed' ? (i.packed_qty||0) : 0)), 0);
   const entry = {
     id: Date.now()+Math.random(),
     date: new Date().toISOString().slice(0,10),
-    product: `Store Order #${order.id.toString().slice(-6)} — packed ${packedCount} of ${totalItems} items (${totalPackedUnits} units)`,
+    product: `Store Order #${orderId.toString().slice(-6)} — packed ${packedCount} of ${totalItems} items (${totalPackedUnits} units)`,
     qty: totalPackedUnits,
     by: `Store Order Packed — ${order.store_name}`
   };
   restockLog = [entry, ...restockLog];
   await saveRestock(entry);
-  showToast('✓ Order packed — ready to receive');
+  showToast('✓ Order packed — warehouse qty held, ready to receive');
   closePackingModal();
 }
 
