@@ -7322,7 +7322,12 @@ function openPackingModal(orderId){
   const order = storeOrders.find(o=>o.id===orderId);
   if(!order){ showToast('Order not found'); return; }
   _packingOrderId = orderId;
+  // Start with every section collapsed so the worker sees a clean list of sections
+  // and expands one at a time as they pack it.
   _packingCollapsedSections.clear();
+  const s = buildPackingSections(order);
+  for(const k of s.mmCats) _packingCollapsedSections.add('mm:'+k);
+  for(const k of s.coffeeStations) _packingCollapsedSections.add('coffee:'+k);
   renderPackingModal();
 }
 
@@ -7423,20 +7428,22 @@ function renderPackingModalInner(){
 
           ${sections.mmCats.length>0?`
             <div style="font-size:11px;font-weight:800;color:#0d1f4e;letter-spacing:1.5px;text-transform:uppercase;margin:4px 0 10px">🛒 Micromarket Items</div>
-            ${sections.mmCats.map(cat=>renderPackingSection(cat, sections.mmGroups[cat], '#0d1f4e', '#e8edf8')).join('')}
+            ${sections.mmCats.map(cat=>renderPackingSection(cat, sections.mmGroups[cat], '#0d1f4e', '#e8edf8', 'mm')).join('')}
           `:''}
 
           ${sections.coffeeStations.length>0?`
             <div style="font-size:11px;font-weight:800;color:#6b2fa0;letter-spacing:1.5px;text-transform:uppercase;margin:16px 0 10px">☕ Coffee Items</div>
-            ${sections.coffeeStations.map(stn=>renderPackingSection(stn, sections.coffeeGroups[stn], '#6b2fa0', '#f3e8ff')).join('')}
+            ${sections.coffeeStations.map(stn=>renderPackingSection(stn, sections.coffeeGroups[stn], '#6b2fa0', '#f3e8ff', 'coffee')).join('')}
           `:''}
         </div>
       </div>
     </div>`;
 }
 
-function renderPackingSection(sectionLabel, items, accentColor, accentBg){
-  const sectionKey = sectionLabel; // group keys are unique within their type so this is fine
+function renderPackingSection(sectionLabel, items, accentColor, accentBg, ns){
+  // Namespace the key so an MM category and a coffee station with the same name
+  // (e.g. both "Other") don't collapse each other.
+  const sectionKey = (ns||'mm') + ':' + sectionLabel;
   const collapsed = _packingCollapsedSections.has(sectionKey);
   const addressed = items.filter(i=>i.packing_status==='packed' || i.packing_status==='skipped').length;
   const allDone = addressed === items.length;
