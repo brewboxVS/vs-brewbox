@@ -7371,7 +7371,18 @@ function buildPackingSections(order){
   return { mmCats, mmGroups, coffeeStations, coffeeGroups };
 }
 
+// Re-rendering the modal replaces innerHTML, which destroys the scroll container and
+// resets scrollTop to 0 — that made the view jump to the top every time the worker
+// tapped "Packed". Capture the scroll offset first, then restore it after the rebuild.
 function renderPackingModal(){
+  const prev = document.getElementById('packing-modal-scroll');
+  const scrollTop = prev ? prev.scrollTop : 0;
+  renderPackingModalInner();
+  const next = document.getElementById('packing-modal-scroll');
+  if(next && scrollTop > 0) next.scrollTop = scrollTop;
+}
+
+function renderPackingModalInner(){
   const order = storeOrders.find(o=>o.id===_packingOrderId);
   if(!order) return;
   const sections = buildPackingSections(order);
@@ -7386,7 +7397,7 @@ function renderPackingModal(){
 
   document.getElementById('modal-container').innerHTML = `
     <div class="modal-overlay" onclick="if(event.target===this)closePackingModal()">
-      <div class="modal" style="width:780px;max-width:96vw;max-height:94vh;overflow-y:auto;padding:0">
+      <div id="packing-modal-scroll" class="modal" style="width:780px;max-width:96vw;max-height:94vh;overflow-y:auto;padding:0">
         <!-- Sticky header -->
         <div style="position:sticky;top:0;z-index:2;background:#fff;padding:16px 18px 12px;border-bottom:1px solid #e8ecf4">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px">
