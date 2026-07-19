@@ -6738,6 +6738,24 @@ function renderQuickOrderModal(){
             <tbody>
             ${_quickOrderItems.map((item,idx)=>{
               const qtyAdd = (parseInt(item.rec_cases)||0) * item.pieces_per_box;
+              if(item.is_pack){
+                const typeBadge = item.pack_type==='fixed'
+                  ? '<span style="font-size:9px;background:#e6f4ee;color:#1a7a45;padding:1px 5px;border-radius:4px;font-weight:700">FIXED</span>'
+                  : '<span style="font-size:9px;background:#fff0e6;color:#b35a00;padding:1px 5px;border-radius:4px;font-weight:700">VARIABLE</span>';
+                const breakdown = item.pack_type==='fixed'
+                  ? (item.members||[]).map(m=>`${m.per}× ${m.name}`).join(', ')
+                  : 'core: '+((item.members||[]).filter(m=>m.core).map(m=>m.name).join(', ')||'—');
+                return `<tr>
+                <td style="padding-left:4px;font-weight:700;color:#6b2fa0;white-space:normal;max-width:200px">${item.product_name} ${typeBadge}
+                  <div style="font-size:10px;color:#7080a0;font-weight:500;margin-top:2px">${breakdown}</div></td>
+                <td style="font-size:10px"><span style="background:#f3e8ff;color:#6b2fa0;padding:2px 6px;border-radius:4px;font-weight:700">PACK</span></td>
+                <td style="color:#7080a0">${item.case_size}</td>
+                <td><input type="number" min="1" value="${item.rec_cases}" style="width:60px;padding:5px;border:1.5px solid #6b2fa0;border-radius:5px;font-size:13px;font-weight:700;text-align:center;outline:none"
+                  oninput="updateQuickOrderCases(${idx},this.value)"/></td>
+                <td id="qo-qty-${idx}" style="color:#1a7a45;font-weight:700">+${qtyAdd}${item.pack_type==='variable'?' <span style="font-size:9px;color:#b35a00">(allocate at receive)</span>':''}</td>
+                <td><button onclick="_quickOrderItems.splice(${idx},1);renderQuickOrderModal()" style="background:none;border:none;color:#b01c1c;cursor:pointer;font-size:14px">✕</button></td>
+              </tr>`;
+              }
               return `<tr>
               <td style="padding-left:4px;font-weight:600;color:#0d1f4e;white-space:normal;max-width:200px">${item.product_name}</td>
               <td style="font-size:10px"><span style="background:${item.source==='coffee'?'#f3e8ff':'#e8edf8'};color:${item.source==='coffee'?'#6b2fa0':'#0d1f4e'};padding:2px 6px;border-radius:4px;font-weight:700">${item.source==='coffee'?'Coffee':'MM'}</span></td>
@@ -6782,7 +6800,7 @@ function addQuickOrderItem(productId, source){
     ? coffeeProducts.find(x=>x.id===productId)
     : products.find(x=>x.id===productId);
   if(!p) return;
-  if(_quickOrderItems.find(i=>i.product_id===productId)) return;
+  if(_quickOrderItems.find(i=>!i.is_pack && i.product_id===productId)) return;
   _quickOrderItems.push({
     product_id: p.id,
     product_name: p.name,
@@ -6800,34 +6818,98 @@ function addQuickOrderItem(productId, source){
   renderQuickOrderModal();
 }
 
+// Add a whole variety pack as a single pack line (mirrors calcPackOrderLines shape so
+// the shared receive logic — fixed auto-distribute / variable composition — handles it).
+function addQuickOrderPack(groupId){
+  const g = packGroups.find(x=>x.id===groupId);
+  if(!g) return;
+  if(_quickOrderItems.find(i=>i.is_pack && i.pack_group_id===groupId)) return;
+  const members = packMembers(g).filter(m=>m.active);
+  _quickOrderItems.push({
+    is_pack: true,
+    pack_group_id: g.id,
+    pack_name: g.name,
+    pack_type: g.pack_type,
+    case_size: g.case_size,
+    product_name: '🎁 '+g.name,
+    source: g.product_source,
+    product_source: g.product_source,
+    cat1: 'VARIETY PACK',
+    pieces_per_box: g.case_size,   // for QTY-TO-ADD display math (cases × case_size)
+    unit_cost: 0,
+    rec_cases: 1,
+    bought_rec: false,
+    actual_cases: '',
+    not_available: false,
+    members: members.map(m=>({
+      id: m.id, name: m.name,
+      qty: m.qty, min: m.minLevel, max: m.maxLevel,
+      per: m.packQtyPerUnit, core: m.packIsCore, source: g.product_source
+    }))
+  });
+  _quickOrderSearch = '';
+  renderQuickOrderModal();
+}
+
 function updateQuickOrderResults(){
   const container = document.getElementById('qo-results');
   if(!container) return;
 
   const allProducts = [...products.filter(p=>p.active).map(p=>({id:p.id, name:p.name, source:'mm', ppb:p.piecesPerBox, cost:p.unitCost, cat1:p.cat1, qty:p.qty})),
     ...coffeeProducts.filter(p=>p.active).map(p=>({id:p.id, name:p.name, source:'coffee', ppb:p.piecesPerBox, cost:p.unitCost, cat1:p.cat1, qty:p.qty}))
-  ].sort((a,b)=>a.name.localeCompare(b.name));
+  ];
+
+  // Variety pack groups appear as selectable "pack" rows (added as a single pack line).
+  const packRows = packGroups.filter(g=>g.active).map(g=>({
+    isPack:true, id:g.id, name:g.name, source:g.product_source, pack_type:g.pack_type, case_size:g.case_size
+  }));
+
+  const combined = [...packRows, ...allProducts].sort((a,b)=>a.name.localeCompare(b.name));
 
   const searchLower = _quickOrderSearch.toLowerCase();
-  const addedIds = new Set(_quickOrderItems.map(i=>i.product_id));
-  const available = searchLower ? allProducts.filter(p=>p.name.toLowerCase().includes(searchLower) && !addedIds.has(p.id)) : [];
+  const addedIds = new Set(_quickOrderItems.map(i=>i.is_pack ? 'pack:'+i.pack_group_id : i.product_id));
+  const available = searchLower ? combined.filter(p=>{
+    if(!p.name.toLowerCase().includes(searchLower)) return false;
+    const key = p.isPack ? 'pack:'+p.id : p.id;
+    return !addedIds.has(key);
+  }) : [];
 
   if(searchLower && available.length > 0){
     container.innerHTML = `<div style="max-height:180px;overflow-y:auto;border:1px solid #e8ecf4;border-radius:7px;margin-bottom:12px">
-      ${available.slice(0,20).map(p=>`
-      <div onclick="addQuickOrderItem(${p.id},'${p.source}')"
-        style="padding:8px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid #f0f2f8;display:flex;justify-content:space-between;align-items:center"
-        onmouseover="this.style.background='#f4f6fa'" onmouseout="this.style.background=''">
-        <div>
-          <span style="font-weight:600;color:#0d1f4e">${p.name}</span>
-          <span style="font-size:10px;color:#7080a0;margin-left:6px">${p.cat1||''}</span>
-        </div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <span style="font-size:10px;color:#7080a0">Stock: ${p.qty}</span>
-          <span style="font-size:10px;background:${p.source==='coffee'?'#f3e8ff':'#e8edf8'};color:${p.source==='coffee'?'#6b2fa0':'#0d1f4e'};padding:1px 6px;border-radius:4px;font-weight:700">${p.source==='coffee'?'Coffee':'MM'}</span>
-          <span style="color:#1a7a45;font-weight:700;font-size:14px">+</span>
-        </div>
-      </div>`).join('')}
+      ${available.slice(0,20).map(p=>{
+        if(p.isPack){
+          const typeBadge = p.pack_type==='fixed'
+            ? '<span style="font-size:9px;background:#e6f4ee;color:#1a7a45;padding:1px 6px;border-radius:4px;font-weight:700">FIXED</span>'
+            : '<span style="font-size:9px;background:#fff0e6;color:#b35a00;padding:1px 6px;border-radius:4px;font-weight:700">VARIABLE</span>';
+          return `<div onclick="addQuickOrderPack(${p.id})"
+            style="padding:8px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid #f0f2f8;display:flex;justify-content:space-between;align-items:center;background:#faf7ff"
+            onmouseover="this.style.background='#f3e8ff'" onmouseout="this.style.background='#faf7ff'">
+            <div>
+              <span style="font-weight:700;color:#6b2fa0">🎁 ${p.name}</span>
+              <span style="font-size:10px;color:#7080a0;margin-left:6px">case of ${p.case_size}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              ${typeBadge}
+              <span style="font-size:10px;background:${p.source==='coffee'?'#f3e8ff':'#e8edf8'};color:${p.source==='coffee'?'#6b2fa0':'#0d1f4e'};padding:1px 6px;border-radius:4px;font-weight:700">${p.source==='coffee'?'Coffee':'MM'}</span>
+              <span style="color:#6b2fa0;font-weight:700;font-size:14px">+</span>
+            </div>
+          </div>`;
+        }
+        return `
+        <div onclick="addQuickOrderItem(${p.id},'${p.source}')"
+          style="padding:8px 12px;cursor:pointer;font-size:12px;border-bottom:1px solid #f0f2f8;display:flex;justify-content:space-between;align-items:center"
+          onmouseover="this.style.background='#f4f6fa'" onmouseout="this.style.background=''">
+          <div>
+            <span style="font-weight:600;color:#0d1f4e">${p.name}</span>
+            <span style="font-size:10px;color:#7080a0;margin-left:6px">${p.cat1||''}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-size:10px;color:#7080a0">Stock: ${p.qty}</span>
+            <span style="font-size:10px;background:${p.source==='coffee'?'#f3e8ff':'#e8edf8'};color:${p.source==='coffee'?'#6b2fa0':'#0d1f4e'};padding:1px 6px;border-radius:4px;font-weight:700">${p.source==='coffee'?'Coffee':'MM'}</span>
+            <span style="color:#1a7a45;font-weight:700;font-size:14px">+</span>
+          </div>
+        </div>`;
+      }).join('')}
       ${available.length > 20 ? '<div style="text-align:center;padding:6px;font-size:10px;color:#7080a0">Showing 20 of '+available.length+' — refine search</div>' : ''}
     </div>`;
   } else if(searchLower && available.length === 0){
@@ -6840,22 +6922,45 @@ function updateQuickOrderResults(){
 async function saveQuickOrder(){
   if(_quickOrderItems.length === 0) return;
 
-  // Build order items — default bought_rec to true for quick orders
-  const orderItems = _quickOrderItems.map(item=>({
-    product_id: item.product_id,
-    product_name: item.product_name,
-    product_source: item.source,
-    current_qty: 0,
-    min_level: 0,
-    max_level: 0,
-    pieces_per_box: item.pieces_per_box,
-    rec_cases: parseInt(item.rec_cases)||1,
-    vendor: '',
-    cat1: item.cat1,
-    bought_rec: true,
-    actual_cases: '',
-    not_available: false
-  }));
+  // Build order items — default bought_rec to true for quick orders. Pack lines carry
+  // their full metadata so the shared receive path (receiveWhOrder / _doReceiveWhOrder)
+  // recognizes them: fixed packs auto-distribute, variable packs prompt composition.
+  const orderItems = _quickOrderItems.map(item=>{
+    if(item.is_pack){
+      return {
+        is_pack: true,
+        pack_group_id: item.pack_group_id,
+        pack_name: item.pack_name,
+        pack_type: item.pack_type,
+        case_size: item.case_size,
+        product_name: item.product_name,          // '🎁 Name'
+        product_source: item.product_source || item.source,
+        cat1: 'VARIETY PACK',
+        pieces_per_box: item.case_size,
+        rec_cases: parseInt(item.rec_cases)||1,
+        vendor: '',
+        members: item.members || [],
+        bought_rec: true,
+        actual_cases: '',
+        not_available: false
+      };
+    }
+    return {
+      product_id: item.product_id,
+      product_name: item.product_name,
+      product_source: item.source,
+      current_qty: 0,
+      min_level: 0,
+      max_level: 0,
+      pieces_per_box: item.pieces_per_box,
+      rec_cases: parseInt(item.rec_cases)||1,
+      vendor: '',
+      cat1: item.cat1,
+      bought_rec: true,
+      actual_cases: '',
+      not_available: false
+    };
+  });
 
   const order = {
     id: Date.now(),
