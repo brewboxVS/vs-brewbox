@@ -671,6 +671,13 @@ body.hide-fin .fin-col { display: none !important; }
           <button class="nav-btn nav-sub" onclick="setView('usage-report')">📋 &nbsp;<span>Consumption & Theft</span></button>
         </div>
       </div>
+      <div id="equipment-nav">
+        <button class="nav-btn" id="equipment-toggle" onclick="toggleEquipmentMenu()">🔧 &nbsp;<span>Equipment</span><span class="nav-arrow" id="equipment-arrow">›</span></button>
+        <div id="equipment-submenu" style="display:none">
+          <button class="nav-btn nav-sub" onclick="setView('equipment')">🛠️ &nbsp;<span>Equipment & PM</span></button>
+          <button class="nav-btn nav-sub" onclick="setView('vendors')">📇 &nbsp;<span>Service Vendors</span></button>
+        </div>
+      </div>
       <div id="admin-nav" style="display:none">
         <button class="nav-btn" id="admin-toggle" onclick="toggleAdminMenu()">🔐 &nbsp;<span>Admin</span><span class="nav-arrow" id="admin-arrow">›</span></button>
         <div id="admin-submenu" style="display:none">
@@ -1536,6 +1543,46 @@ let invoicesList = []; // loaded from DB
 let cupReadings = []; // loaded from DB
 let cupMonthlySummary = []; // monthly cup totals
 
+// ── Equipment / maintenance (Build 2) ──
+let equipmentList = [];      // store_equipment
+let equipmentPM = [];        // equipment_pm_schedule
+let equipmentServiceLog = [];// equipment_service_log
+let equipmentVendors = [];   // equipment_vendors
+async function loadEquipment(){
+  if(!useSupabase) return;
+  try{ equipmentList = await sbFetch('store_equipment?order=store_name,station_name', {method:'GET', prefer:'return=representation'}); }catch(e){ equipmentList=[]; }
+  try{ equipmentPM = await sbFetch('equipment_pm_schedule?order=equipment_id', {method:'GET', prefer:'return=representation'}); }catch(e){ equipmentPM=[]; }
+  try{ equipmentServiceLog = await sbFetch('equipment_service_log?order=service_date.desc', {method:'GET', prefer:'return=representation'}); }catch(e){ equipmentServiceLog=[]; }
+  try{ equipmentVendors = await sbFetch('equipment_vendors?order=name', {method:'GET', prefer:'return=representation'}); }catch(e){ equipmentVendors=[]; }
+}
+const EQUIPMENT_TYPES = ['Coffee Machine','RO Unit and/or Filtering System','Water/Ice Cooler','Water Cooler'];
+const RO_TYPE = 'RO Unit and/or Filtering System';
+const PM_TYPES = ['Filter Change','Flush/Sanitize'];
+const PM_INTERVAL_MONTHS = 9;
+
+// Add N months to an ISO date string (YYYY-MM-DD), return ISO date string
+function addMonths(isoDate, months){
+  if(!isoDate) return null;
+  const d = new Date(isoDate + 'T00:00:00');
+  if(isNaN(d.getTime())) return null;
+  d.setMonth(d.getMonth() + months);
+  return d.toISOString().slice(0,10);
+}
+// Days from today until an ISO date (negative = overdue)
+function daysUntil(isoDate){
+  if(!isoDate) return null;
+  const today = new Date(new Date().toISOString().slice(0,10) + 'T00:00:00');
+  const target = new Date(isoDate + 'T00:00:00');
+  return Math.round((target - today) / 86400000);
+}
+// Next-due ISO for a PM row: COALESCE(last_done, install) + interval
+function pmNextDue(pmRow){
+  const equip = equipmentList.find(e=>e.id===pmRow.equipment_id);
+  const baseline = pmRow.last_done_date || (equip ? equip.install_date : null);
+  if(!baseline) return null;
+  return addMonths(baseline, pmRow.interval_months || PM_INTERVAL_MONTHS);
+}
+
 async function loadVendingPriceMap(){
   if(useSupabase){
     try{
@@ -1580,6 +1627,7 @@ async function initApp(){
   await loadInvoices();
   await loadCupReadings();
   await loadPackGroups();
+  await loadEquipment();
   hideLoading();
   updateUserFooter();
   applyNavPermissions();
@@ -1705,6 +1753,7 @@ function updateSidebar(){
   // Auto-open import submenu when on import views
   if(currentView==='orders') openImportMenu();
   if(currentView==='usage-report'||currentView==='insights') { openReportsMenu(); document.querySelector('.nav-btn[onclick*="'+currentView+'"]')?.classList.add('active'); }
+  if(currentView==='equipment'||currentView==='vendors') { openEquipmentMenu(); document.querySelector('.nav-btn[onclick*="'+currentView+'"]')?.classList.add('active'); }
   if(currentView==='user-mgmt'||currentView==='permissions'||currentView==='store-settings') { openAdminMenu(); document.querySelector('.nav-btn[onclick*="'+currentView+'"]')?.classList.add('active'); }
 }
 
@@ -1767,6 +1816,20 @@ function openReportsMenu(){
   if(sub) sub.style.display='block';
   if(arrow) arrow.classList.add('open');
 }
+function toggleEquipmentMenu(){
+  const sub=document.getElementById('equipment-submenu');
+  const arrow=document.getElementById('equipment-arrow');
+  if(!sub) return;
+  const isOpen=sub.style.display!=='none';
+  sub.style.display=isOpen?'none':'block';
+  arrow?.classList.toggle('open',!isOpen);
+}
+function openEquipmentMenu(){
+  const sub=document.getElementById('equipment-submenu');
+  const arrow=document.getElementById('equipment-arrow');
+  if(sub) sub.style.display='block';
+  if(arrow) arrow.classList.add('open');
+}
 
 function toggleAdminMenu(){
   const sub=document.getElementById('admin-submenu');
@@ -1805,7 +1868,7 @@ function setView(v){
     if(!canView(effective)) v = firstAllowedView();
   }
   currentView=v;
-  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log','sales-import':'Sales Import','hist-import':'Historical Data Import',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log','usage-report':'Consumption & Theft Reports','vendor-mgmt':'Vendor Management','insights':'Insights Dashboard','invoices':'Invoices','coffee-counts':'Coffee Counts','user-mgmt':'User Management','permissions':'Permissions','store-settings':'Store Settings','my-sales':'My Sales'};
+  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log','sales-import':'Sales Import','hist-import':'Historical Data Import',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log','usage-report':'Consumption & Theft Reports','vendor-mgmt':'Vendor Management','insights':'Insights Dashboard','invoices':'Invoices','coffee-counts':'Coffee Counts','user-mgmt':'User Management','permissions':'Permissions','store-settings':'Store Settings','equipment':'Equipment & Maintenance','vendors':'Service Vendors','my-sales':'My Sales'};
   if(v==='count' && Object.keys(countState).length===0) initCountState();
   if(v==='store-count' && Object.keys(storeCountState).length===0) initStoreCountState();
   document.getElementById('page-title').textContent=titles[v]||v;
@@ -1846,6 +1909,8 @@ function render(){
   else if(currentView==='user-mgmt') renderUserManagement();
   else if(currentView==='permissions') renderPermissions();
   else if(currentView==='store-settings') renderStoreSettings();
+  else if(currentView==='equipment') renderEquipment();
+  else if(currentView==='vendors') renderVendors();
   else if(currentView==='my-sales') renderMySales();
   else renderRestock();
 }
@@ -1861,6 +1926,84 @@ function toggleDashStore(store){
   if(_dashStoreExpanded.has(store)) _dashStoreExpanded.delete(store);
   else _dashStoreExpanded.add(store);
   renderDashboard();
+}
+
+// Dashboard PM widget: banner states per Build 2 spec.
+//  - nothing due in 90d → thin muted banner
+//  - something in 90d (nothing <30) → collapsed expandable widget
+//  - anything <30d or overdue → expanded by default, red items on top
+let _pmWidgetExpanded = null; // null = use default per state; true/false = user override this session
+function togglePMWidget(){
+  const items = pmDueItems();
+  const anyUrgent = items.some(i=>i.days!==null && i.days<=30);
+  const defaultExpanded = anyUrgent;
+  const current = _pmWidgetExpanded===null ? defaultExpanded : _pmWidgetExpanded;
+  _pmWidgetExpanded = !current;
+  renderDashboard();
+}
+// All PMs due within 90 days (or overdue), sorted soonest-first
+function pmDueItems(){
+  const out = [];
+  for(const p of equipmentPM){
+    const equip = equipmentList.find(e=>e.id===p.equipment_id);
+    if(!equip || equip.status==='removed') continue;
+    const due = pmNextDue(p);
+    if(!due) continue;
+    const d = daysUntil(due);
+    if(d===null) continue;
+    if(d <= 90){
+      out.push({ equip, pm_type:p.pm_type, dueDate:due, days:d });
+    }
+  }
+  out.sort((a,b)=>a.days-b.days);
+  return out;
+}
+function renderPMWidget(){
+  // Only show PM widget on dashboard if there is equipment with PM schedules at all
+  if(equipmentPM.length===0) return '';
+  const items = pmDueItems();
+
+  if(items.length===0){
+    return `<div style="background:#f0f7f2;border:1px solid #cfe6d8;border-radius:8px;padding:8px 14px;margin-bottom:12px;font-size:12px;color:#1a7a45;font-weight:600;display:flex;align-items:center;gap:8px">
+      <span>✓</span><span>All preventative maintenance up to date</span>
+    </div>`;
+  }
+
+  const anyUrgent = items.some(i=>i.days<=30); // includes overdue (negative)
+  const defaultExpanded = anyUrgent;
+  const expanded = _pmWidgetExpanded===null ? defaultExpanded : _pmWidgetExpanded;
+
+  const urgentCount = items.filter(i=>i.days<=30).length;
+  const headerColor = anyUrgent ? '#b01c1c' : '#b35a00';
+  const headerBg = anyUrgent ? '#fde8e8' : '#fff4e6';
+  const summary = anyUrgent
+    ? `${urgentCount} PM${urgentCount!==1?'s':''} due within 30 days${items.length>urgentCount?` (${items.length} within 90)`:''}`
+    : `${items.length} PM${items.length!==1?'s':''} due in the next 90 days`;
+
+  // sort so overdue/urgent on top already handled by days asc
+  const rows = items.map(i=>{
+    const c = pmColorFor(i.days);
+    return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 12px;border-top:1px solid #f0e4e4">
+      <div style="flex:1;min-width:0">
+        <span style="font-size:12px;font-weight:700;color:#0d1f4e">${i.equip.store_name}${i.equip.station_name?' · '+i.equip.station_name:''}</span>
+        <span style="font-size:11px;color:#5060a0;margin-left:6px">${i.equip.equipment_type}${i.equip.make_model?' ('+i.equip.make_model+')':''} — ${i.pm_type}</span>
+      </div>
+      <div style="text-align:right;white-space:nowrap">
+        <span style="font-size:11px;font-weight:700;color:${c.color};background:${c.bg};border-radius:5px;padding:2px 8px">${c.label}</span>
+        <span style="font-size:10px;color:#8090b0;margin-left:5px">${i.dueDate}</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  return `<div style="border:1px solid ${anyUrgent?'#f0c8c8':'#f0dcc0'};border-radius:8px;margin-bottom:12px;overflow:hidden">
+    <div onclick="togglePMWidget()" style="display:flex;justify-content:space-between;align-items:center;padding:9px 14px;background:${headerBg};cursor:pointer">
+      <div style="font-size:12px;font-weight:700;color:${headerColor};display:flex;align-items:center;gap:8px">
+        <span>🔧</span><span>${summary}</span>
+      </div>
+      <span style="font-size:13px;color:${headerColor}">${expanded?'▲':'▼'}</span>
+    </div>
+    ${expanded?`<div style="background:#fff">${rows}</div>`:''}
+  </div>`;
 }
 
 function renderDashboard(){
@@ -2013,6 +2156,7 @@ function renderDashboard(){
   }
 
   document.getElementById('main-body').innerHTML=`
+    ${renderPMWidget()}
     <!-- Store Inventory Widgets -->
     ${(function(){
       const storeData = userStores().map(store=>{
@@ -11516,6 +11660,504 @@ async function saveStoreSettings(){
     if(btn){ btn.disabled=false; btn.textContent=`Save ${store} Settings`; btn.style.opacity='1'; }
   }
 }
+
+
+// ═══════════════════════════════════════════════════
+//  EQUIPMENT & MAINTENANCE (Build 2)
+// ═══════════════════════════════════════════════════
+let _equipStoreFilter = 'all';
+let _equipExpanded = new Set();
+
+function equipSoonestPM(equipId){
+  const rows = equipmentPM.filter(p=>p.equipment_id===equipId);
+  let soonest = null;
+  for(const r of rows){
+    const due = pmNextDue(r);
+    if(!due) continue;
+    const d = daysUntil(due);
+    if(soonest===null || d < soonest.days){ soonest = {days:d, dueDate:due, pm_type:r.pm_type}; }
+  }
+  return soonest;
+}
+function pmColorFor(days){
+  if(days===null) return {color:'#7080a0', bg:'#f0f2f5', label:'No date set'};
+  if(days < 0) return {color:'#b01c1c', bg:'#fde8e8', label:`Overdue ${Math.abs(days)}d`};
+  if(days <= 30) return {color:'#b01c1c', bg:'#fde8e8', label:`Due in ${days}d`};
+  if(days <= 90) return {color:'#b35a00', bg:'#fff4e6', label:`Due in ${days}d`};
+  return {color:'#1a7a45', bg:'#e6f4ee', label:`Due in ${days}d`};
+}
+
+function renderEquipment(){
+  const stores = ['all', ...STORES];
+  const filtered = _equipStoreFilter==='all' ? equipmentList : equipmentList.filter(e=>e.store_name===_equipStoreFilter);
+  const active = filtered.filter(e=>e.status!=='removed');
+  const removed = filtered.filter(e=>e.status==='removed');
+  const grouped = {};
+  for(const e of active){
+    const st = e.store_name;
+    const stn = e.station_name || '— Standalone —';
+    if(!grouped[st]) grouped[st] = {};
+    if(!grouped[st][stn]) grouped[st][stn] = [];
+    grouped[st][stn].push(e);
+  }
+  document.getElementById('main-body').innerHTML = `
+    <div style="max-width:1000px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:8px">
+          <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase">Store:</label>
+          <select onchange="_equipStoreFilter=this.value;renderEquipment()" style="background:#fff;border:1.5px solid #0d1f4e;border-radius:7px;padding:7px 12px;font-size:13px;font-weight:700;color:#0d1f4e;outline:none;cursor:pointer">
+            ${stores.map(s=>`<option value="${s}" ${s===_equipStoreFilter?'selected':''}>${s==='all'?'All Stores':s}</option>`).join('')}
+          </select>
+        </div>
+        <button onclick="openEquipmentEditor(null)" class="primary-btn" style="padding:9px 18px">+ Add Equipment</button>
+      </div>
+      ${active.length===0 ? '<div class="card" style="text-align:center;padding:40px;color:#7080a0">No equipment yet. Click "+ Add Equipment" to start.</div>' :
+        Object.keys(grouped).sort().map(store=>`
+          <div style="margin-bottom:20px">
+            <div style="font-size:14px;font-weight:800;color:#0d1f4e;margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid #e8ecf4">${store}</div>
+            ${Object.keys(grouped[store]).sort().map(stn=>`
+              <div style="font-size:11px;font-weight:700;color:#6b2fa0;text-transform:uppercase;letter-spacing:0.5px;margin:10px 0 6px">${stn}</div>
+              ${grouped[store][stn].map(e=>renderEquipmentCard(e)).join('')}
+            `).join('')}
+          </div>`).join('')}
+      ${removed.length>0?`
+        <details style="margin-top:10px">
+          <summary style="font-size:12px;color:#7080a0;cursor:pointer;font-weight:600">Removed equipment (${removed.length})</summary>
+          <div style="margin-top:8px">${removed.map(e=>renderEquipmentCard(e)).join('')}</div>
+        </details>`:''}
+    </div>`;
+}
+
+function renderEquipmentCard(e){
+  const isRO = e.equipment_type===RO_TYPE;
+  const isExpanded = _equipExpanded.has(e.id);
+  const logs = equipmentServiceLog.filter(l=>l.equipment_id===e.id).sort((a,b)=>b.service_date.localeCompare(a.service_date));
+  const totalCost = logs.reduce((s,l)=>s+(parseFloat(l.cost)||0),0);
+  const pmCost = logs.filter(l=>l.service_type==='PM').reduce((s,l)=>s+(parseFloat(l.cost)||0),0);
+  const repairCost = logs.filter(l=>l.service_type==='Repair').reduce((s,l)=>s+(parseFloat(l.cost)||0),0);
+  const statusBadge = e.status==='active'
+    ? '<span style="background:#e6f4ee;color:#1a7a45;border-radius:4px;padding:2px 8px;font-size:9px;font-weight:700">ACTIVE</span>'
+    : e.status==='needs_service'
+    ? '<span style="background:#fde8e8;color:#b01c1c;border-radius:4px;padding:2px 8px;font-size:9px;font-weight:700">NEEDS SERVICE</span>'
+    : '<span style="background:#f0f2f5;color:#7080a0;border-radius:4px;padding:2px 8px;font-size:9px;font-weight:700">REMOVED</span>';
+  let pmBlock = '';
+  if(isRO){
+    const pmRows = equipmentPM.filter(p=>p.equipment_id===e.id);
+    pmBlock = `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+      ${pmRows.map(p=>{
+        const due = pmNextDue(p);
+        const d = daysUntil(due);
+        const c = pmColorFor(d);
+        return `<div style="background:${c.bg};border-radius:6px;padding:5px 10px;font-size:10px">
+          <span style="font-weight:700;color:#0d1f4e">${p.pm_type}</span>
+          <span style="color:${c.color};font-weight:700;margin-left:5px">${c.label}</span>
+          ${due?`<span style="color:#7080a0;margin-left:4px">(${due})</span>`:''}
+        </div>`;
+      }).join('')}
+    </div>`;
+  }
+  return `
+    <div style="border:1px solid #e8ecf4;border-radius:9px;margin-bottom:8px;overflow:hidden">
+      <div style="padding:12px 14px">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+          <div style="flex:1">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span style="font-size:13px;font-weight:700;color:#0d1f4e">${e.equipment_type}</span>
+              ${statusBadge}
+              ${isRO && e.ro_serves?`<span style="background:#e8f0fe;color:#1a5296;border-radius:4px;padding:2px 8px;font-size:9px;font-weight:700">Serves: ${e.ro_serves==='both'?'Coffee + Water/Ice':e.ro_serves==='coffee'?'Coffee':'Water/Ice'}</span>`:''}
+            </div>
+            <div style="font-size:11px;color:#5060a0;margin-top:3px">
+              ${e.make_model?`<strong>${e.make_model}</strong>`:''}${e.serial_number?` · S/N ${e.serial_number}`:''}${e.install_date?` · Installed ${e.install_date}`:''}
+            </div>
+            ${e.notes?`<div style="font-size:11px;color:#7080a0;margin-top:3px;font-style:italic">${e.notes}</div>`:''}
+            ${pmBlock}
+          </div>
+          <div style="display:flex;flex-direction:column;gap:5px;align-items:flex-end">
+            <button onclick="openLogServiceModal(${e.id})" style="background:#6b2fa0;color:#fff;border:none;border-radius:6px;padding:5px 12px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">+ Log Service</button>
+            <div style="display:flex;gap:5px">
+              <button onclick="openEquipmentEditor(${e.id})" style="background:#f4f6fa;color:#1a5296;border:1px solid #b0c8e8;border-radius:5px;padding:4px 10px;font-size:10px;font-weight:700;cursor:pointer">Edit</button>
+              <button onclick="toggleEquipHistory(${e.id})" style="background:#f4f6fa;color:#5060a0;border:1px solid #d0d5e0;border-radius:5px;padding:4px 10px;font-size:10px;font-weight:700;cursor:pointer">History (${logs.length})</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      ${isExpanded?`
+        <div style="background:#faf9fc;border-top:1px solid #e8ecf4;padding:12px 14px">
+          <div style="display:flex;gap:16px;margin-bottom:10px;flex-wrap:wrap">
+            <div style="font-size:11px"><span style="color:#7080a0">Total spent:</span> <strong style="color:#0d1f4e">$${totalCost.toFixed(2)}</strong></div>
+            <div style="font-size:11px"><span style="color:#7080a0">PM:</span> <strong style="color:#1a7a45">$${pmCost.toFixed(2)}</strong></div>
+            <div style="font-size:11px"><span style="color:#7080a0">Repairs:</span> <strong style="color:#b01c1c">$${repairCost.toFixed(2)}</strong></div>
+          </div>
+          ${logs.length===0?'<div style="font-size:11px;color:#7080a0">No service records yet.</div>':`
+            <table style="width:100%;font-size:11px">
+              <thead><tr style="color:#7080a0;text-align:left"><th style="padding:4px">Date</th><th>Type</th><th>Description</th><th>By</th><th style="text-align:right">Cost</th></tr></thead>
+              <tbody>
+              ${logs.map(l=>`<tr style="border-top:1px solid #e8ecf4">
+                <td style="padding:4px;white-space:nowrap">${l.service_date}</td>
+                <td>${l.service_type==='PM'?`<span style="color:#1a7a45;font-weight:700">PM</span>${l.pm_type?' · '+l.pm_type:''}`:'<span style="color:#b01c1c;font-weight:700">Repair</span>'}</td>
+                <td style="color:#5060a0">${l.description||'—'}</td>
+                <td style="color:#5060a0">${l.performed_by||'—'}</td>
+                <td style="text-align:right;font-weight:700;color:#0d1f4e">$${(parseFloat(l.cost)||0).toFixed(2)}</td>
+              </tr>`).join('')}
+              </tbody>
+            </table>`}
+        </div>`:''}
+    </div>`;
+}
+
+function toggleEquipHistory(id){
+  if(_equipExpanded.has(id)) _equipExpanded.delete(id); else _equipExpanded.add(id);
+  renderEquipment();
+}
+
+function openEquipmentEditor(equipId){
+  const e = equipId ? equipmentList.find(x=>x.id===equipId) : null;
+  const isNew = !e;
+  const storeOpts = STORES.map(s=>`<option value="${s}" ${e&&e.store_name===s?'selected':''}>${s}</option>`).join('');
+  const selectedStore = e ? e.store_name : STORES[0];
+  const stationOpts = ['', ...getStationsForStore(selectedStore).map(s=>s.station_name)]
+    .map(sn=>`<option value="${sn}" ${e&&e.station_name===sn?'selected':''}>${sn||'— Standalone / Not station-tied —'}</option>`).join('');
+  document.getElementById('modal-container').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="width:560px;max-height:92vh;overflow-y:auto">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <div class="modal-title" style="margin-bottom:0">${isNew?'Add':'Edit'} Equipment</div>
+          <button onclick="closeModal()" style="background:none;border:none;color:#7080a0;cursor:pointer;font-size:20px">✕</button>
+        </div>
+        <div id="eq-error" style="display:none;background:#fde8e8;color:#b01c1c;border-radius:7px;padding:9px 12px;font-size:12px;margin-bottom:12px;font-weight:600"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+          <div>
+            <label style="font-size:11px;font-weight:700;color:#5060a0">STORE</label>
+            <select id="eq-store" onchange="eqEditorStoreChange()" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box">${storeOpts}</select>
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:#5060a0">STATION</label>
+            <select id="eq-station" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box">${stationOpts}</select>
+          </div>
+        </div>
+        <div style="margin-bottom:12px">
+          <label style="font-size:11px;font-weight:700;color:#5060a0">EQUIPMENT TYPE</label>
+          <select id="eq-type" onchange="eqEditorTypeChange()" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box">
+            ${EQUIPMENT_TYPES.map(t=>`<option value="${t}" ${e&&e.equipment_type===t?'selected':''}>${t}</option>`).join('')}
+          </select>
+        </div>
+        <div id="eq-ro-serves-wrap" style="display:${e&&e.equipment_type===RO_TYPE?'block':'none'};margin-bottom:12px">
+          <label style="font-size:11px;font-weight:700;color:#5060a0">RO SERVES</label>
+          <select id="eq-ro-serves" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box">
+            <option value="coffee" ${e&&e.ro_serves==='coffee'?'selected':''}>Coffee machine only</option>
+            <option value="water_ice" ${e&&e.ro_serves==='water_ice'?'selected':''}>Water/Ice machine only</option>
+            <option value="both" ${e&&e.ro_serves==='both'?'selected':''}>Both (shared)</option>
+          </select>
+          <div style="font-size:10px;color:#8090b0;margin-top:4px">Annual (9-month) Filter Change + Flush/Sanitize PM schedules will be auto-created.</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+          <div>
+            <label style="font-size:11px;font-weight:700;color:#5060a0">MAKE / MODEL</label>
+            <input id="eq-make-model" value="${e?(e.make_model||'').replace(/"/g,'&quot;'):''}" placeholder="e.g. Encore 29" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box"/>
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:#5060a0">SERIAL NUMBER</label>
+            <input id="eq-serial" value="${e?(e.serial_number||'').replace(/"/g,'&quot;'):''}" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box"/>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+          <div>
+            <label style="font-size:11px;font-weight:700;color:#5060a0">INSTALL DATE</label>
+            <input id="eq-install" type="date" value="${e?(e.install_date||''):''}" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box"/>
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:#5060a0">STATUS</label>
+            <select id="eq-status" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box">
+              <option value="active" ${!e||e.status==='active'?'selected':''}>Active</option>
+              <option value="needs_service" ${e&&e.status==='needs_service'?'selected':''}>Needs Service</option>
+              <option value="removed" ${e&&e.status==='removed'?'selected':''}>Removed</option>
+            </select>
+          </div>
+        </div>
+        <div style="margin-bottom:14px">
+          <label style="font-size:11px;font-weight:700;color:#5060a0">NOTES</label>
+          <textarea id="eq-notes" rows="2" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box;resize:vertical">${e?(e.notes||''):''}</textarea>
+        </div>
+        <div style="display:flex;justify-content:space-between;gap:8px">
+          <div>${!isNew?`<button onclick="deleteEquipment(${e.id})" style="background:#fff;color:#b01c1c;border:1.5px solid #f0b8b8;border-radius:7px;padding:9px 14px;font-size:12px;font-weight:700;cursor:pointer">Delete</button>`:''}</div>
+          <div style="display:flex;gap:8px">
+            <button onclick="closeModal()" class="secondary-btn">Cancel</button>
+            <button id="eq-save" onclick="saveEquipment(${equipId||'null'})" class="primary-btn" style="padding:9px 20px">${isNew?'Add Equipment':'Save'}</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function eqEditorStoreChange(){
+  const store = document.getElementById('eq-store').value;
+  const stationSel = document.getElementById('eq-station');
+  const stations = getStationsForStore(store);
+  stationSel.innerHTML = ['', ...stations.map(s=>s.station_name)]
+    .map(sn=>`<option value="${sn}">${sn||'— Standalone / Not station-tied —'}</option>`).join('');
+}
+function eqEditorTypeChange(){
+  const type = document.getElementById('eq-type').value;
+  document.getElementById('eq-ro-serves-wrap').style.display = type===RO_TYPE ? 'block' : 'none';
+}
+
+async function saveEquipment(equipId){
+  const store = document.getElementById('eq-store').value;
+  const station = document.getElementById('eq-station').value;
+  const type = document.getElementById('eq-type').value;
+  const roServes = type===RO_TYPE ? document.getElementById('eq-ro-serves').value : '';
+  const makeModel = document.getElementById('eq-make-model').value.trim();
+  const serial = document.getElementById('eq-serial').value.trim();
+  const install = document.getElementById('eq-install').value;
+  const status = document.getElementById('eq-status').value;
+  const notes = document.getElementById('eq-notes').value.trim();
+  const errEl = document.getElementById('eq-error');
+  const btn = document.getElementById('eq-save');
+  errEl.style.display='none';
+  if(!install){ errEl.textContent='Install date is required (used as the PM baseline)'; errEl.style.display='block'; return; }
+  btn.disabled=true; btn.textContent='Saving…'; btn.style.opacity='0.6';
+  try{
+    const id = equipId || Date.now();
+    const row = { id, store_name:store, station_name:station, equipment_type:type, make_model:makeModel,
+      serial_number:serial, install_date:install, status, ro_serves:roServes, notes, updated_at:new Date().toISOString() };
+    await sbFetch('store_equipment',{method:'POST',prefer:'resolution=merge-duplicates,return=minimal',body:JSON.stringify([row])});
+    const existingIdx = equipmentList.findIndex(x=>x.id===id);
+    if(existingIdx>=0) equipmentList[existingIdx] = {...equipmentList[existingIdx], ...row};
+    else equipmentList.push(row);
+    if(type===RO_TYPE){
+      const existing = equipmentPM.filter(p=>p.equipment_id===id);
+      for(const pmType of PM_TYPES){
+        if(!existing.some(p=>p.pm_type===pmType)){
+          const pmRow = { id: Date.now()+Math.floor(Math.random()*100000), equipment_id:id, pm_type:pmType, interval_months:PM_INTERVAL_MONTHS, last_done_date:null };
+          await sbFetch('equipment_pm_schedule',{method:'POST',prefer:'return=minimal',body:JSON.stringify([pmRow])});
+          equipmentPM.push(pmRow);
+        }
+      }
+    } else {
+      const stale = equipmentPM.filter(p=>p.equipment_id===id);
+      for(const s of stale){ await sbFetch(`equipment_pm_schedule?id=eq.${s.id}`,{method:'DELETE',prefer:''}); }
+      equipmentPM = equipmentPM.filter(p=>p.equipment_id!==id);
+    }
+    closeModal();
+    renderEquipment();
+    showToast('✓ Equipment saved');
+  }catch(e){
+    errEl.textContent='Error: '+(e.message||'save failed'); errEl.style.display='block';
+    btn.disabled=false; btn.textContent='Save'; btn.style.opacity='1';
+  }
+}
+
+async function deleteEquipment(equipId){
+  if(!confirm('Delete this equipment and all its service history? This cannot be undone.')) return;
+  try{
+    await sbFetch(`equipment_service_log?equipment_id=eq.${equipId}`,{method:'DELETE',prefer:''});
+    await sbFetch(`equipment_pm_schedule?equipment_id=eq.${equipId}`,{method:'DELETE',prefer:''});
+    await sbFetch(`store_equipment?id=eq.${equipId}`,{method:'DELETE',prefer:''});
+    equipmentServiceLog = equipmentServiceLog.filter(l=>l.equipment_id!==equipId);
+    equipmentPM = equipmentPM.filter(p=>p.equipment_id!==equipId);
+    equipmentList = equipmentList.filter(e=>e.id!==equipId);
+    closeModal();
+    renderEquipment();
+    showToast('Equipment deleted');
+  }catch(e){ showToast('Error deleting'); }
+}
+
+function openLogServiceModal(equipId){
+  const e = equipmentList.find(x=>x.id===equipId);
+  if(!e) return;
+  const isRO = e.equipment_type===RO_TYPE;
+  const vendorOpts = equipmentVendors.filter(v=>v.active).map(v=>`<option value="${v.name.replace(/"/g,'&quot;')}">${v.name}</option>`).join('');
+  document.getElementById('modal-container').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="width:520px;max-height:92vh;overflow-y:auto">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div class="modal-title" style="margin-bottom:0">Log Service</div>
+          <button onclick="closeModal()" style="background:none;border:none;color:#7080a0;cursor:pointer;font-size:20px">✕</button>
+        </div>
+        <div style="font-size:11px;color:#7080a0;margin-bottom:14px">${e.equipment_type} · ${e.store_name}${e.station_name?' · '+e.station_name:''}</div>
+        <div id="ls-error" style="display:none;background:#fde8e8;color:#b01c1c;border-radius:7px;padding:9px 12px;font-size:12px;margin-bottom:12px;font-weight:600"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+          <div>
+            <label style="font-size:11px;font-weight:700;color:#5060a0">SERVICE DATE</label>
+            <input id="ls-date" type="date" value="${new Date().toISOString().slice(0,10)}" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box"/>
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:#5060a0">TYPE</label>
+            <select id="ls-type" onchange="lsTypeChange()" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box">
+              <option value="Repair">Repair</option>
+              ${isRO?'<option value="PM">Preventative Maintenance</option>':''}
+            </select>
+          </div>
+        </div>
+        <div id="ls-pm-type-wrap" style="display:none;margin-bottom:12px">
+          <label style="font-size:11px;font-weight:700;color:#5060a0">PM TYPE</label>
+          <select id="ls-pm-type" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box">
+            ${PM_TYPES.map(t=>`<option value="${t}">${t}</option>`).join('')}
+          </select>
+          <div style="font-size:10px;color:#8090b0;margin-top:4px">Logging a PM resets its 9-month clock from this service date.</div>
+        </div>
+        <div style="margin-bottom:12px">
+          <label style="font-size:11px;font-weight:700;color:#5060a0">DESCRIPTION</label>
+          <textarea id="ls-desc" rows="2" placeholder="What was done" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box;resize:vertical"></textarea>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px">
+          <div>
+            <label style="font-size:11px;font-weight:700;color:#5060a0">COST ($)</label>
+            <input id="ls-cost" type="number" step="0.01" value="0.00" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box"/>
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:#5060a0">PERFORMED BY</label>
+            <input id="ls-by" list="ls-vendor-list" placeholder="Name or vendor" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box"/>
+            <datalist id="ls-vendor-list">${vendorOpts}</datalist>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button onclick="closeModal()" class="secondary-btn">Cancel</button>
+          <button id="ls-save" onclick="saveServiceLog(${equipId})" class="primary-btn" style="padding:9px 20px">Save Record</button>
+        </div>
+      </div>
+    </div>`;
+}
+function lsTypeChange(){
+  const type = document.getElementById('ls-type').value;
+  document.getElementById('ls-pm-type-wrap').style.display = type==='PM' ? 'block' : 'none';
+}
+
+async function saveServiceLog(equipId){
+  const date = document.getElementById('ls-date').value;
+  const type = document.getElementById('ls-type').value;
+  const pmType = type==='PM' ? document.getElementById('ls-pm-type').value : '';
+  const desc = document.getElementById('ls-desc').value.trim();
+  const cost = parseFloat(document.getElementById('ls-cost').value)||0;
+  const by = document.getElementById('ls-by').value.trim();
+  const errEl = document.getElementById('ls-error');
+  const btn = document.getElementById('ls-save');
+  errEl.style.display='none';
+  if(!date){ errEl.textContent='Service date is required'; errEl.style.display='block'; return; }
+  btn.disabled=true; btn.textContent='Saving…'; btn.style.opacity='0.6';
+  try{
+    const row = { id:Date.now()+Math.floor(Math.random()*100000), equipment_id:equipId, service_date:date, service_type:type, pm_type:pmType, description:desc, cost, performed_by:by };
+    await sbFetch('equipment_service_log',{method:'POST',prefer:'return=minimal',body:JSON.stringify([row])});
+    equipmentServiceLog.unshift(row);
+    if(type==='PM' && pmType){
+      const pmRow = equipmentPM.find(p=>p.equipment_id===equipId && p.pm_type===pmType);
+      if(pmRow){
+        pmRow.last_done_date = date;
+        await sbFetch(`equipment_pm_schedule?id=eq.${pmRow.id}`,{method:'PATCH',prefer:'return=minimal',body:JSON.stringify({last_done_date:date, updated_at:new Date().toISOString()})});
+      }
+    }
+    closeModal();
+    renderEquipment();
+    showToast('✓ Service record saved');
+  }catch(e){
+    errEl.textContent='Error: '+(e.message||'save failed'); errEl.style.display='block';
+    btn.disabled=false; btn.textContent='Save Record'; btn.style.opacity='1';
+  }
+}
+
+function renderVendors(){
+  const vendors = equipmentVendors.slice().sort((a,b)=>a.name.localeCompare(b.name));
+  document.getElementById('main-body').innerHTML = `
+    <div style="max-width:800px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+        <div style="font-size:12px;color:#7080a0">Third-party service providers for equipment repairs & maintenance.</div>
+        <button onclick="openVendorEditor(null)" class="primary-btn" style="padding:9px 18px">+ Add Vendor</button>
+      </div>
+      ${vendors.length===0?'<div class="card" style="text-align:center;padding:40px;color:#7080a0">No vendors yet.</div>':
+        vendors.map(v=>`
+          <div style="border:1px solid #e8ecf4;border-radius:9px;padding:14px;margin-bottom:8px;${v.active?'':'opacity:0.55'}">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+              <div>
+                <div style="font-size:14px;font-weight:700;color:#0d1f4e">${v.name}${v.active?'':' <span style="font-size:10px;color:#b01c1c">(inactive)</span>'}</div>
+                ${v.service_type?`<div style="font-size:11px;color:#6b2fa0;font-weight:600;margin-top:2px">${v.service_type}</div>`:''}
+                <div style="font-size:12px;color:#5060a0;margin-top:5px">
+                  ${v.contact_name?`👤 ${v.contact_name}　`:''}${v.phone?`📞 ${v.phone}　`:''}${v.email?`✉ ${v.email}`:''}
+                </div>
+                ${v.notes?`<div style="font-size:11px;color:#7080a0;margin-top:4px;font-style:italic">${v.notes}</div>`:''}
+              </div>
+              <button onclick="openVendorEditor(${v.id})" style="background:#f4f6fa;color:#1a5296;border:1px solid #b0c8e8;border-radius:5px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer">Edit</button>
+            </div>
+          </div>`).join('')}
+    </div>`;
+}
+
+function openVendorEditor(vendorId){
+  const v = vendorId ? equipmentVendors.find(x=>x.id===vendorId) : null;
+  const isNew = !v;
+  document.getElementById('modal-container').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal" style="width:500px;max-height:92vh;overflow-y:auto">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+          <div class="modal-title" style="margin-bottom:0">${isNew?'Add':'Edit'} Vendor</div>
+          <button onclick="closeModal()" style="background:none;border:none;color:#7080a0;cursor:pointer;font-size:20px">✕</button>
+        </div>
+        <div id="vd-error" style="display:none;background:#fde8e8;color:#b01c1c;border-radius:7px;padding:9px 12px;font-size:12px;margin-bottom:12px;font-weight:600"></div>
+        <div style="margin-bottom:12px">
+          <label style="font-size:11px;font-weight:700;color:#5060a0">VENDOR NAME</label>
+          <input id="vd-name" value="${v?(v.name||'').replace(/"/g,'&quot;'):''}" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box"/>
+        </div>
+        <div style="margin-bottom:12px">
+          <label style="font-size:11px;font-weight:700;color:#5060a0">SERVICE TYPE</label>
+          <input id="vd-service-type" value="${v?(v.service_type||'').replace(/"/g,'&quot;'):''}" placeholder="e.g. RO / Water filtration, Coffee machine repair" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box"/>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+          <div>
+            <label style="font-size:11px;font-weight:700;color:#5060a0">CONTACT NAME</label>
+            <input id="vd-contact" value="${v?(v.contact_name||'').replace(/"/g,'&quot;'):''}" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box"/>
+          </div>
+          <div>
+            <label style="font-size:11px;font-weight:700;color:#5060a0">PHONE</label>
+            <input id="vd-phone" value="${v?(v.phone||'').replace(/"/g,'&quot;'):''}" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box"/>
+          </div>
+        </div>
+        <div style="margin-bottom:12px">
+          <label style="font-size:11px;font-weight:700;color:#5060a0">EMAIL</label>
+          <input id="vd-email" value="${v?(v.email||'').replace(/"/g,'&quot;'):''}" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box"/>
+        </div>
+        <div style="margin-bottom:12px">
+          <label style="font-size:11px;font-weight:700;color:#5060a0">NOTES</label>
+          <textarea id="vd-notes" rows="2" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box;resize:vertical">${v?(v.notes||''):''}</textarea>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:16px">
+          <input type="checkbox" id="vd-active" ${!v||v.active?'checked':''} style="width:16px;height:16px;accent-color:#1a7a45"/>
+          <span style="font-size:13px;color:#0d1f4e;font-weight:600">Active</span>
+        </label>
+        <div style="display:flex;justify-content:flex-end;gap:8px">
+          <button onclick="closeModal()" class="secondary-btn">Cancel</button>
+          <button id="vd-save" onclick="saveVendor(${vendorId||'null'})" class="primary-btn" style="padding:9px 20px">${isNew?'Add Vendor':'Save'}</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function saveVendor(vendorId){
+  const name = document.getElementById('vd-name').value.trim();
+  const errEl = document.getElementById('vd-error');
+  const btn = document.getElementById('vd-save');
+  errEl.style.display='none';
+  if(!name){ errEl.textContent='Vendor name is required'; errEl.style.display='block'; return; }
+  btn.disabled=true; btn.textContent='Saving…'; btn.style.opacity='0.6';
+  try{
+    const id = vendorId || Date.now();
+    const row = { id, name,
+      service_type:document.getElementById('vd-service-type').value.trim(),
+      contact_name:document.getElementById('vd-contact').value.trim(),
+      phone:document.getElementById('vd-phone').value.trim(),
+      email:document.getElementById('vd-email').value.trim(),
+      notes:document.getElementById('vd-notes').value.trim(),
+      active:document.getElementById('vd-active').checked };
+    await sbFetch('equipment_vendors',{method:'POST',prefer:'resolution=merge-duplicates,return=minimal',body:JSON.stringify([row])});
+    const idx = equipmentVendors.findIndex(x=>x.id===id);
+    if(idx>=0) equipmentVendors[idx] = {...equipmentVendors[idx], ...row}; else equipmentVendors.push(row);
+    closeModal();
+    renderVendors();
+    showToast('✓ Vendor saved');
+  }catch(e){
+    errEl.textContent='Error: '+(e.message||'save failed'); errEl.style.display='block';
+    btn.disabled=false; btn.textContent='Save'; btn.style.opacity='1';
+  }
+}
+
 
 function renderPermissions(){
   if(!isAdmin()){ setView(firstAllowedView()); return; }
