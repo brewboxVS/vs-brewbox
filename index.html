@@ -676,6 +676,7 @@ body.hide-fin .fin-col { display: none !important; }
         <div id="admin-submenu" style="display:none">
           <button class="nav-btn nav-sub" onclick="setView('user-mgmt')">👥 &nbsp;<span>User Management</span></button>
           <button class="nav-btn nav-sub" onclick="setView('permissions')">🔑 &nbsp;<span>Permissions</span></button>
+          <button class="nav-btn nav-sub" onclick="setView('store-settings')">🏪 &nbsp;<span>Store Settings</span></button>
         </div>
       </div>
     </div>
@@ -1466,8 +1467,13 @@ let storeStations = []; // [{id, store_name, station_name, station_label, active
 async function loadStoreSettings(){
   if(useSupabase){
     try{
-      const rows = await sbFetch('store_settings?select=store_name,free_vend',{method:'GET',prefer:'return=representation'});
-      for(const r of rows) storeSettings[r.store_name] = {free_vend: r.free_vend};
+      const rows = await sbFetch('store_settings?select=store_name,free_vend,has_mm,has_coffee,has_water_ice',{method:'GET',prefer:'return=representation'});
+      for(const r of rows) storeSettings[r.store_name] = {
+        free_vend: r.free_vend,
+        has_mm: r.has_mm!==false,
+        has_coffee: r.has_coffee===true,
+        has_water_ice: r.has_water_ice===true
+      };
     }catch(e){}
   }
 }
@@ -1680,7 +1686,7 @@ function updateSidebar(){
   // Auto-open import submenu when on import views
   if(currentView==='orders') openImportMenu();
   if(currentView==='usage-report'||currentView==='insights') { openReportsMenu(); document.querySelector('.nav-btn[onclick*="'+currentView+'"]')?.classList.add('active'); }
-  if(currentView==='user-mgmt'||currentView==='permissions') { openAdminMenu(); document.querySelector('.nav-btn[onclick*="'+currentView+'"]')?.classList.add('active'); }
+  if(currentView==='user-mgmt'||currentView==='permissions'||currentView==='store-settings') { openAdminMenu(); document.querySelector('.nav-btn[onclick*="'+currentView+'"]')?.classList.add('active'); }
 }
 
 function toggleWarehouseMenu(){
@@ -1780,7 +1786,7 @@ function setView(v){
     if(!canView(effective)) v = firstAllowedView();
   }
   currentView=v;
-  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log','sales-import':'Sales Import','hist-import':'Historical Data Import',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log','usage-report':'Consumption & Theft Reports','vendor-mgmt':'Vendor Management','insights':'Insights Dashboard','invoices':'Invoices','coffee-counts':'Coffee Counts','user-mgmt':'User Management','permissions':'Permissions','my-sales':'My Sales'};
+  const titles={dashboard:'Dashboard',inventory:'Warehouse MM Inventory',coffee:'Warehouse Coffee Inventory','store-inventory':'Store Inventory','store-orders':'Store Orders','store-count':'Store Inventory Count','order-activity':'Order Activity Log','sales-import':'Sales Import','hist-import':'Historical Data Import',orders:'Warehouse Orders','wh-orders':'Warehouse Orders','count':'Warehouse Inventory Count',restock:'Activity Log','usage-report':'Consumption & Theft Reports','vendor-mgmt':'Vendor Management','insights':'Insights Dashboard','invoices':'Invoices','coffee-counts':'Coffee Counts','user-mgmt':'User Management','permissions':'Permissions','store-settings':'Store Settings','my-sales':'My Sales'};
   if(v==='count' && Object.keys(countState).length===0) initCountState();
   if(v==='store-count' && Object.keys(storeCountState).length===0) initStoreCountState();
   document.getElementById('page-title').textContent=titles[v]||v;
@@ -1820,6 +1826,7 @@ function render(){
   else if(currentView==='vendor-mgmt') renderVendorManagement();
   else if(currentView==='user-mgmt') renderUserManagement();
   else if(currentView==='permissions') renderPermissions();
+  else if(currentView==='store-settings') renderStoreSettings();
   else if(currentView==='my-sales') renderMySales();
   else renderRestock();
 }
@@ -11181,6 +11188,314 @@ const PERM_PAGES = [
   {key:'order-activity', label:'Order Activity Log'}
 ];
 
+// ═══════════════════════════════════════════════════
+//  STORE SETTINGS (admin-only)
+// Per-store service configuration: MM / Coffee / Water-Ice toggles, free-vend,
+// coffee contract (cup rate + label), monthly equipment fees (editable label +
+// amount for Water/Ice and Coffee), and station management.
+// Equipment fees are stored in coffee_contracts.equipment_fees as an ordered list
+// [waterIce, coffee] so the invoice renders them Water/Ice-first, Coffee-second.
+// $0 / disabled services are omitted from that list so no invoice line appears.
+// ═══════════════════════════════════════════════════
+let _ssSelectedStore = null;
+
+function renderStoreSettings(){
+  if(!isAdmin()){ setView(firstAllowedView()); return; }
+  if(!_ssSelectedStore) _ssSelectedStore = STORES[0];
+  renderStoreSettingsInner();
+}
+
+function ssContract(store){
+  return coffeeContracts.find(c=>c.store_name===store) || null;
+}
+function ssEquipFees(store){
+  const c = ssContract(store);
+  if(!c) return [];
+  try{ return typeof c.equipment_fees==='string' ? JSON.parse(c.equipment_fees) : (c.equipment_fees||[]); }catch(e){ return []; }
+}
+// Pull a fee amount/label by matching the known service slots. We match on the
+// service, not the label text, so a renamed label still resolves. Water/Ice is
+// slot 0, Coffee is slot 1 by our storage convention — but we defensively also
+// check description keywords for legacy rows.
+function ssFeeFor(store, which){
+  const fees = ssEquipFees(store);
+  // Preferred: positional (0 = water/ice, 1 = coffee) per our write convention.
+  // Use word-boundary matching so "Service Fee" doesn't match "ice".
+  if(which==='water_ice'){
+    const byKw = fees.find(f=>/\b(water|ice)\b/i.test(f.desc||''));
+    if(byKw) return byKw;
+    return fees[0] || null;
+  } else {
+    const byKw = fees.find(f=>/\bcoffee\b/i.test(f.desc||''));
+    if(byKw) return byKw;
+    return fees[1] || null;
+  }
+}
+
+function renderStoreSettingsInner(){
+  const store = _ssSelectedStore;
+  const settings = storeSettings[store] || {free_vend:false, has_mm:true, has_coffee:false, has_water_ice:false};
+  const contract = ssContract(store);
+  const cupRate = contract ? parseFloat(contract.cup_rate||0) : 0;
+  const cupLabel = contract ? (contract.cup_label||'') : '';
+  const wiFee = ssFeeFor(store,'water_ice');
+  const cofFee = ssFeeFor(store,'coffee');
+  const stations = getStationsForStore(store);
+
+  const hasMM = settings.has_mm!==false;
+  const hasCoffee = settings.has_coffee===true;
+  const hasWaterIce = settings.has_water_ice===true;
+  const freeVend = settings.free_vend===true;
+
+  const chip = (on,label)=>`<span style="display:inline-block;background:${on?'#e6f4ee':'#f0f2f5'};color:${on?'#1a7a45':'#a0a8b8'};border:1px solid ${on?'#b8e0c8':'#e0e4ea'};border-radius:5px;padding:2px 9px;font-size:10px;font-weight:700;margin-right:5px">${on?'✓ ':''}${label}</span>`;
+
+  document.getElementById('main-body').innerHTML = `
+    <div style="max-width:900px">
+      <!-- Store selector tabs -->
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px">
+        ${STORES.map(s=>{
+          const st = storeSettings[s]||{};
+          const active = s===store;
+          return `<button onclick="_ssSelectedStore='${s.replace(/'/g,"\\'")}';renderStoreSettingsInner()"
+            style="background:${active?'#0d1f4e':'#fff'};color:${active?'#fff':'#5060a0'};border:1.5px solid ${active?'#0d1f4e':'#d0d5e0'};border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer">
+            ${s}
+          </button>`;
+        }).join('')}
+      </div>
+
+      <div class="card" style="padding:0;overflow:hidden">
+        <!-- Header -->
+        <div style="background:#0d1f4e;color:#fff;padding:16px 20px">
+          <div style="font-size:18px;font-weight:800">${store}</div>
+          <div style="margin-top:8px">${chip(hasMM,'Micromarket')}${chip(hasCoffee,'Coffee')}${chip(hasWaterIce,'Water & Ice')}${freeVend?chip(true,'Free-Vend'):''}</div>
+        </div>
+
+        <div style="padding:20px">
+          <!-- Services -->
+          <div style="font-size:11px;font-weight:800;color:#0d1f4e;letter-spacing:1px;text-transform:uppercase;margin-bottom:12px">Services Offered</div>
+          <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:24px">
+            ${ssToggleRow('Micromarket', 'ss-has-mm', hasMM, 'Snacks & drinks vending / micromarket')}
+            ${ssToggleRow('Coffee Service', 'ss-has-coffee', hasCoffee, 'Bean-to-cup coffee, billed per cup', 'ssToggleCoffeeSection()')}
+            ${ssToggleRow('Water & Ice Service', 'ss-has-water-ice', hasWaterIce, 'Water coolers, ice machines, RO — fixed monthly fee', 'ssToggleWaterIceSection()')}
+            ${ssToggleRow('Free-Vend', 'ss-free-vend', freeVend, 'Items are complimentary (no theft tracking)')}
+          </div>
+
+          <!-- Coffee config -->
+          <div id="ss-coffee-section" style="display:${hasCoffee?'block':'none'};border-top:1px solid #e8ecf4;padding-top:18px;margin-bottom:18px">
+            <div style="font-size:11px;font-weight:800;color:#6b2fa0;letter-spacing:1px;text-transform:uppercase;margin-bottom:12px">☕ Coffee Configuration</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
+              <div>
+                <label style="font-size:11px;font-weight:700;color:#5060a0">CUP RATE ($/cup)</label>
+                <input id="ss-cup-rate" type="number" step="0.01" value="${cupRate.toFixed(2)}" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box"/>
+              </div>
+              <div>
+                <label style="font-size:11px;font-weight:700;color:#5060a0">CUP LABEL (on invoice)</label>
+                <input id="ss-cup-label" value="${(cupLabel||'').replace(/"/g,'&quot;')}" placeholder="e.g. Coffee Consumption (Cups)" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box"/>
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 160px;gap:12px">
+              <div>
+                <label style="font-size:11px;font-weight:700;color:#5060a0">COFFEE EQUIPMENT FEE — invoice label</label>
+                <input id="ss-coffee-fee-label" value="${((cofFee?.desc)||'Coffee Equipment Fee').replace(/"/g,'&quot;')}" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box"/>
+              </div>
+              <div>
+                <label style="font-size:11px;font-weight:700;color:#5060a0">AMOUNT ($/mo)</label>
+                <input id="ss-coffee-fee-amt" type="number" step="0.01" value="${cofFee?parseFloat(cofFee.amount).toFixed(2):'0.00'}" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box"/>
+              </div>
+            </div>
+          </div>
+
+          <!-- Water/Ice config -->
+          <div id="ss-water-ice-section" style="display:${hasWaterIce?'block':'none'};border-top:1px solid #e8ecf4;padding-top:18px;margin-bottom:18px">
+            <div style="font-size:11px;font-weight:800;color:#1a5296;letter-spacing:1px;text-transform:uppercase;margin-bottom:12px">💧 Water & Ice Configuration</div>
+            <div style="display:grid;grid-template-columns:1fr 160px;gap:12px">
+              <div>
+                <label style="font-size:11px;font-weight:700;color:#5060a0">WATER & ICE FEE — invoice label</label>
+                <input id="ss-wi-fee-label" value="${((wiFee?.desc)||'Water & Ice Machines').replace(/"/g,'&quot;')}" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box"/>
+              </div>
+              <div>
+                <label style="font-size:11px;font-weight:700;color:#5060a0">AMOUNT ($/mo)</label>
+                <input id="ss-wi-fee-amt" type="number" step="0.01" value="${wiFee?parseFloat(wiFee.amount).toFixed(2):'0.00'}" style="width:100%;border:1.5px solid #d0d5e0;border-radius:7px;padding:9px 11px;font-size:13px;margin-top:4px;outline:none;box-sizing:border-box"/>
+              </div>
+            </div>
+            <div style="font-size:10px;color:#8090b0;margin-top:8px">Equipment tracking & preventative maintenance for these units is managed separately (coming soon).</div>
+          </div>
+
+          <!-- Stations -->
+          <div style="border-top:1px solid #e8ecf4;padding-top:18px;margin-bottom:8px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+              <div style="font-size:11px;font-weight:800;color:#6b2fa0;letter-spacing:1px;text-transform:uppercase">Coffee Stations (${stations.length})</div>
+            </div>
+            ${stations.length>0 ? `<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
+              ${stations.map(s=>`<div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid #e8ecf4;border-radius:8px">
+                <div style="flex:1">
+                  <span style="font-size:13px;font-weight:700;color:#6b2fa0">${s.station_name}</span>
+                  <span style="font-size:11px;color:#7080a0;margin-left:8px">${s.station_label||'No label'} · ${storeInventory.filter(x=>x.store_name===store&&x.station_name===s.station_name&&x.product_source==='coffee').length} items</span>
+                </div>
+                <button onclick="ssRemoveStation(${s.id},'${s.station_name.replace(/'/g,"\\'")}')" style="background:none;border:1px solid #f0b8b8;color:#b01c1c;border-radius:6px;padding:4px 10px;font-size:10px;font-weight:700;cursor:pointer">✕ Remove</button>
+              </div>`).join('')}
+            </div>` : '<div style="font-size:12px;color:#8090b0;padding:10px 0;margin-bottom:6px">No stations yet. Add the first one below.</div>'}
+            <div style="display:flex;gap:8px">
+              <input id="ss-new-station-name" placeholder="Short name (e.g. L3B)" style="flex:1;border:1.5px solid #d0d5e0;border-radius:7px;padding:8px 12px;font-size:13px;outline:none"/>
+              <input id="ss-new-station-label" placeholder="Label (e.g. Level 3 Breakroom)" style="flex:2;border:1.5px solid #d0d5e0;border-radius:7px;padding:8px 12px;font-size:13px;outline:none"/>
+              <button onclick="ssAddStation()" style="background:#6b2fa0;color:#fff;border:none;border-radius:7px;padding:8px 16px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap">+ Add</button>
+            </div>
+          </div>
+
+          <!-- Save -->
+          <div style="border-top:1px solid #e8ecf4;padding-top:16px;margin-top:18px;display:flex;justify-content:flex-end;gap:8px">
+            <button id="ss-save-btn" onclick="saveStoreSettings()" class="primary-btn" style="padding:11px 28px;font-size:14px">Save ${store} Settings</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function ssToggleRow(label, id, checked, sublabel, onchange){
+  return `<label style="display:flex;align-items:center;gap:12px;padding:10px 14px;border:1px solid #e8ecf4;border-radius:8px;cursor:pointer">
+    <input type="checkbox" id="${id}" ${checked?'checked':''} ${onchange?`onchange="${onchange}"`:''} style="width:18px;height:18px;accent-color:#1a7a45;cursor:pointer;flex-shrink:0"/>
+    <div style="flex:1">
+      <div style="font-size:13px;font-weight:700;color:#0d1f4e">${label}</div>
+      <div style="font-size:11px;color:#7080a0">${sublabel}</div>
+    </div>
+  </label>`;
+}
+
+function ssToggleCoffeeSection(){
+  const on = document.getElementById('ss-has-coffee').checked;
+  document.getElementById('ss-coffee-section').style.display = on?'block':'none';
+}
+function ssToggleWaterIceSection(){
+  const on = document.getElementById('ss-has-water-ice').checked;
+  document.getElementById('ss-water-ice-section').style.display = on?'block':'none';
+}
+
+async function ssAddStation(){
+  const store = _ssSelectedStore;
+  const name = document.getElementById('ss-new-station-name')?.value?.trim();
+  const label = document.getElementById('ss-new-station-label')?.value?.trim()||'';
+  if(!name){ showToast('Enter a station name'); return; }
+  if(getStationsForStore(store).some(s=>s.station_name===name)){ showToast('Station already exists'); return; }
+  const newStation = {id:Date.now(), store_name:store, station_name:name, station_label:label, active:true};
+  try{
+    await sbFetch('store_stations',{method:'POST',prefer:'resolution=merge-duplicates,return=minimal',body:JSON.stringify([newStation])});
+    storeStations.push(newStation);
+    // Auto-add existing coffee items to the new station (mirrors legacy addStation)
+    const existingCoffee = storeInventory.filter(x=>x.store_name===store && x.product_source==='coffee');
+    const uniqueProducts = [...new Set(existingCoffee.map(x=>x.product_id))];
+    let addedItems = 0;
+    for(const pid of uniqueProducts){
+      const template = existingCoffee.find(x=>x.product_id===pid);
+      if(!template) continue;
+      const newItem = {
+        id: Date.now() + Math.floor(Math.random()*100000) + addedItems,
+        store_name: store, product_id: pid, product_source: 'coffee',
+        product_name: template.product_name, cat1: template.cat1||'',
+        station_name: name, qty: 0, min_level: 0, max_level: 0, active: true
+      };
+      storeInventory.push(newItem);
+      await saveStoreItem(newItem);
+      addedItems++;
+    }
+    renderStoreSettingsInner();
+    showToast(`Station "${name}" added${addedItems?` with ${addedItems} coffee items`:''}`);
+  }catch(e){ showToast('Error adding station'); }
+}
+
+async function ssRemoveStation(stationId, stationName){
+  const store = _ssSelectedStore;
+  const itemCount = storeInventory.filter(x=>x.store_name===store&&x.station_name===stationName&&x.product_source==='coffee').length;
+  if(!confirm(`Remove station "${stationName}"? This will delete ${itemCount} inventory row${itemCount!==1?'s':''} for this station.`)) return;
+  try{
+    if(useSupabase){
+      await sbFetch(`store_inventory?store_name=eq.${encodeURIComponent(store)}&station_name=eq.${encodeURIComponent(stationName)}&product_source=eq.coffee`,{method:'DELETE',prefer:''});
+    }
+    storeInventory = storeInventory.filter(x=>!(x.store_name===store && x.station_name===stationName && x.product_source==='coffee'));
+    await sbFetch(`store_stations?id=eq.${stationId}`,{method:'DELETE',prefer:''});
+    storeStations = storeStations.filter(s=>s.id!==stationId);
+    renderStoreSettingsInner();
+    showToast(`Station "${stationName}" removed`);
+  }catch(e){ showToast('Error removing station'); }
+}
+
+async function saveStoreSettings(){
+  const store = _ssSelectedStore;
+  const btn = document.getElementById('ss-save-btn');
+  const hasMM = document.getElementById('ss-has-mm').checked;
+  const hasCoffee = document.getElementById('ss-has-coffee').checked;
+  const hasWaterIce = document.getElementById('ss-has-water-ice').checked;
+  const freeVend = document.getElementById('ss-free-vend').checked;
+
+  btn.disabled=true; btn.textContent='Saving…'; btn.style.opacity='0.6';
+  try{
+    // 1. Save store_settings (service flags + free_vend)
+    await sbFetch('store_settings',{method:'POST',prefer:'resolution=merge-duplicates,return=minimal',
+      body:JSON.stringify([{store_name:store, free_vend:freeVend, has_mm:hasMM, has_coffee:hasCoffee, has_water_ice:hasWaterIce}])});
+    storeSettings[store] = {free_vend:freeVend, has_mm:hasMM, has_coffee:hasCoffee, has_water_ice:hasWaterIce};
+
+    // Read the existing contract so we can PRESERVE values for any service that is
+    // toggled OFF (Option A: flags gate behavior, values persist). This makes an
+    // accidental toggle-off non-destructive — the cup rate / labels / fees wait
+    // safely in the DB and reappear when the service is toggled back on.
+    const existing = ssContract(store);
+    const existingFees = ssEquipFees(store); // parsed [{desc,amount}] from current DB row
+    const existingWiFee = ssFeeFor(store,'water_ice');
+    const existingCofFee = ssFeeFor(store,'coffee');
+    const existingCupRate = existing ? parseFloat(existing.cup_rate||0) : 0;
+    const existingCupLabel = existing ? (existing.cup_label||'') : '';
+
+    // 2. Build the equipment_fees list — Water/Ice first, Coffee second.
+    // If a service is ON: use the values from the form (omit if $0).
+    // If a service is OFF: preserve whatever fee was previously stored for it, so
+    // toggling off doesn't wipe the amount. (It just won't show on invoices because
+    // the has_* flag gates that — see note below.)
+    const fees = [];
+
+    // Water/Ice slot
+    if(hasWaterIce){
+      const wiLabel = document.getElementById('ss-wi-fee-label')?.value?.trim() || 'Water & Ice Machines';
+      const wiAmt = parseFloat(document.getElementById('ss-wi-fee-amt')?.value)||0;
+      if(wiAmt > 0) fees.push({desc:wiLabel, amount:wiAmt});
+    } else if(existingWiFee && parseFloat(existingWiFee.amount) > 0){
+      fees.push({desc:existingWiFee.desc, amount:parseFloat(existingWiFee.amount)}); // preserve
+    }
+
+    // Coffee slot
+    if(hasCoffee){
+      const cLabel = document.getElementById('ss-coffee-fee-label')?.value?.trim() || 'Coffee Equipment Fee';
+      const cAmt = parseFloat(document.getElementById('ss-coffee-fee-amt')?.value)||0;
+      if(cAmt > 0) fees.push({desc:cLabel, amount:cAmt});
+    } else if(existingCofFee && parseFloat(existingCofFee.amount) > 0){
+      fees.push({desc:existingCofFee.desc, amount:parseFloat(existingCofFee.amount)}); // preserve
+    }
+
+    // 3. Coffee contract fields — preserve existing values when coffee is toggled off
+    const cupRate = hasCoffee ? (parseFloat(document.getElementById('ss-cup-rate')?.value)||0) : existingCupRate;
+    const cupLabel = hasCoffee ? (document.getElementById('ss-cup-label')?.value?.trim()||'') : existingCupLabel;
+
+    // Upsert coffee_contracts (primary key is store_name, so merge-duplicates
+    // resolves on store_name automatically).
+    const contractRow = {
+      store_name: store,
+      cup_rate: cupRate,
+      cup_label: cupLabel,
+      equipment_fees: JSON.stringify(fees),
+      active: true
+    };
+    await sbFetch('coffee_contracts',{method:'POST',prefer:'resolution=merge-duplicates,return=minimal',body:JSON.stringify([contractRow])});
+
+    // Refresh local contracts cache
+    await loadCoffeeContracts();
+    applyNavPermissions();
+    renderStoreSettingsInner();
+    showToast(`✓ ${store} settings saved`);
+  }catch(e){
+    showToast('⚠ Error saving: '+(e.message||'check connection'));
+  }finally{
+    if(btn){ btn.disabled=false; btn.textContent=`Save ${store} Settings`; btn.style.opacity='1'; }
+  }
+}
+
 function renderPermissions(){
   if(!isAdmin()){ setView(firstAllowedView()); return; }
   loadPermSets().then(()=>renderPermissionsInner());
@@ -12742,8 +13057,19 @@ async function generateInvoicePreview(){
   window._invWalkoffCalculated = walkoffCalculated;
   window._invWalkoffComped = false; // fresh generation starts un-comped
 
-  // Equipment fees from contract
-  const equipFees = JSON.parse(typeof contract.equipment_fees === 'string' ? contract.equipment_fees : JSON.stringify(contract.equipment_fees||[]));
+  // Equipment fees from contract. Option A stores fees even for services that are
+  // toggled OFF (so an accidental toggle doesn't wipe the amount), so we filter here
+  // by the store's active service flags — a fee for an off service is NOT billed.
+  const allEquipFees = JSON.parse(typeof contract.equipment_fees === 'string' ? contract.equipment_fees : JSON.stringify(contract.equipment_fees||[]));
+  const ss = storeSettings[store] || {};
+  const equipFees = allEquipFees.filter(f=>{
+    const d = (f.desc||'');
+    // Match whole words so "Service Fee" doesn't match "ice". Water/Ice fee only
+    // bills when has_water_ice; Coffee fee only when has_coffee.
+    if(/\b(water|ice)\b/i.test(d)) return ss.has_water_ice === true;
+    if(/\bcoffee\b/i.test(d))      return ss.has_coffee === true;
+    return true; // any other/legacy fee (e.g. SM Toyota "Monthly Service Fee") always bills
+  });
 
   // Only reset manual lines on first generation (startGenerateInvoice handles this)
   window._invSupplyItems = aggregatedItems;
