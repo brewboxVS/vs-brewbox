@@ -1495,6 +1495,25 @@ function isStoreSettings(storeName, key){
   return storeSettings[storeName] && storeSettings[storeName][key];
 }
 
+// Coffee is "active" for a store only when BOTH the service flag is on AND a positive
+// cup rate exists. Option A preserves cup_rate when coffee is toggled off, so the flag
+// is the source of truth for whether coffee behavior (counts, invoice cup lines) shows.
+// Historical cup_readings / cup_monthly_summary are never deleted — they're just not
+// surfaced while the service is off, and reappear when toggled back on.
+function storeHasCoffee(storeName){
+  const ss = storeSettings[storeName];
+  if(ss && ss.has_coffee === false) return false;   // explicitly off
+  const c = coffeeContracts.find(x=>x.store_name===storeName);
+  const rate = c ? parseFloat(c.cup_rate||0) : 0;
+  // If flag is undefined (legacy), fall back to rate>0 so nothing breaks pre-migration.
+  if(ss && ss.has_coffee === true) return rate > 0;
+  return rate > 0;
+}
+function storeHasWaterIce(storeName){
+  const ss = storeSettings[storeName];
+  return !!(ss && ss.has_water_ice === true);
+}
+
 function getStoreNegReasons(storeName, productSource){
   const isFV = isStoreSettings(storeName, 'free_vend');
   const isCoffee = productSource === 'coffee';
@@ -1887,7 +1906,9 @@ function renderDashboard(){
   const periodMonths = 3;
   const periodLabel = `${periodStart.toLocaleString('en-US',{month:'short'})}–${periodEnd.toLocaleString('en-US',{month:'short',year:'numeric'})}`;
 
-  // Determine which stores have coffee contracts with cup_rate > 0
+  // Determine which stores have coffee history (cup_rate > 0). Uses the contract rate,
+  // which Option A preserves even when coffee is toggled off — so a store with coffee
+  // history stays visible in Insights regardless of the current service flag.
   const coffeeStoreList = STORES.filter(s=>{
     const contract = coffeeContracts.find(c=>c.store_name===s);
     return contract && parseFloat(contract.cup_rate||0) > 0;
@@ -11969,6 +11990,10 @@ function renderInsightsWidgets(){
     // ── Coffee P&L ──
     let cupRevenue=0, cupCount=0, supplyRevenue=0, equipRevenue=0, adjustmentRevenue=0;
     let inputCOGS=0, supplyCOGS=0;
+    // Insights reflects HISTORICAL reality: if a saved invoice has coffee lines, count
+    // them regardless of the current has_coffee flag. Toggling coffee off today must not
+    // erase past coffee revenue from analytics. So this stays rate-based on the contract,
+    // not gated on the live service flag.
     const hasCoffee = !!contract && parseFloat(contract.cup_rate) > 0;
 
     if(hasCoffee){
@@ -12376,7 +12401,8 @@ function renderCoffeeCounts(){
   }
 
   const contract = coffeeContracts.find(c=>c.store_name===coffeeCountStore);
-  if(!contract || parseFloat(contract.cup_rate||0) <= 0){
+  if(!contract || !storeHasCoffee(coffeeCountStore)){
+    const ssOff = storeSettings[coffeeCountStore] && storeSettings[coffeeCountStore].has_coffee === false;
     document.getElementById('main-body').innerHTML = `
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
         <label style="font-size:11px;font-weight:700;color:#5060a0;text-transform:uppercase">Store:</label>
@@ -12387,7 +12413,8 @@ function renderCoffeeCounts(){
         </select>
       </div>
       <div class="card" style="text-align:center;padding:40px;color:#7080a0">
-        <div style="font-size:15px;font-weight:600">No coffee contract found for ${coffeeCountStore}</div>
+        <div style="font-size:15px;font-weight:600">${ssOff ? `Coffee service is turned off for ${coffeeCountStore}` : `No coffee contract found for ${coffeeCountStore}`}</div>
+        ${ssOff ? '<div style="font-size:12px;color:#8090b0;margin-top:8px">Historical coffee counts are preserved. Enable Coffee Service in Store Settings to resume.</div>' : ''}
       </div>`;
     return;
   }
@@ -13080,9 +13107,9 @@ async function generateInvoicePreview(){
   area.innerHTML = `
     <div class="card" style="border-top:3px solid #0d1f4e;margin-bottom:14px">
       <div class="card-title" style="margin-bottom:4px">🧾 ${store} — ${monthName}</div>
-      <div style="font-size:11px;color:#7080a0;margin-bottom:14px">${parseFloat(contract.cup_rate)>0 ? `Period: ${periodStart} → ${periodEnd} · Rate: $${contract.cup_rate}/cup` : `Invoice Period: ${monthName}`}</div>
+      <div style="font-size:11px;color:#7080a0;margin-bottom:14px">${storeHasCoffee(store) ? `Period: ${periodStart} → ${periodEnd} · Rate: $${contract.cup_rate}/cup` : `Invoice Period: ${monthName}`}</div>
 
-      ${parseFloat(contract.cup_rate) > 0 ? (function(){
+      ${storeHasCoffee(store) ? (function(){
         const invMonth = year+'-'+month;
         const cupSummary = cupMonthlySummary.find(s=>s.store_name===store && s.month===invMonth);
         if(cupSummary){
@@ -13227,7 +13254,7 @@ function recalcInvoiceTotals(){
   const cupSummary = cupMonthlySummary.find(s=>s.store_name===store && s.month===invMonth);
   const billable = cupSummary ? cupSummary.billable_cups : 0;
   const cupRate = parseFloat(contract.cup_rate)||0;
-  if(billable > 0) lines.push({desc:contract.cup_label||'Coffee Consumption', amt:billable*cupRate, taxable:false});
+  if(billable > 0 && storeHasCoffee(store)) lines.push({desc:contract.cup_label||'Coffee Consumption', amt:billable*cupRate, taxable:false});
 
   // Equipment
   const equipFees = window._invEquipFees||[];
@@ -13357,8 +13384,8 @@ async function _buildAndSaveInvoice(store){
   // Build line items
   const lineItems = [];
 
-  // Cup consumption (use billable cups)
-  if(billableCups > 0){
+  // Cup consumption (use billable cups) — only when coffee service is active
+  if(billableCups > 0 && storeHasCoffee(store)){
     lineItems.push({desc:contract.cup_label, qty:billableCups, rate:parseFloat(contract.cup_rate), amount:billableCups*parseFloat(contract.cup_rate), taxable:false});
   }
 
