@@ -1420,6 +1420,10 @@ async function saveProduct(p){
   }
   // Always keep local backup
   localStorage.setItem(LS_PRODUCTS, JSON.stringify(products));
+  // Propagate a name change to linked store inventory rows (name only). No-op if the
+  // name is unchanged, so this is safe to call from every product save path.
+  const n = await propagateProductNameToStores(p.id, 'mm', p.name);
+  if(n > 0) showToast(`Name updated at ${n} store location${n!==1?'s':''}`);
 }
 
 async function deleteProductFromDB(id){
@@ -3382,6 +3386,9 @@ async function saveCoffeeProduct(p){
   }
   // Always keep local backup
   localStorage.setItem(LS_COFFEE, JSON.stringify(coffeeProducts));
+  // Propagate a name change to linked store inventory rows (name only). No-op if unchanged.
+  const n = await propagateProductNameToStores(p.id, 'coffee', p.name);
+  if(n > 0) showToast(`Name updated at ${n} store location${n!==1?'s':''}`);
 }
 
 async function deleteCoffeeProduct(id){
@@ -3780,6 +3787,26 @@ async function saveStoreItem(item){
     } catch(e){ showToast('⚠ Could not save store item'); }
   }
   localStorage.setItem(LS_STORE_INV, JSON.stringify(storeInventory));
+}
+
+// When a warehouse product's NAME changes, propagate it to every store_inventory row
+// that links to it (same product_id + product_source). NAME ONLY — store-specific
+// fields (qty, min/max, store_cat, station, active) are never touched. Returns the
+// number of store rows updated so the caller can surface a toast.
+async function propagateProductNameToStores(productId, source, newName){
+  const rows = storeInventory.filter(x=>x.product_id===productId && (x.product_source||'mm')===source && x.product_name!==newName);
+  if(rows.length===0) return 0;
+  for(const r of rows){ r.product_name = newName; }
+  if(useSupabase){
+    try{
+      // Patch only the product_name column per row so nothing else can be clobbered.
+      for(const r of rows){
+        await sbFetch(`store_inventory?id=eq.${r.id}`, {method:'PATCH', prefer:'return=minimal', body:JSON.stringify({product_name:newName})});
+      }
+    }catch(e){ /* local copy already updated; DB retry on next edit */ }
+  }
+  localStorage.setItem(LS_STORE_INV, JSON.stringify(storeInventory));
+  return rows.length;
 }
 
 async function deleteStoreItem(id){
